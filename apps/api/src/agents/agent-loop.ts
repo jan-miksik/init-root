@@ -13,6 +13,7 @@ import type { DexPair } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
 import { computeIndicators } from '../services/indicators.js';
 import { PaperEngine, type Position } from '../services/paper-engine.js';
+import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { getTradeDecision } from '../services/llm-router.js';
 import { generateId, nowIso, intToAutonomyLevel } from '../lib/utils.js';
 import { normalizePairForDex } from '../lib/pairs.js';
@@ -67,55 +68,6 @@ export async function runAgentLoop(
   const db = drizzle(env.DB);
   const geckoSvc = createGeckoTerminalService(env.CACHE);
   const dexSvc = createDexDataService(env.CACHE);
-
-  async function resolveCurrentPriceUsd(pairName: string): Promise<number> {
-    const query = pairToSearchQuery(pairName);
-
-    // GeckoTerminal first (network=base)
-    try {
-      const pools = await geckoSvc.searchPools(query);
-      const pool = pools.find((p) => poolMatchesPair(p.name, pairName));
-      if (pool && pool.priceUsd > 0) return pool.priceUsd;
-    } catch {
-      // fallthrough
-    }
-
-    // DexScreener search fallback
-    try {
-      const results = await dexSvc.searchPairs(query);
-      const basePair = results
-        .filter((p) => p.chainId === 'base')
-        .filter((p) => poolMatchesPair(`${p.baseToken.symbol}/${p.quoteToken.symbol}`, pairName))
-        .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
-      if (basePair) {
-        const price = getPriceUsd(basePair);
-        if (price > 0) return price;
-      }
-    } catch {
-      // fallthrough
-    }
-
-    // Token address fallback (reliable for known Base tokens)
-    const tokens = pairName.split('/').map((t) => t.trim().toUpperCase());
-    const baseAddr = BASE_TOKEN_ADDRESSES[tokens[0]];
-    if (baseAddr) {
-      try {
-        const results = await dexSvc.getTokenPairs(baseAddr);
-        const basePair = results
-          .filter((p) => p.chainId === 'base')
-          .filter((p) => poolMatchesPair(`${p.baseToken.symbol}/${p.quoteToken.symbol}`, pairName))
-          .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
-        if (basePair) {
-          const price = getPriceUsd(basePair);
-          if (price > 0) return price;
-        }
-      } catch {
-        // fallthrough
-      }
-    }
-
-    return 0;
-  }
 
   // 1. Load agent config
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId));
@@ -180,7 +132,7 @@ export async function runAgentLoop(
 
   // 3. Check open positions for stop loss / take profit
   for (const position of engine.openPositions) {
-    const currentPrice = await resolveCurrentPriceUsd(position.pair);
+    const currentPrice = await resolveCurrentPriceUsd(env, position.pair);
     if (currentPrice === 0) continue;
 
     if (engine.checkStopLoss(position, currentPrice, config.stopLossPct)) {

@@ -1,10 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { drizzle } from 'drizzle-orm/d1';
+import { eq } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
-import { performanceSnapshots } from '../db/schema.js';
+import { performanceSnapshots, trades } from '../db/schema.js';
 import { PaperEngine } from '../services/paper-engine.js';
+import type { Position } from '../services/paper-engine.js';
 import { runAgentLoop } from './agent-loop.js';
 import { generateId, nowIso } from '../lib/utils.js';
+import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 
 /** Interval string → milliseconds */
 function intervalToMs(interval: string): number {
@@ -170,6 +173,47 @@ export class TradingAgentDO extends DurableObject<Env> {
       return Response.json({ ok: true, status: 'paused' });
     }
 
+    if (url.pathname === '/close-position' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { positionId?: string; reason?: string };
+      const positionId = typeof body.positionId === 'string' ? body.positionId : '';
+      if (!positionId) return Response.json({ error: 'positionId is required' }, { status: 400 });
+
+      const agentId = await this.ctx.storage.get<string>('agentId');
+      if (!agentId) return Response.json({ error: 'Agent not initialized' }, { status: 400 });
+
+      const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
+      const engine = engineState
+        ? PaperEngine.deserialize(engineState)
+        : new PaperEngine({ balance: 10_000, slippage: 0.3 });
+
+      const position = engine.openPositions.find((p) => p.id === positionId);
+      if (!position) return Response.json({ error: 'Position not found' }, { status: 404 });
+
+      const priceUsd = await resolveCurrentPriceUsd(this.env, position.pair);
+      if (!priceUsd || priceUsd <= 0) {
+        return Response.json({ error: 'Unable to resolve current price' }, { status: 503 });
+      }
+
+      const closed = engine.closePosition(positionId, {
+        price: priceUsd,
+        reason: body.reason ?? 'Closed manually by user',
+      });
+
+      try {
+        await this.persistTrade(closed);
+      } catch (err) {
+        console.error(`[TradingAgentDO] failed to persist manual close trade ${positionId}:`, err);
+      }
+
+      try {
+        await this.ctx.storage.put('engineState', engine.serialize());
+      } catch (err) {
+        console.error(`[TradingAgentDO] failed to persist engine state after manual close for ${agentId}:`, err);
+      }
+
+      return Response.json({ ok: true, trade: closed });
+    }
+
     if (url.pathname === '/engine-state') {
       const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
       return Response.json(engineState ?? null);
@@ -299,5 +343,42 @@ export class TradingAgentDO extends DurableObject<Env> {
     } catch (err) {
       console.warn(`[TradingAgentDO] Failed to save snapshot:`, err);
     }
+  }
+
+  private async persistTrade(position: Position): Promise<void> {
+    const db = drizzle(this.env.DB);
+    await db
+      .insert(trades)
+      .values({
+        id: position.id,
+        agentId: position.agentId,
+        pair: position.pair,
+        dex: position.dex,
+        side: position.side,
+        entryPrice: position.entryPrice,
+        exitPrice: position.exitPrice ?? null,
+        amountUsd: position.amountUsd,
+        pnlPct: position.pnlPct ?? null,
+        pnlUsd: position.pnlUsd ?? null,
+        confidenceBefore: position.confidenceBefore,
+        confidenceAfter: position.confidenceAfter ?? null,
+        reasoning: position.reasoning,
+        strategyUsed: position.strategyUsed,
+        slippageSimulated: position.slippageSimulated,
+        status: position.status,
+        openedAt: position.openedAt,
+        closedAt: position.closedAt ?? null,
+      })
+      .onConflictDoUpdate({
+        target: trades.id,
+        set: {
+          exitPrice: position.exitPrice ?? null,
+          pnlPct: position.pnlPct ?? null,
+          pnlUsd: position.pnlUsd ?? null,
+          confidenceAfter: position.confidenceAfter ?? null,
+          status: position.status,
+          closedAt: position.closedAt ?? null,
+        },
+      });
   }
 }

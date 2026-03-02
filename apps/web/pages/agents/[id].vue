@@ -7,10 +7,24 @@ import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 const route = useRoute();
 const id = computed(() => route.params.id as string);
 const { getAgent, startAgent, stopAgent, pauseAgent, deleteAgent, updateAgent } = useAgents();
-const { fetchAgentTrades, formatPnl, pnlClass } = useTrades();
+const { fetchAgentTrades, closeTrade, formatPnl, pnlClass } = useTrades();
 const { request } = useApi();
 const { getAgentPersona, updateAgentPersona, resetAgentPersona } = useProfiles();
 const router = useRouter();
+
+const closingTrades = ref<Set<string>>(new Set());
+
+async function closeTradeByUser(tradeId: string) {
+  if (closingTrades.value.has(tradeId)) return;
+  closingTrades.value.add(tradeId);
+  try {
+    await closeTrade(tradeId);
+    // Refresh trades so UI updates (open → closed) and openPositions grouping recalculates.
+    trades.value = await fetchAgentTrades(id.value);
+  } finally {
+    closingTrades.value.delete(tradeId);
+  }
+}
 
 interface MarketDataEntry {
   pair: string;
@@ -660,6 +674,17 @@ function formatLatency(ms: number): string {
                     <div v-else style="font-size: 12px; color: var(--text-muted);">P&L: —</div>
                   </template>
                 </div>
+
+                <!-- Manual close -->
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="closingTrades.has(trade.id)"
+                  @click.stop="closeTradeByUser(trade.id)"
+                  style="min-width: 96px;"
+                >
+                  {{ closingTrades.has(trade.id) ? 'Closing…' : 'Close' }}
+                </button>
               </div>
 
               <!-- Reasoning (collapsed) -->
@@ -668,7 +693,7 @@ function formatLatency(ms: number): string {
                 @click="toggleTrade(trade.id)"
               >
                 <span style="margin-right: 6px;">{{ expandedTrades.has(trade.id) ? '▼' : '▶' }}</span>
-                <span v-if="!expandedTrades.has(trade.id)" style="overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;">
+                <span v-if="!expandedTrades.has(trade.id)" style="overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical;">
                   {{ trade.reasoning }}
                 </span>
                 <span v-else style="white-space: pre-wrap; display: block; margin-top: 4px; line-height: 1.5;">{{ trade.reasoning }}</span>

@@ -6,14 +6,27 @@ defineProps<{
   showAgent?: boolean;
 }>();
 
-const { formatPnl, pnlClass } = useTrades();
+const { formatPnl, pnlClass, closeTrade } = useTrades();
 const expandedRows = ref<Set<string>>(new Set());
+const closing = ref<Set<string>>(new Set());
 
 function toggleRow(id: string) {
   if (expandedRows.value.has(id)) {
     expandedRows.value.delete(id);
   } else {
     expandedRows.value.add(id);
+  }
+}
+
+async function onCloseClick(ev: MouseEvent, trade: Trade) {
+  ev.stopPropagation();
+  if (trade.status !== 'open') return;
+  if (closing.value.has(trade.id)) return;
+  closing.value.add(trade.id);
+  try {
+    await closeTrade(trade.id);
+  } finally {
+    closing.value.delete(trade.id);
   }
 }
 
@@ -47,11 +60,12 @@ function formatDate(iso: string) {
           <th>Strategy</th>
           <th>Status</th>
           <th>Opened</th>
+          <th style="width: 110px; text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="trades.length === 0">
-          <td colspan="11" style="text-align: center; padding: 32px; color: var(--text-muted);">
+          <td colspan="12" style="text-align: center; padding: 32px; color: var(--text-muted);">
             No trades yet
           </td>
         </tr>
@@ -83,9 +97,21 @@ function formatDate(iso: string) {
               >{{ trade.status }}</span>
             </td>
             <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>
+            <td style="text-align: right;">
+              <button
+                v-if="trade.status === 'open'"
+                type="button"
+                class="btn btn-ghost btn-sm"
+                :disabled="closing.has(trade.id)"
+                @click="(ev) => onCloseClick(ev, trade)"
+              >
+                {{ closing.has(trade.id) ? 'Closing…' : 'Close' }}
+              </button>
+              <span v-else style="color: var(--text-muted); font-size: 12px;">—</span>
+            </td>
           </tr>
           <tr v-if="expandedRows.has(trade.id)">
-            <td colspan="11" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
+            <td colspan="12" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
               <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;">
                 <strong style="color: var(--text-primary);">Reasoning:</strong> {{ trade.reasoning }}
               </div>

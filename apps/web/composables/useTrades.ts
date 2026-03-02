@@ -70,6 +70,13 @@ export function useTrades() {
     return res.trades;
   }
 
+  async function closeTrade(tradeId: string): Promise<Trade> {
+    const res = await request<{ ok: boolean; trade: Trade }>(`/api/trades/${tradeId}/close`, {
+      method: 'POST',
+    });
+    return res.trade;
+  }
+
   function formatPnl(pnl?: number): string {
     if (pnl === undefined || pnl === null) return '—';
     const sign = pnl >= 0 ? '+' : '';
@@ -89,6 +96,7 @@ export function useTrades() {
     fetchTrades,
     fetchStats,
     fetchAgentTrades,
+    closeTrade,
     formatPnl,
     pnlClass,
   };
