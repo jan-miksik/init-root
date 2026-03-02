@@ -22,6 +22,8 @@ export interface Agent {
     behavior?: Record<string, unknown>;
   };
   managerId?: string | null;
+  profileId?: string | null;
+  personaMd?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,20 +82,20 @@ export function useAgents() {
 
   async function startAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/start`, { method: 'POST' });
-    const idx = agents.value.findIndex((a) => a.id === id);
-    if (idx >= 0) agents.value[idx].status = 'running';
+    const agent = agents.value.find((a) => a.id === id);
+    if (agent) agent.status = 'running';
   }
 
   async function stopAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/stop`, { method: 'POST' });
-    const idx = agents.value.findIndex((a) => a.id === id);
-    if (idx >= 0) agents.value[idx].status = 'stopped';
+    const agent = agents.value.find((a) => a.id === id);
+    if (agent) agent.status = 'stopped';
   }
 
   async function pauseAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/pause`, { method: 'POST' });
-    const idx = agents.value.findIndex((a) => a.id === id);
-    if (idx >= 0) agents.value[idx].status = 'paused';
+    const agent = agents.value.find((a) => a.id === id);
+    if (agent) agent.status = 'paused';
   }
 
   async function deleteAgent(id: string): Promise<void> {
@@ -107,7 +109,7 @@ export function useAgents() {
       body: payload,
     });
     const idx = agents.value.findIndex((a) => a.id === id);
-    if (idx >= 0) agents.value[idx] = agent;
+    if (idx >= 0) agents.value.splice(idx, 1, agent);
     return agent;
   }
 

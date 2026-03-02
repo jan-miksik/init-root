@@ -166,6 +166,7 @@ export const CreateAgentRequestSchema = z.object({
   // Behavior (optional — falls back to defaults / profile)
   behavior: AgentBehaviorConfigSchema.optional(),
   profileId: z.string().optional(),
+  personaMd: z.string().max(4000).optional(),
 });
 
 export const UpdateAgentRequestSchema = CreateAgentRequestSchema.partial();

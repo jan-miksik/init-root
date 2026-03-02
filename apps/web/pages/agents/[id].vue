@@ -2,6 +2,7 @@
 definePageMeta({ ssr: false });
 import type { Trade } from '~/composables/useTrades';
 import { pollUntilFutureAlarm } from '~/utils/statusPolling';
+import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 
 const route = useRoute();
 const id = computed(() => route.params.id as string);
@@ -62,12 +63,20 @@ const isAnalyzing = ref(false);
 const showEditModal = ref(false);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
-const activeTab = ref<'trades' | 'decisions' | 'performance' | 'behavior' | 'persona'>('trades');
+const activeTab = ref<'trades' | 'decisions'>('trades');
 const expandedDecisions = ref<Set<string>>(new Set());
 const expandedTrades = ref<Set<string>>(new Set());
 const analyzeError = ref<string | null>(null);
 const personaMd = ref('');
 const personaSaving = ref(false);
+
+const personaEmoji = computed(() => {
+  if (!agent.value) return '';
+  const configProfileId = (agent.value.config as { profileId?: string }).profileId;
+  const profileId = agent.value.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
+  const profile = getAgentProfile(profileId);
+  return profile?.emoji ?? '';
+});
 
 /** True when the analysis failed because the selected model is unavailable (no automatic fallback) */
 const isModelUnavailableError = computed(() => {
@@ -348,6 +357,8 @@ function normalizeAgentUpdatePayload(p: Partial<Parameters<typeof updateAgent>[1
     const valid = arr.filter((s): s is (typeof VALID_STRATEGIES)[number] => typeof s === 'string' && (VALID_STRATEGIES as readonly string[]).includes(s));
     if (valid.length > 0) body.strategies = valid;
   }
+  if (p.profileId !== undefined && (p.profileId === null || typeof p.profileId === 'string')) body.profileId = p.profileId;
+  if (p.personaMd !== undefined && typeof p.personaMd === 'string') body.personaMd = p.personaMd;
   return body;
 }
 
@@ -359,6 +370,7 @@ async function handleEdit(payload: Parameters<typeof updateAgent>[1]) {
     const normalized = normalizeAgentUpdatePayload(payload);
     const updated = await updateAgent(id.value, normalized as Parameters<typeof updateAgent>[1]);
     agent.value = updated;
+    if (payload.personaMd !== undefined) personaMd.value = payload.personaMd;
     showEditModal.value = false;
   } catch (e) {
     saveError.value = extractApiError(e);
@@ -370,6 +382,7 @@ async function handleEdit(payload: Parameters<typeof updateAgent>[1]) {
 /** Build initialValues for the edit form from the current agent config */
 const editInitialValues = computed(() => {
   if (!agent.value) return undefined;
+  const profileId = agent.value.profileId ?? (agent.value.config as { profileId?: string })?.profileId;
   return {
     name: agent.value.name,
     autonomyLevel: agent.value.autonomyLevel,
@@ -384,6 +397,8 @@ const editInitialValues = computed(() => {
     maxOpenPositions: agent.value.config.maxOpenPositions,
     temperature: agent.value.config.temperature ?? 0.7,
     allowFallback: agent.value.config.allowFallback ?? false,
+    profileId: profileId ?? undefined,
+    personaMd: personaMd.value || undefined,
   };
 });
 
@@ -453,7 +468,10 @@ function formatLatency(ms: number): string {
         <div>
           <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
             <button class="btn btn-ghost btn-sm" @click="$router.back()">← Back</button>
-            <h1 class="page-title">{{ agent.name }}</h1>
+            <h1 class="page-title">
+              <span v-if="personaEmoji" class="agent-emoji" style="margin-right: 6px;">{{ personaEmoji }}</span>
+              {{ agent.name }}
+            </h1>
             <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
           </div>
           <p class="page-subtitle">
@@ -674,15 +692,6 @@ function formatLatency(ms: number): string {
         <div class="tab" :class="{ active: activeTab === 'decisions' }" @click="activeTab = 'decisions'">
           Decisions ({{ decisions.length }})
         </div>
-        <div class="tab" :class="{ active: activeTab === 'performance' }" @click="activeTab = 'performance'">
-          Performance
-        </div>
-        <div class="tab" :class="{ active: activeTab === 'behavior' }" @click="activeTab = 'behavior'">
-          Behavior
-        </div>
-        <div class="tab" :class="{ active: activeTab === 'persona' }" @click="activeTab = 'persona'">
-          Persona
-        </div>
       </div>
 
       <!-- Trades tab -->
@@ -831,67 +840,6 @@ function formatLatency(ms: number): string {
         </div>
       </div>
 
-      <!-- Performance tab -->
-      <div v-if="activeTab === 'performance'" class="card">
-        <div v-if="!latestSnapshot" class="empty-state" style="padding: 24px;">
-          <div class="empty-title">No performance data yet</div>
-          <p>Snapshots are saved every 6 analysis cycles.</p>
-        </div>
-        <div v-else>
-          <div class="stats-grid" style="margin-bottom: 0;">
-            <div class="stat-card">
-              <div class="stat-label">Total Trades</div>
-              <div class="stat-value">{{ latestSnapshot.totalTrades }}</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Win Rate</div>
-              <div class="stat-value" :class="latestSnapshot.winRate >= 0.5 ? 'positive' : 'negative'">
-                {{ (latestSnapshot.winRate * 100).toFixed(1) }}%
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Sharpe Ratio</div>
-              <div class="stat-value" :class="(latestSnapshot.sharpeRatio ?? 0) >= 0 ? 'positive' : 'negative'">
-                {{ latestSnapshot.sharpeRatio?.toFixed(2) ?? '—' }}
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-label">Max Drawdown</div>
-              <div class="stat-value negative">
-                {{ latestSnapshot.maxDrawdown ? '-' + latestSnapshot.maxDrawdown.toFixed(2) + '%' : '—' }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Behavior Tab -->
-      <div v-show="activeTab === 'behavior'">
-        <template v-if="agent?.config?.behavior">
-          <BehaviorSettingsForm
-            :model-value="agent.config.behavior as Record<string, unknown>"
-            type="agent"
-            :readonly="true"
-            @update:model-value="() => {}"
-          />
-          <div style="margin-top: 16px;">
-            <NuxtLink :to="`/agents/${agent.id}/edit`" class="btn btn-primary">Edit Behavior</NuxtLink>
-          </div>
-        </template>
-        <div v-else style="color: var(--text-secondary, #888); padding: 32px; text-align: center;">
-          No behavior profile set. <NuxtLink :to="`/agents/${id}/edit`" style="color: var(--accent, #7c6af7);">Edit the agent</NuxtLink> to add one.
-        </div>
-      </div>
-
-      <!-- Persona Tab -->
-      <div v-show="activeTab === 'persona'">
-        <PersonaEditor
-          v-model="personaMd"
-          :loading="personaSaving"
-          @save="savePersona"
-          @reset="doResetPersona"
-        />
-      </div>
     </template>
 
     <!-- Edit Modal -->

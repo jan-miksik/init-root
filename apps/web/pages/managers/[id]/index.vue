@@ -10,7 +10,10 @@
         <div>
           <NuxtLink to="/managers" class="back-link">← Managers</NuxtLink>
           <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
-            <h1 class="page-title">{{ manager.name }}</h1>
+            <h1 class="page-title">
+              <span v-if="personaEmoji" class="manager-emoji" style="margin-right: 6px;">{{ personaEmoji }}</span>
+              {{ manager.name }}
+            </h1>
             <span class="badge" :class="statusBadgeClass">{{ manager.status }}</span>
           </div>
         </div>
@@ -68,12 +71,6 @@
         <div class="tab" :class="{ active: activeTab === 'logs' }" @click="activeTab = 'logs'">
           Decision Log <span v-if="logs.length" style="color: var(--text-muted); margin-left: 4px;">{{ logs.length }}</span>
         </div>
-        <div class="tab" :class="{ active: activeTab === 'behavior' }" @click="activeTab = 'behavior'">
-          Behavior
-        </div>
-        <div class="tab" :class="{ active: activeTab === 'persona' }" @click="activeTab = 'persona'">
-          Persona
-        </div>
       </div>
 
       <!-- Agents tab -->
@@ -124,33 +121,7 @@
         </div>
       </div>
 
-      <!-- Behavior Tab -->
-      <div v-show="activeTab === 'behavior'">
-        <template v-if="manager?.config?.behavior">
-          <BehaviorSettingsForm
-            :model-value="manager.config.behavior as Record<string, unknown>"
-            type="manager"
-            :readonly="true"
-            @update:model-value="() => {}"
-          />
-          <div style="margin-top: 16px;">
-            <NuxtLink :to="`/managers/${manager.id}/edit`" class="btn btn-primary">Edit Behavior</NuxtLink>
-          </div>
-        </template>
-        <div v-else style="color: var(--text-secondary, #888); padding: 32px; text-align: center;">
-          No behavior profile set. <NuxtLink :to="`/managers/${id}/edit`" style="color: var(--accent, #7c6af7);">Edit the manager</NuxtLink> to add one.
-        </div>
-      </div>
-
-      <!-- Persona Tab -->
-      <div v-show="activeTab === 'persona'">
-        <PersonaEditor
-          v-model="personaMd"
-          :loading="personaSaving"
-          @save="savePersona"
-          @reset="doResetPersona"
-        />
-      </div>
+      <!-- Behavior & Persona tabs removed -->
     </template>
 
     <div v-else class="alert alert-error">Manager not found.</div>
@@ -189,25 +160,31 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { getManagerProfile, DEFAULT_MANAGER_PROFILE_ID } from '@dex-agents/shared';
 
 const route = useRoute();
 const router = useRouter();
 const id = route.params.id as string;
 
-const activeTab = ref<'agents' | 'logs' | 'behavior' | 'persona'>('agents');
+const activeTab = ref<'agents' | 'logs'>('agents');
 const actionLoading = ref(false);
 const showDeleteModal = ref(false);
 const deleteAgentsChoice = ref<'detach' | 'delete'>('detach');
-
-const { getManagerPersona, updateManagerPersona, resetManagerPersona } = useProfiles();
-const personaMd = ref('');
-const personaSaving = ref(false);
 
 const { data: managerData, pending, refresh } = await useFetch<any>(`/api/managers/${id}`, {
   credentials: 'include',
 });
 const manager = computed(() => managerData.value ?? null);
 const doStatus = computed(() => manager.value?.doStatus ?? null);
+
+const personaEmoji = computed(() => {
+  const m = manager.value as { profileId?: string | null; config?: { profileId?: string } } | null;
+  if (!m) return '';
+  const configProfileId = m.config?.profileId;
+  const profileId = m.profileId ?? configProfileId ?? DEFAULT_MANAGER_PROFILE_ID;
+  const profile = getManagerProfile(profileId);
+  return profile?.emoji ?? '';
+});
 
 const { data: agentsData, refresh: refreshAgents } = await useFetch<{ agents: any[] }>(`/api/managers/${id}/agents`, {
   credentials: 'include',
@@ -219,12 +196,6 @@ const { data: logsData, refresh: refreshLogs } = await useFetch<{ logs: any[] }>
 });
 const logs = ref<any[]>(logsData.value?.logs ?? []);
 const hasMoreLogs = ref((logsData.value?.logs?.length ?? 0) === 20);
-
-// Load persona
-try {
-  const personaData = await getManagerPersona(id);
-  personaMd.value = personaData.personaMd ?? '';
-} catch { /* ignore */ }
 
 // Polling: refresh manager (for doStatus) every 2s when running.
 // Reload logs+agents when `deciding` transitions true→false (decision just finished).
@@ -366,25 +337,7 @@ async function loadMoreLogs() {
   hasMoreLogs.value = newLogs.length === 20;
 }
 
-async function savePersona(md: string) {
-  personaSaving.value = true;
-  try {
-    await updateManagerPersona(id, md);
-    personaMd.value = md;
-  } finally {
-    personaSaving.value = false;
-  }
-}
-
-async function doResetPersona() {
-  personaSaving.value = true;
-  try {
-    const res = await resetManagerPersona(id);
-    personaMd.value = res.personaMd;
-  } finally {
-    personaSaving.value = false;
-  }
-}
+// Persona editing is handled in the manager edit screen; inline persona editor removed here.
 </script>
 
 <style scoped>

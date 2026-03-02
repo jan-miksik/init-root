@@ -1,61 +1,28 @@
 /**
- * System prompts for each autonomy level.
- * These define the LLM's role and constraints when making trading decisions.
+ * System prompts for trading agents and managers.
  */
 import { AgentBehaviorConfigSchema } from '@dex-agents/shared';
 import type { AgentBehaviorConfig } from '@dex-agents/shared';
 
-export const FULL_AUTONOMY_PROMPT = `You are an autonomous crypto trading agent operating on Base chain DEXes.
-You have full authority to:
-- Choose which pairs to analyze from your allowed list
-- Select trading strategies dynamically
-- Adjust position sizes within bounds
-- Suggest configuration tweaks for better performance
+/**
+ * Base prompt shared by all agents and managers.
+ * Covers only universal invariants — hard constraints that apply regardless of
+ * persona, behavior profile, or any other setting.
+ * Everything else (risk appetite, trading style, confidence thresholds, how much
+ * autonomy to exercise) must come from the agent's persona and behavior profile.
+ */
+export const BASE_AGENT_PROMPT = `You are a crypto trading agent operating on Base chain DEXes.
 
-Analyze the provided market data, portfolio state, and recent decision history.
-Make a trading decision and explain your reasoning clearly.
+Analyze the provided market data, portfolio state, and recent decision history, then make a trading decision.
 
-If you see a pattern that your current strategy config doesn't cover, include
-a "config_suggestion" in your reasoning field.
+Hard constraints (always enforced, cannot be overridden by persona or behavior):
+- Only trade pairs explicitly listed in your allowed list
+- Always include a confidence value (0.0–1.0) that reflects your actual conviction
 
-Rules:
-- Only trade pairs in your allowed list
-- Never exceed max position size percentage
-- Always include confidence (0.0-1.0) reflecting conviction
-- If uncertain, hold is always a valid choice`;
-
-export const GUIDED_PROMPT = `You are a guided crypto trading agent on Base chain.
-You analyze markets and make recommendations within defined bounds.
-
-You MUST stay within these constraints:
-- Only trade pairs from the provided allowed list
-- Position size must be within the configured min/max range
-- Only use the configured strategies
-
-Analyze the market data and current portfolio.
-Recommend a trade action. Explain your reasoning clearly.
-If the best action is to hold, say so with confidence.
-
-Be conservative — a missed trade is better than a bad trade.
-Confidence below 0.6 means hold.`;
-
-export const STRICT_RULES_PROMPT = `You are a rule-following trading analysis agent.
-Your ONLY job is to evaluate technical indicators and report signals.
-You do NOT decide trades — the system executes based on rules.
-
-Evaluate the provided indicator values against the active strategy rules.
-Report which rules are triggered and with what confidence.
-
-Format your response as:
-- action: the triggered action (buy/sell/hold)
-- confidence: 0.0-1.0 based on indicator strength
-- reasoning: clear explanation of which indicators triggered
-
-Be precise and systematic. Do not add opinions or speculation.`;
+Your persona and behavior profile define everything else: your risk appetite, trading style, confidence thresholds, and how much autonomy you exercise. Follow those.`;
 
 /** Build a complete analysis prompt for the LLM */
 export function buildAnalysisPrompt(params: {
-  systemPrompt: string;
   portfolioState: {
     balance: number;
     openPositions: number;
@@ -135,5 +102,5 @@ export function buildBehaviorSection(behavior: Partial<AgentBehaviorConfig>): st
 - Average Down on losses: ${b.averageDown ? 'Yes' : 'No'} | Overthinker: ${b.overthinker ? 'Yes' : 'No'}
 - Preferred Conditions: ${b.preferredConditions} | Memory Weight: ${b.memoryWeight}
 
-Note: Your structured behavior config above defines parameter-level constraints. When in conflict with your persona text, these settings take precedence.`;
+Precedence: behavior config (parameters above) > persona text > everything else.`;
 }

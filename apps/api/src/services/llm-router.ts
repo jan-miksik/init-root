@@ -3,12 +3,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { TradeDecisionSchema } from '@dex-agents/shared';
 import type { TradeDecision, AgentBehaviorConfig } from '@dex-agents/shared';
 import { sleep } from '../lib/utils.js';
-import {
-  FULL_AUTONOMY_PROMPT,
-  GUIDED_PROMPT,
-  STRICT_RULES_PROMPT,
-  buildAnalysisPrompt,
-} from '../agents/prompts.js';
+import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../agents/prompts.js';
 
 /** When true, if the primary model fails we try the user-configured fallback model. No automatic emergency fallbacks. */
 export interface LLMRouterConfig {
@@ -84,17 +79,6 @@ function extractJson(text: string): string {
   return text.trim();
 }
 
-function getSystemPrompt(autonomyLevel: string): string {
-  switch (autonomyLevel) {
-    case 'full':
-      return FULL_AUTONOMY_PROMPT + JSON_SCHEMA_INSTRUCTION;
-    case 'strict':
-      return STRICT_RULES_PROMPT + JSON_SCHEMA_INSTRUCTION;
-    default:
-      return GUIDED_PROMPT + JSON_SCHEMA_INSTRUCTION;
-  }
-}
-
 const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 
 /**
@@ -109,10 +93,14 @@ export async function getTradeDecision(
   request: TradeDecisionRequest
 ): Promise<TradeDecision & { latencyMs: number; tokensUsed?: number; modelUsed: string }> {
   const openrouter = createOpenRouter({ apiKey: config.apiKey });
-  const systemPrompt = getSystemPrompt(request.autonomyLevel);
+  const systemPrompt = BASE_AGENT_PROMPT + JSON_SCHEMA_INSTRUCTION;
   const userPrompt = buildAnalysisPrompt({
-    systemPrompt,
-    ...request,
+    portfolioState: request.portfolioState,
+    marketData: request.marketData,
+    lastDecisions: request.lastDecisions,
+    config: request.config,
+    behavior: request.behavior,
+    personaMd: request.personaMd,
   });
 
   const startTime = Date.now();
@@ -141,6 +129,17 @@ export async function getTradeDecision(
 
   let lastError: unknown;
 
+  const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+
+  console.log('[llm-router] === FULL PROMPT SENT TO LLM ===');
+  console.log('[llm-router] Model(s) to try:', modelsToTry);
+  console.log('[llm-router] Prompt length (chars):', fullPrompt.length);
+  console.log('[llm-router] --- SYSTEM PROMPT ---');
+  console.log(systemPrompt);
+  console.log('[llm-router] --- USER PROMPT ---');
+  console.log(userPrompt);
+  console.log('[llm-router] === END PROMPT ===');
+
   for (const modelId of modelsToTry) {
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -154,12 +153,17 @@ export async function getTradeDecision(
         generateText({
           model: openrouter(modelId),
           // Merge system into prompt — some models (e.g. Gemma) reject the system role
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          prompt: fullPrompt,
           ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
           maxRetries: 0,
         }),
         timeoutPromise,
       ]);
+
+      console.log('[llm-router] === RAW LLM RESPONSE ===');
+      console.log('[llm-router] Model used:', modelId);
+      console.log('[llm-router] Raw text:', result.text);
+      console.log('[llm-router] === END RESPONSE ===');
 
       const json = extractJson(result.text ?? '');
       if (!json.trim()) {

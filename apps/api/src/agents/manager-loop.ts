@@ -16,7 +16,7 @@ import { createGeckoTerminalService } from '../services/gecko-terminal.js';
 import { generateId, nowIso, autonomyLevelToInt } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
 import type { ManagerConfig } from '@dex-agents/shared';
-import { getAgentPersonaTemplate } from '@dex-agents/shared';
+import { getAgentPersonaTemplate, getDefaultAgentPersona, AGENT_PROFILES } from '@dex-agents/shared';
 
 export type ManagerAction = 'create_agent' | 'start_agent' | 'pause_agent' | 'modify_agent' | 'terminate_agent' | 'hold';
 
@@ -175,8 +175,9 @@ export function buildManagerPrompt(ctx: {
   marketData: Array<{ pair: string; priceUsd: number; priceChange: Record<string, number | undefined>; indicators?: Record<string, unknown> }>;
   memory: ManagerMemory;
   managerConfig: ManagerConfig;
+  managerPersonaMd?: string | null;
 }): string {
-  const { agents: managedAgents, marketData, memory, managerConfig } = ctx;
+  const { agents: managedAgents, marketData, memory, managerConfig, managerPersonaMd } = ctx;
 
   const agentSummaries = managedAgents.map((a) =>
     `Agent: ${a.name} (id: ${a.id})\n` +
@@ -196,7 +197,26 @@ export function buildManagerPrompt(ctx: {
 
   const riskSummary = `MaxDrawdown: ${(managerConfig.riskParams.maxTotalDrawdown * 100).toFixed(0)}%, MaxAgents: ${managerConfig.riskParams.maxAgents}, MaxCorrelated: ${managerConfig.riskParams.maxCorrelatedPositions}`;
 
-  return `You are an Agent Manager overseeing a portfolio of paper trading agents on Base chain DEXes.
+  const b = managerConfig.behavior;
+  const behaviorSection = b
+    ? `## Your Management Style
+- Risk Tolerance: ${b.riskTolerance} | Management Style: ${b.managementStyle}
+- Creation Aggressiveness: ${b.creationAggressiveness}/100 | Performance Patience: ${b.performancePatience}/100
+- Diversification: ${b.diversificationPreference} | Rebalance Frequency: ${b.rebalanceFrequency}
+- Philosophy: ${b.philosophyBias}
+
+When creating agents, match your risk tolerance: ${
+    b.riskTolerance === 'aggressive'
+      ? 'Use bold, high-risk agents with larger positions (maxPositionSizePct 10-20), wider stops (stopLossPct 10-15), and higher take-profits (takeProfitPct 20-30). Set temperature 0.9-1.0 for creative decisions. Prefer personaMd styled after degen, momentum, or contrarian traders.'
+      : b.riskTolerance === 'conservative'
+      ? 'Use cautious agents with small positions (maxPositionSizePct 2-5), tight stops (stopLossPct 3-5), modest take-profits (takeProfitPct 5-10). Prefer personaMd styled after patient, data-driven traders.'
+      : 'Use balanced agents with moderate positions (maxPositionSizePct 5-10), reasonable stops (stopLossPct 5-8), and decent take-profits (takeProfitPct 10-15).'
+}`
+    : '';
+
+  const personaSection = managerPersonaMd ? `## Your Persona\n${managerPersonaMd}\n` : '';
+
+  return `${personaSection}You are an Agent Manager overseeing a portfolio of paper trading agents on Base chain DEXes.
 
 ## Managed Agents (${managedAgents.length})
 ${agentSummaries || 'No agents yet.'}
@@ -209,7 +229,7 @@ ${memorySummary}
 
 ## Risk Limits
 ${riskSummary}
-
+${behaviorSection ? '\n' + behaviorSection : ''}
 ## Model Cost Constraints
 You must use only the following free OpenRouter models when creating or modifying agents:
 - "nvidia/nemotron-3-nano-30b-a3b:free"
@@ -219,14 +239,18 @@ You must use only the following free OpenRouter models when creating or modifyin
 
 Never propose or use any paid or other model IDs (no OpenAI, GPT-4, GPT-3.5, etc). If unsure, default to "nvidia/nemotron-3-nano-30b-a3b:free".
 
+## Available Agent Profiles
+When creating agents, pick a profileId that naturally fits your management style and risk tolerance — or combine several across your fleet for diversity. You can also write a fully custom personaMd instead.
+${AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`).join('\n')}
+
 ## Instructions
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: autonomyLevel ("full"|"guided"|"strict"), personaMd (markdown persona text), stopLossPct, takeProfitPct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. If personaMd is omitted, the agent gets a default persona from the manager's profile.
+- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), autonomyLevel ("full"|"guided"|"strict"), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
 - "start_agent": start a stopped or paused agent (provide agentId)
 - "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, autonomyLevel ("full"|"guided"|"strict"), stopLossPct, takeProfitPct, maxOpenPositions, personaMd (markdown), etc.
+- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, autonomyLevel ("full"|"guided"|"strict"), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
 - "terminate_agent": permanently stop an agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 
@@ -335,17 +359,21 @@ export async function executeManagerAction(
 
     case 'create_agent': {
       if (!params) return { success: false, error: 'create_agent requires params' };
-      const [managerRow] = await db.select().from(agentManagers).where(eq(agentManagers.id, managerId));
       const agentName = String(params.name ?? 'Manager-created Agent');
       const paperBalance = Number(params.paperBalance ?? 10000);
       const slippageSimulation = 0.3;
       const analysisInterval = String(params.analysisInterval ?? '1h');
       const llmModel = normaliseAgentModel(params.llmModel);
-      const profileId = (managerRow?.profileId as string | null) ?? 'the_professor';
+      // Use the LLM-chosen profileId if it's a valid agent profile, otherwise no profile.
+      const validAgentProfileIds = new Set(AGENT_PROFILES.map((p) => p.id));
+      const llmProfileId = typeof params.profileId === 'string' ? params.profileId : null;
+      const profileId = llmProfileId && validAgentProfileIds.has(llmProfileId) ? llmProfileId : null;
       const personaMd =
         (typeof params.personaMd === 'string' && params.personaMd.trim())
           ? params.personaMd.trim()
-          : getAgentPersonaTemplate(profileId, agentName);
+          : profileId
+          ? getAgentPersonaTemplate(profileId, agentName)
+          : getDefaultAgentPersona(agentName);
       const autonomyLevelStr = parseAutonomyLevel(params.autonomyLevel);
       const config = {
         name: agentName,
@@ -514,7 +542,16 @@ export async function runManagerLoop(
   };
 
   // 7. Build prompt and call LLM
-  const prompt = buildManagerPrompt({ agents: agentSnapshots, marketData, memory, managerConfig: config });
+  const prompt = buildManagerPrompt({ agents: agentSnapshots, marketData, memory, managerConfig: config, managerPersonaMd: managerRow.personaMd });
+
+  console.log('[manager-loop] === FULL PROMPT SENT TO MANAGER LLM ===');
+  console.log('[manager-loop] Manager ID:', managerId);
+  console.log('[manager-loop] Model:', config.llmModel);
+  console.log('[manager-loop] Prompt length (chars):', prompt.length);
+  console.log('[manager-loop] personaMd from DB:', managerRow.personaMd ?? '(none)');
+  console.log('[manager-loop] --- PROMPT ---');
+  console.log(prompt);
+  console.log('[manager-loop] === END PROMPT ===');
 
   let rawResponse = '';
   if (!env.OPENROUTER_API_KEY) {
@@ -530,6 +567,9 @@ export async function runManagerLoop(
         maxOutputTokens: 2048,
       });
       rawResponse = result.text;
+      console.log('[manager-loop] === RAW LLM RESPONSE ===');
+      console.log(rawResponse);
+      console.log('[manager-loop] === END RESPONSE ===');
     } catch (err) {
       console.error(`[manager-loop] ${managerId}: LLM error:`, err);
       rawResponse = JSON.stringify([{ action: 'hold', reasoning: `LLM error: ${String(err)}` }]);
