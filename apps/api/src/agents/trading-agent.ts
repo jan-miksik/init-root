@@ -1,6 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
 import { drizzle } from 'drizzle-orm/d1';
-import { eq } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
 import { performanceSnapshots, trades } from '../db/schema.js';
 import { PaperEngine } from '../services/paper-engine.js';
