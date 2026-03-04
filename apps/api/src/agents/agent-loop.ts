@@ -5,7 +5,7 @@
  *       execute paper trade → log decision → check risk limits → reschedule
  */
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
 import { agents, trades, agentDecisions } from '../db/schema.js';
 import { createDexDataService, getPriceUsd } from '../services/dex-data.js';
@@ -67,6 +67,8 @@ export async function runAgentLoop(
   options?: { forceRun?: boolean }
 ): Promise<void> {
   const db = drizzle(env.DB);
+  // Enable FK enforcement (session-level in SQLite, must be set per connection)
+  try { await db.run(sql`PRAGMA foreign_keys = ON`); } catch { /* non-fatal */ }
   const geckoSvc = createGeckoTerminalService(env.CACHE);
   const dexSvc = createDexDataService(env.CACHE);
 

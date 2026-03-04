@@ -6,7 +6,7 @@
  *       execute actions → log to D1 → update memory
  */
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, inArray } from 'drizzle-orm';
+import { eq, desc, inArray, sql } from 'drizzle-orm';
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { Env } from '../types/env.js';
@@ -449,6 +449,8 @@ export async function runManagerLoop(
   ctx: DurableObjectState
 ): Promise<void> {
   const db = drizzle(env.DB);
+  // Enable FK enforcement (session-level in SQLite, must be set per connection)
+  try { await db.run(sql`PRAGMA foreign_keys = ON`); } catch { /* non-fatal */ }
 
   // 1. Load manager config
   const [managerRow] = await db.select().from(agentManagers).where(eq(agentManagers.id, managerId));
