@@ -147,7 +147,23 @@ export async function runAgentLoop(
   // 3. Check open positions for stop loss / take profit
   for (const position of engine.openPositions) {
     const currentPrice = await resolveCurrentPriceUsd(env, position.pair);
-    if (currentPrice === 0) continue;
+    if (currentPrice === 0) {
+      const missKey = `priceMiss:${position.id}`;
+      const misses = ((await ctx.storage.get<number>(missKey)) ?? 0) + 1;
+      await ctx.storage.put(missKey, misses);
+      if (misses >= 3) {
+        console.error(
+          `[agent-loop] ${agentId}: CRITICAL — price resolution failed ${misses} consecutive times for open position ${position.id} (${position.pair}). SL/TP checks skipped. Investigate GeckoTerminal/DexScreener availability.`
+        );
+      } else {
+        console.warn(
+          `[agent-loop] ${agentId}: Price resolution returned 0 for ${position.pair} (miss #${misses}). Skipping SL/TP check this tick.`
+        );
+      }
+      continue;
+    }
+    // Reset miss counter on successful price resolution
+    await ctx.storage.delete(`priceMiss:${position.id}`);
 
     if (engine.checkStopLoss(position, currentPrice, config.stopLossPct)) {
       try {
@@ -155,6 +171,7 @@ export async function runAgentLoop(
         await ctx.storage.put('pendingTrade', closed);
         await persistTrade(db, closed);
         await ctx.storage.delete('pendingTrade');
+        await ctx.storage.delete(`priceMiss:${position.id}`);
         await ctx.storage.put('lastStopOutAt', Date.now());
         console.log(
           `[agent-loop] ${agentId}: Stop loss triggered for ${position.pair} at $${currentPrice}`
@@ -174,6 +191,7 @@ export async function runAgentLoop(
         await ctx.storage.put('pendingTrade', closed);
         await persistTrade(db, closed);
         await ctx.storage.delete('pendingTrade');
+        await ctx.storage.delete(`priceMiss:${position.id}`);
         console.log(
           `[agent-loop] ${agentId}: Take profit triggered for ${position.pair} at $${currentPrice}`
         );
@@ -519,6 +537,7 @@ export async function runAgentLoop(
         await ctx.storage.put('pendingTrade', closed);
         await persistTrade(db, closed);
         await ctx.storage.delete('pendingTrade');
+        await ctx.storage.delete(`priceMiss:${position.id}`);
         console.log(
           `[agent-loop] ${agentId}: Closed ${position.pair} PnL=${closed.pnlPct?.toFixed(2)}%`
         );

@@ -203,6 +203,7 @@ export class TradingAgentDO extends DurableObject<Env> {
         await this.ctx.storage.put('pendingTrade', closed);
         await this.persistTrade(closed);
         await this.ctx.storage.delete('pendingTrade');
+        await this.ctx.storage.delete(`priceMiss:${positionId}`);
       } catch (err) {
         console.error(`[TradingAgentDO] failed to persist manual close trade ${positionId}:`, err);
         // pendingTrade remains in DO storage — agent-loop drain will retry on next tick
