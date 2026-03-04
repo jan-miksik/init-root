@@ -112,20 +112,19 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
           <div
             v-for="agent in agents.slice(0, 5)"
             :key="agent.id"
-            style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);"
+            class="agent-row"
+            @click="$router.push(`/agents/${agent.id}`)"
           >
             <div>
               <div style="display: flex; align-items: center; gap: 6px;">
-                <NuxtLink :to="`/agents/${agent.id}`" style="font-weight: 500; color: var(--text);">
-                  {{ agent.name }}
-                </NuxtLink>
+                <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
                 <span v-if="agent.managerId" class="managed-pill">🧠 managed</span>
               </div>
               <div style="font-size: 11px; color: var(--text-muted);">
                 {{ agent.config.pairs.slice(0, 2).join(', ') }}
               </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;" @click.stop>
               <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
               <button
                 v-if="agent.status !== 'running'"
@@ -198,6 +197,20 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
 </template>
 
 <style scoped>
+.agent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  border-radius: var(--radius, 6px);
+  transition: background 0.15s;
+  margin: 0 -8px;
+}
+.agent-row:hover {
+  background: var(--bg-hover);
+}
 .managed-pill {
   display: inline-flex;
   align-items: center;

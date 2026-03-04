@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Trade } from '~/composables/useTrades';
 
-defineProps<{
+const props = defineProps<{
   trades: Trade[];
   showAgent?: boolean;
 }>();
@@ -9,6 +9,39 @@ defineProps<{
 const { formatPnl, pnlClass, closeTrade } = useTrades();
 const expandedRows = ref<Set<string>>(new Set());
 const closing = ref<Set<string>>(new Set());
+
+type SortKey = 'pair' | 'amountUsd' | 'confidenceBefore' | 'pnlPct' | 'pnlUsd' | 'openedAt';
+type SortDir = 'asc' | 'desc';
+
+const sortKey = ref<SortKey | null>(null);
+const sortDir = ref<SortDir>('desc');
+
+function toggleSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortKey.value = key;
+    sortDir.value = 'desc';
+  }
+}
+
+function sortIcon(key: SortKey) {
+  if (sortKey.value !== key) return '↕';
+  return sortDir.value === 'asc' ? '↑' : '↓';
+}
+
+const sortedTrades = computed(() => {
+  if (!sortKey.value) return props.trades;
+  return [...props.trades].sort((a, b) => {
+    const k = sortKey.value!;
+    const av = (a as any)[k] ?? (k === 'pnlPct' || k === 'pnlUsd' ? -Infinity : '');
+    const bv = (b as any)[k] ?? (k === 'pnlPct' || k === 'pnlUsd' ? -Infinity : '');
+    const dir = sortDir.value === 'asc' ? 1 : -1;
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+});
 
 function toggleRow(id: string) {
   if (expandedRows.value.has(id)) {
@@ -42,6 +75,12 @@ function formatDate(iso: string) {
     minute: '2-digit',
   });
 }
+
+function formatPnlUsd(usd?: number) {
+  if (usd === undefined || usd === null) return '—';
+  const sign = usd >= 0 ? '+' : '';
+  return `${sign}$${Math.abs(usd).toFixed(2)}`;
+}
 </script>
 
 <template>
@@ -50,26 +89,27 @@ function formatDate(iso: string) {
       <thead>
         <tr>
           <th></th>
-          <th>Pair</th>
+          <th class="sortable" @click="toggleSort('pair')">Pair <span class="sort-icon">{{ sortIcon('pair') }}</span></th>
           <th>Side</th>
           <th>Entry</th>
           <th>Exit</th>
-          <th>Amount</th>
-          <th>Conf</th>
-          <th>P&amp;L</th>
+          <th class="sortable" @click="toggleSort('amountUsd')">Amount <span class="sort-icon">{{ sortIcon('amountUsd') }}</span></th>
+          <th class="sortable" @click="toggleSort('confidenceBefore')">Conf <span class="sort-icon">{{ sortIcon('confidenceBefore') }}</span></th>
+          <th class="sortable" @click="toggleSort('pnlPct')">P&amp;L % <span class="sort-icon">{{ sortIcon('pnlPct') }}</span></th>
+          <th class="sortable" @click="toggleSort('pnlUsd')">Gain/Loss <span class="sort-icon">{{ sortIcon('pnlUsd') }}</span></th>
           <th>Strategy</th>
           <th>Status</th>
-          <th>Opened</th>
+          <th class="sortable" @click="toggleSort('openedAt')">Opened <span class="sort-icon">{{ sortIcon('openedAt') }}</span></th>
           <th style="width: 110px; text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-if="trades.length === 0">
-          <td colspan="12" style="text-align: center; padding: 32px; color: var(--text-muted);">
+        <tr v-if="sortedTrades.length === 0">
+          <td colspan="13" style="text-align: center; padding: 32px; color: var(--text-muted);">
             No trades yet
           </td>
         </tr>
-        <template v-for="trade in trades" :key="trade.id">
+        <template v-for="trade in sortedTrades" :key="trade.id">
           <tr style="cursor: pointer;" @click="toggleRow(trade.id)">
             <td style="color: var(--text-muted); font-size: 11px; width: 16px;">
               {{ expandedRows.has(trade.id) ? '▼' : '▶' }}
@@ -88,6 +128,9 @@ function formatDate(iso: string) {
             </td>
             <td class="mono" :class="pnlClass(trade.pnlPct)">
               {{ formatPnl(trade.pnlPct) }}
+            </td>
+            <td class="mono" :class="pnlClass(trade.pnlUsd)">
+              {{ formatPnlUsd(trade.pnlUsd) }}
             </td>
             <td style="color: var(--text-muted); font-size: 12px;">{{ trade.strategyUsed }}</td>
             <td>
@@ -111,7 +154,7 @@ function formatDate(iso: string) {
             </td>
           </tr>
           <tr v-if="expandedRows.has(trade.id)">
-            <td colspan="12" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
+            <td colspan="13" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
               <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;">
                 <strong style="color: var(--text-primary);">Reasoning:</strong> {{ trade.reasoning }}
               </div>
@@ -122,3 +165,19 @@ function formatDate(iso: string) {
     </table>
   </div>
 </template>
+
+<style scoped>
+.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable:hover {
+  color: var(--text);
+}
+.sort-icon {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+</style>

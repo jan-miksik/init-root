@@ -63,65 +63,63 @@
         </div>
       </div>
 
-      <!-- Tabs -->
-      <div class="tabs">
-        <div class="tab" :class="{ active: activeTab === 'agents' }" @click="activeTab = 'agents'">
-          Agents <span v-if="managedAgents.length" style="color: var(--text-muted); margin-left: 4px;">{{ managedAgents.length }}</span>
-        </div>
-        <div class="tab" :class="{ active: activeTab === 'logs' }" @click="activeTab = 'logs'">
-          Decision Log <span v-if="logs.length" style="color: var(--text-muted); margin-left: 4px;">{{ logs.length }}</span>
-        </div>
-      </div>
-
-      <!-- Agents tab -->
-      <div v-if="activeTab === 'agents'">
-        <div v-if="managedAgents.length === 0" class="empty-state" style="padding: 32px 24px;">
-          <div class="empty-title">No agents yet</div>
-          <p>The manager will create agents based on its strategy when started.</p>
-        </div>
-        <div v-else class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Pairs</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="a in managedAgents" :key="a.id">
-                <td style="color: var(--text);">{{ a.name }}</td>
-                <td><span class="badge" :class="agentBadgeClass(a.status)">{{ a.status }}</span></td>
-                <td class="mono">{{ a.config?.pairs?.join(', ') ?? '—' }}</td>
-                <td><NuxtLink :to="`/agents/${a.id}`" class="btn btn-ghost btn-sm">View →</NuxtLink></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Logs tab -->
-      <div v-if="activeTab === 'logs'">
-        <div v-if="logs.length === 0" class="empty-state" style="padding: 32px 24px;">
-          <div class="empty-title">No decisions logged yet</div>
-          <p>Start the manager to begin generating decisions.</p>
-        </div>
-        <div v-else style="display: flex; flex-direction: column; gap: 8px;">
-          <div v-for="log in logs" :key="log.id" class="card" style="padding: 14px 16px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-              <span class="badge" :class="actionBadgeClass(log.action)" style="font-size: 11px;">{{ log.action }}</span>
-              <span style="font-size: 12px; color: var(--text-muted);">{{ new Date(log.createdAt).toLocaleString() }}</span>
-            </div>
-            <p style="font-size: 13px; color: var(--text-dim);">{{ log.reasoning }}</p>
-            <p v-if="log.result?.detail" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">{{ log.result.detail }}</p>
-            <p v-if="log.result?.error" style="font-size: 12px; color: var(--red); margin-top: 4px;">{{ log.result.error }}</p>
+      <!-- Two-column layout: Decision Log (left) + Agents (right) -->
+      <div class="detail-columns">
+        <!-- Decision Log (left) -->
+        <div class="detail-col-left">
+          <div class="col-header">Decision Log</div>
+          <div v-if="logs.length === 0" class="empty-state" style="padding: 32px 24px;">
+            <div class="empty-title">No decisions logged yet</div>
+            <p>Start the manager to begin generating decisions.</p>
           </div>
-          <button v-if="hasMoreLogs" class="btn btn-ghost" style="align-self: center; margin-top: 8px;" @click="loadMoreLogs">Load more…</button>
+          <div v-else style="display: flex; flex-direction: column; gap: 8px;">
+            <div v-for="log in pagedLogs" :key="log.id" class="card" style="padding: 14px 16px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span class="badge" :class="actionBadgeClass(log.action)" style="font-size: 11px;">{{ log.action }}</span>
+                <span style="font-size: 12px; color: var(--text-muted);">{{ new Date(log.createdAt).toLocaleString() }}</span>
+              </div>
+              <p style="font-size: 13px; color: var(--text-dim);">{{ log.reasoning }}</p>
+              <p v-if="log.result?.detail" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">{{ log.result.detail }}</p>
+              <p v-if="log.result?.error" style="font-size: 12px; color: var(--red); margin-top: 4px;">{{ log.result.error }}</p>
+            </div>
+            <!-- Pagination -->
+            <div v-if="totalLogPages > 1" class="log-pagination">
+              <button class="btn btn-ghost btn-sm" :disabled="logPage === 1" @click="logPage--">←</button>
+              <span style="font-size: 12px; color: var(--text-muted);">{{ logPage }} / {{ totalLogPages }}</span>
+              <button class="btn btn-ghost btn-sm" :disabled="logPage >= totalLogPages" @click="logPage++; maybeLoadMore()">→</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agents (right) -->
+        <div class="detail-col-right">
+          <div class="col-header">Agents <span v-if="managedAgents.length" style="color: var(--text-muted); font-weight: 400;">{{ managedAgents.length }}</span></div>
+          <div v-if="managedAgents.length === 0" class="empty-state" style="padding: 32px 24px;">
+            <div class="empty-title">No agents yet</div>
+            <p>The manager will create agents based on its strategy when started.</p>
+          </div>
+          <div v-else class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Pairs</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="a in managedAgents" :key="a.id">
+                  <td style="color: var(--text);">{{ a.name }}</td>
+                  <td><span class="badge" :class="agentBadgeClass(a.status)">{{ a.status }}</span></td>
+                  <td class="mono">{{ a.config?.pairs?.join(', ') ?? '—' }}</td>
+                  <td><NuxtLink :to="`/agents/${a.id}`" class="btn btn-ghost btn-sm">View →</NuxtLink></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-
-      <!-- Behavior & Persona tabs removed -->
     </template>
 
     <div v-else class="alert alert-error">Manager not found.</div>
@@ -166,7 +164,6 @@ const route = useRoute();
 const router = useRouter();
 const id = route.params.id as string;
 
-const activeTab = ref<'agents' | 'logs'>('agents');
 const actionLoading = ref(false);
 const showDeleteModal = ref(false);
 const deleteAgentsChoice = ref<'detach' | 'delete'>('detach');
@@ -196,6 +193,21 @@ const { data: logsData, refresh: refreshLogs } = await useFetch<{ logs: any[] }>
 });
 const logs = ref<any[]>(logsData.value?.logs ?? []);
 const hasMoreLogs = ref((logsData.value?.logs?.length ?? 0) === 20);
+
+const LOG_PAGE_SIZE = 10;
+const logPage = ref(1);
+const totalLogPages = computed(() => Math.max(1, Math.ceil(logs.value.length / LOG_PAGE_SIZE)));
+const pagedLogs = computed(() => {
+  const start = (logPage.value - 1) * LOG_PAGE_SIZE;
+  return logs.value.slice(start, start + LOG_PAGE_SIZE);
+});
+
+async function maybeLoadMore() {
+  // If we're on the last page and there may be more, fetch them
+  if (logPage.value >= totalLogPages.value && hasMoreLogs.value) {
+    await loadMoreLogs();
+  }
+}
 
 // Polling: refresh manager (for doStatus) every 2s when running.
 // Reload logs+agents when `deciding` transitions true→false (decision just finished).
@@ -290,7 +302,6 @@ async function triggerDecision() {
   actionLoading.value = true;
   try {
     await $fetch(`/api/managers/${id}/trigger`, { method: 'POST', credentials: 'include' });
-    activeTab.value = 'logs';
     await refresh();
   } catch (err) {
     console.error(err);
@@ -395,6 +406,29 @@ async function loadMoreLogs() {
   font-size: 12px;
   color: var(--text-muted);
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* Two-column layout */
+.detail-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.col-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 /* Delete modal */

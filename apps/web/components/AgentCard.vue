@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { Agent } from '~/composables/useAgents';
+import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 
-defineProps<{
+const props = defineProps<{
   agent: Agent;
 }>();
 
@@ -16,13 +17,19 @@ defineEmits<{
 function statusDot(status: string) {
   return status === 'running' ? '●' : status === 'paused' ? '◐' : '○';
 }
+
+const personaEmoji = computed(() => {
+  const configProfileId = (props.agent.config as { profileId?: string }).profileId;
+  const profileId = props.agent.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
+  return getAgentProfile(profileId)?.emoji ?? '🤖';
+});
 </script>
 
 <template>
   <div class="agent-card" @click="$emit('click')">
     <div class="agent-card-header">
       <div>
-        <div class="agent-name">{{ agent.name }}</div>
+        <div class="agent-name"><span class="agent-persona-emoji">{{ personaEmoji }}</span> {{ agent.name }}</div>
         <div class="agent-meta">
           {{ agent.autonomyLevel }} · {{ agent.config.analysisInterval }} interval
         </div>
@@ -90,6 +97,10 @@ function statusDot(status: string) {
 </template>
 
 <style scoped>
+.agent-persona-emoji {
+  font-size: 1.1em;
+  margin-right: 4px;
+}
 .managed-tag {
   display: inline-flex;
   align-items: center;
