@@ -7,6 +7,9 @@
  */
 
 async function deriveKey(secret: string): Promise<CryptoKey> {
+  if (!/^[0-9a-fA-F]{64}$/.test(secret)) {
+    throw new Error('KEY_ENCRYPTION_SECRET must be a 64-character hex string (32 bytes)');
+  }
   const raw = new Uint8Array(
     secret.match(/.{2}/g)!.map((h) => parseInt(h, 16))
   );
@@ -35,6 +38,10 @@ export async function encryptKey(
   return btoa(String.fromCharCode(...buf));
 }
 
+/**
+ * Decrypt a value previously encrypted with encryptKey.
+ * @throws {DOMException} OperationError if the key is wrong or ciphertext is corrupted.
+ */
 export async function decryptKey(
   stored: string,
   secret: string | undefined
