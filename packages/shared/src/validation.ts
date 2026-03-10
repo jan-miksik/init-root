@@ -185,7 +185,7 @@ const FREE_MANAGER_MODELS = [
 ] as const;
 
 export const ManagerConfigSchema = z.object({
-  llmModel: z.enum(FREE_MANAGER_MODELS).default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
   temperature: z.number().min(0).max(2).default(0.7),
   decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
   riskParams: ManagerRiskParamsSchema.default({}),
@@ -200,7 +200,7 @@ export type ManagerConfig = z.infer<typeof ManagerConfigSchema>;
 export const CreateManagerRequestSchema = z.object({
   name: z.string().min(1).max(50),
   description: z.string().max(500).optional(),
-  llmModel: z.enum(FREE_MANAGER_MODELS).default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
   temperature: z.number().min(0).max(2).default(0.7),
   decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
   riskParams: ManagerRiskParamsSchema.optional(),
