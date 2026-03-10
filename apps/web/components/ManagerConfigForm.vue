@@ -5,6 +5,7 @@ import { useAuth } from '~/composables/useAuth';
 
 const { user } = useAuth();
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
+const dropdownModel = ref(props.initial?.llmModel ?? 'nvidia/nemotron-3-nano-30b-a3b:free');
 const customModel = ref('');
 
 const PAID_MODELS = [
@@ -61,8 +62,9 @@ const form = reactive({
 const submitting = ref(false);
 const validationError = ref('');
 
+watch(dropdownModel, (val) => { form.llmModel = val; });
 watch(customModel, (val) => {
-  if (val.trim()) form.llmModel = val.trim();
+  form.llmModel = val.trim() || dropdownModel.value;
 });
 
 // Accordions — all collapsed by default
@@ -299,7 +301,7 @@ function handleSubmit() {
           <div class="grid-2">
             <div class="form-group">
               <label class="form-label">LLM Model</label>
-              <select v-model="form.llmModel" class="form-select">
+              <select v-model="dropdownModel" class="form-select">
                 <optgroup label="Free models (OpenRouter)">
                   <option value="nvidia/nemotron-3-nano-30b-a3b:free">Nemotron-30B (free)</option>
                   <option value="stepfun/step-3.5-flash:free">Step-3.5 Flash (free)</option>

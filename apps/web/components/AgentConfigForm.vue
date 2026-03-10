@@ -17,9 +17,12 @@ const PAID_MODELS = [
 ] as const;
 
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
+const dropdownModel = ref('nvidia/nemotron-3-nano-30b-a3b:free');
 const customModel = ref('');
+// Keep form.llmModel in sync: custom input overrides dropdown; clearing restores dropdown value.
+watch(dropdownModel, (val) => { form.llmModel = val; });
 watch(customModel, (val) => {
-  if (val.trim()) form.llmModel = val.trim();
+  form.llmModel = val.trim() || dropdownModel.value;
 });
 
 const props = defineProps<{
@@ -209,6 +212,7 @@ watch(() => form.name, (name) => {
 onMounted(() => {
   if (props.initialValues) {
     Object.assign(form, props.initialValues);
+    if (props.initialValues.llmModel) dropdownModel.value = props.initialValues.llmModel;
     const allowed = new Set<string>(AVAILABLE_PAIRS);
     form.pairs = form.pairs.filter((p) => allowed.has(p));
     if (form.pairs.length === 0) form.pairs = [AVAILABLE_PAIRS[0]];
@@ -356,7 +360,7 @@ async function handleSubmit() {
 
           <div class="form-group">
             <label class="form-label">LLM Model</label>
-            <select v-model="form.llmModel" class="form-select">
+            <select v-model="dropdownModel" class="form-select">
               <optgroup label="Free models (OpenRouter)">
                 <option value="nvidia/nemotron-3-nano-30b-a3b:free">Nemotron-30B (free)</option>
                 <option value="stepfun/step-3.5-flash:free">Step-3.5 Flash (free)</option>
