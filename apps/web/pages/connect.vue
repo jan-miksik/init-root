@@ -10,6 +10,13 @@ watch(isAuthenticated, (val) => {
   if (val) router.push('/');
 }, { immediate: true });
 
+const { initConnect } = useOpenRouter();
+const connectingOR = ref(false);
+async function handleConnectOR() {
+  connectingOR.value = true;
+  await initConnect(); // redirects away, so no finally needed
+}
+
 async function handleSignIn() {
   error.value = null;
   try {
@@ -75,6 +82,29 @@ function truncate(addr: string): string {
           </p>
           <NuxtLink to="/" class="btn btn-primary btn-wide">Go to Dashboard</NuxtLink>
         </div>
+    </div>
+
+    <div v-if="isAuthenticated" class="connect-step2">
+      <div class="step-header">
+        <span class="step-num">2</span>
+        <span class="step-label">Connect OpenRouter <span class="step-opt">(optional)</span></span>
+      </div>
+      <p class="step-desc">
+        Unlock paid models (GPT-5, Claude, Gemini…) using your own OpenRouter account.
+        Your key is stored encrypted and never shared.
+      </p>
+      <div class="step-actions">
+        <template v-if="user?.openRouterKeySet">
+          <span class="or-connected-badge">✓ OpenRouter connected</span>
+          <NuxtLink to="/" class="btn btn-primary btn-sm">Continue →</NuxtLink>
+        </template>
+        <template v-else>
+          <button class="btn btn-primary" :disabled="connectingOR" @click="handleConnectOR">
+            {{ connectingOR ? 'Redirecting…' : 'Connect OpenRouter →' }}
+          </button>
+          <NuxtLink to="/" class="skip-link">Skip for now</NuxtLink>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -214,4 +244,67 @@ function truncate(addr: string): string {
 .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from,
 .fade-leave-to { opacity: 0; }
+
+.connect-step2 {
+  margin-top: 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+.connect-step2 .step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.connect-step2 .step-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.step-opt {
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.step-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.or-connected-badge {
+  font-size: 13px;
+  color: var(--success, #22c55e);
+  font-weight: 500;
+}
+.skip-link {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.skip-link:hover { color: var(--text); }
 </style>
