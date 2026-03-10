@@ -20,6 +20,8 @@ import {
 } from '../lib/auth.js';
 import { validateBody } from '../lib/validation.js';
 import { z } from 'zod';
+import { encryptKey } from '../lib/crypto.js';
+import { nowIso } from '../lib/utils.js';
 
 const authRoute = new Hono<{ Bindings: Env }>();
 
@@ -81,7 +83,9 @@ authRoute.post('/verify', async (c) => {
     displayName: result.user.displayName,
     authProvider: result.user.authProvider,
     avatarUrl: result.user.avatarUrl,
+    role: result.user.role,
     createdAt: result.user.createdAt,
+    openRouterKeySet: !!result.user.openRouterKey,
   });
 });
 
@@ -105,7 +109,9 @@ authRoute.get('/me', async (c) => {
     displayName: user.displayName,
     authProvider: user.authProvider,
     avatarUrl: user.avatarUrl,
+    role: user.role,
     createdAt: user.createdAt,
+    openRouterKeySet: !!user.openRouterKey,
   });
 });
 
@@ -116,6 +122,63 @@ authRoute.post('/logout', async (c) => {
   if (token) await deleteSession(c.env.CACHE, token);
 
   c.header('Set-Cookie', buildExpiredSessionCookie());
+  return c.json({ ok: true });
+});
+
+/** POST /api/auth/openrouter/exchange — exchange PKCE code for OR key, encrypt, store */
+authRoute.post('/openrouter/exchange', async (c) => {
+  const cookieHeader = c.req.header('cookie') ?? '';
+  const token = parseCookieValue(cookieHeader, 'session');
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+
+  const session = await getSession(c.env.CACHE, token);
+  if (!session) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = await c.req.json<{ code?: string; code_verifier?: string }>();
+  if (!body.code || !body.code_verifier) {
+    return c.json({ error: 'Missing code or code_verifier' }, 400);
+  }
+
+  const res = await fetch('https://openrouter.ai/api/v1/auth/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: body.code, code_verifier: body.code_verifier }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('[auth/openrouter/exchange] OpenRouter error:', res.status, text);
+    return c.json({ error: 'OpenRouter exchange failed' }, 502);
+  }
+
+  const data = await res.json<{ key?: string }>();
+  if (!data.key) return c.json({ error: 'No key in OpenRouter response' }, 502);
+
+  const encrypted = await encryptKey(data.key, c.env.KEY_ENCRYPTION_SECRET);
+  const orm = drizzle(c.env.DB);
+  await orm
+    .update(users)
+    .set({ openRouterKey: encrypted, updatedAt: nowIso() })
+    .where(eq(users.id, session.userId));
+
+  return c.json({ ok: true });
+});
+
+/** DELETE /api/auth/openrouter/disconnect — remove stored OR key */
+authRoute.delete('/openrouter/disconnect', async (c) => {
+  const cookieHeader = c.req.header('cookie') ?? '';
+  const token = parseCookieValue(cookieHeader, 'session');
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+
+  const session = await getSession(c.env.CACHE, token);
+  if (!session) return c.json({ error: 'Unauthorized' }, 401);
+
+  const orm = drizzle(c.env.DB);
+  await orm
+    .update(users)
+    .set({ openRouterKey: null, updatedAt: nowIso() })
+    .where(eq(users.id, session.userId));
+
   return c.json({ ok: true });
 });
 
