@@ -13,4 +13,6 @@ export interface Env {
   CORS_ORIGINS?: string;
   /** Optional Base RPC URL for ERC-1271/ERC-6492 smart account signature verification. Falls back to public Base RPC. */
   BASE_RPC_URL?: string;
+  /** 64-char hex (32 bytes). Used to AES-GCM encrypt user API keys at rest. If absent, keys stored plain (dev only). */
+  KEY_ENCRYPTION_SECRET?: string;
 }
