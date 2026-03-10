@@ -44,6 +44,8 @@ export function useOpenRouter() {
   async function handleCallback(code: string): Promise<void> {
     const verifier = sessionStorage.getItem(VERIFIER_KEY);
     if (!verifier) throw new Error('PKCE verifier missing from session. Please try connecting again.');
+    // Remove before the fetch — intentional. A one-time-use secret should not
+    // linger in storage. If the exchange fails, the user must re-initiate the flow.
     sessionStorage.removeItem(VERIFIER_KEY);
 
     await $fetch('/api/auth/openrouter/exchange', {
