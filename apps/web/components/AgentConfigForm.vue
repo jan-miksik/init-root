@@ -20,7 +20,7 @@ const form = reactive<CreateAgentPayload & { pairs: string[] }>({
   pairs: ['WETH/USDC'],
   paperBalance: 10000,
   strategies: ['combined'],
-  analysisInterval: '1h',
+  analysisInterval: '15m',
   maxPositionSizePct: 5,
   stopLossPct: 5,
   takeProfitPct: 7,
@@ -310,8 +310,6 @@ async function handleSubmit() {
             <div class="form-group">
               <label class="form-label">Analysis Interval</label>
               <select v-model="form.analysisInterval" class="form-select">
-                <option value="1m">Every 1 minute</option>
-                <option value="5m">Every 5 minutes</option>
                 <option value="15m">Every 15 minutes</option>
                 <option value="1h">Every hour</option>
                 <option value="4h">Every 4 hours</option>

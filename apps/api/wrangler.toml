@@ -15,8 +15,7 @@ cwd = "../.."
 # Cloudflare free plan allows max 5 cron triggers per Worker
 [triggers]
 crons = [
-  "*/5 * * * *",   # 5m
-  "*/15 * * * *",  # 15m
+  "*/15 * * * *",  # 15m (minimum interval)
   "0 * * * *",     # 1h
   "0 */4 * * *",   # 4h
   "0 0 * * *"      # 1d

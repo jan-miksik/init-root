@@ -17,8 +17,10 @@ async function refresh() {
 
 onMounted(refresh);
 
-// Auto-refresh every 30s
-const timer = setInterval(refresh, 30_000);
+// Auto-refresh every 60s, but only when the tab is visible
+const timer = setInterval(() => {
+  if (document.visibilityState === 'visible') refresh();
+}, 60_000);
 onUnmounted(() => clearInterval(timer));
 
 const runningCount = computed(() => agents.value.filter((a) => a.status === 'running').length);

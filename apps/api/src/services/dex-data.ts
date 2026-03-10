@@ -70,7 +70,7 @@ const PairsResponseSchema = z.object({
 // ─── DexScreener client ───────────────────────────────────────────────────────
 
 const DEXSCREENER_BASE = 'https://api.dexscreener.com/latest/dex';
-const CACHE_TTL_SECONDS = 60; // KV minimum is 60 seconds
+const CACHE_TTL_SECONDS = 900; // 15 min — matches frontend cache window, shared across agents on same pair
 const TOP_PAIRS_CACHE_TTL = 300; // 5 minutes for top pairs list
 
 /** Base chain token addresses used to fetch top pairs by volume */

@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 const GECKO_BASE = 'https://api.geckoterminal.com/api/v2';
-const CACHE_TTL = 60; // seconds (KV minimum is 60)
+const CACHE_TTL = 900; // seconds — 15 min matches frontend cache window
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 // Use .nullable().optional() everywhere — GeckoTerminal returns null for missing

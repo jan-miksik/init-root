@@ -3,6 +3,7 @@ import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 
 definePageMeta({ ssr: false });
 const { agents, loading, error, fetchAgents, createAgent, startAgent, stopAgent, deleteAgent, updateAgent } = useAgents();
+const { request } = useApi();
 const router = useRouter();
 
 const userAgents = computed(() => agents.value.filter((a) => !a.managerId));
@@ -20,8 +21,48 @@ const saveError = ref('');
 // View mode: table (default) or grid
 const viewMode = ref<'table' | 'grid'>('table');
 
+// Column visibility for table view
+type ColumnKey =
+  | 'status'
+  | 'autonomyLevel'
+  | 'pairs'
+  | 'model'
+  | 'analysisInterval'
+  | 'paperBalance'
+  | 'maxPositionSizePct'
+  | 'slTp'
+  | 'totalPnl'
+  | 'actions';
+
+const visibleColumns = ref<Record<ColumnKey, boolean>>({
+  status: true,
+  autonomyLevel: true,
+  pairs: false, // hidden by default
+  model: false, // hidden by default
+  analysisInterval: true,
+  paperBalance: true,
+  maxPositionSizePct: true,
+  slTp: true,
+  totalPnl: true,
+  actions: true,
+});
+
+const showColumnMenu = ref(false);
+const columnMenuRef = ref<HTMLElement | null>(null);
+const columnMenuButtonRef = ref<HTMLElement | null>(null);
+
+// Row actions menu (max one open at a time)
+const openActionsForAgent = ref<string | null>(null);
+
 // Sorting
-type SortKey = 'name' | 'status' | 'autonomyLevel' | 'analysisInterval' | 'paperBalance' | 'maxPositionSizePct';
+type SortKey =
+  | 'name'
+  | 'status'
+  | 'autonomyLevel'
+  | 'analysisInterval'
+  | 'paperBalance'
+  | 'maxPositionSizePct'
+  | 'totalPnl';
 type SortDir = 'asc' | 'desc';
 const sortKey = ref<SortKey>('name');
 const sortDir = ref<SortDir>('asc');
@@ -52,6 +93,9 @@ function sortedList(list: typeof agents.value) {
     } else if (sortKey.value === 'maxPositionSizePct') {
       av = a.config.maxPositionSizePct;
       bv = b.config.maxPositionSizePct;
+    } else if (sortKey.value === 'totalPnl') {
+      av = agentPnl.value[a.id]?.totalPnlUsd ?? 0;
+      bv = agentPnl.value[b.id]?.totalPnlUsd ?? 0;
     } else {
       av = (a as any)[sortKey.value] ?? '';
       bv = (b as any)[sortKey.value] ?? '';
@@ -63,8 +107,48 @@ function sortedList(list: typeof agents.value) {
   });
 }
 
-const sortedUserAgents = computed(() => sortedList(userAgents.value));
-const sortedManagedAgents = computed(() => sortedList(managedAgents.value));
+const sortedAgents = computed(() => sortedList(agents.value));
+
+// Per-agent P&L (from performance snapshots)
+interface PerformanceSnapshot {
+  id: string;
+  balance: number;
+  totalPnlPct: number;
+  winRate: number;
+  totalTrades: number;
+  snapshotAt: string;
+}
+
+const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
+
+async function loadAgentPerformance(agentId: string) {
+  try {
+    const res = await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`);
+    const latest = res.snapshots[0];
+    if (!latest) return;
+    const agent = agents.value.find((a) => a.id === agentId);
+    const startingBalance = agent?.config.paperBalance ?? latest.balance / (1 + latest.totalPnlPct / 100);
+    const totalPnlUsd = latest.balance - startingBalance;
+    agentPnl.value[agentId] = {
+      totalPnlUsd,
+      totalPnlPct: latest.totalPnlPct,
+    };
+  } catch {
+    // ignore per-agent performance errors in list view
+  }
+}
+
+watch(
+  agents,
+  (list) => {
+    for (const a of list) {
+      if (!agentPnl.value[a.id]) {
+        loadAgentPerformance(a.id);
+      }
+    }
+  },
+  { immediate: true },
+);
 
 function agentEmoji(agent: (typeof agents.value)[0]) {
   const configProfileId = (agent.config as { profileId?: string }).profileId;
@@ -72,7 +156,32 @@ function agentEmoji(agent: (typeof agents.value)[0]) {
   return getAgentProfile(profileId)?.emoji ?? '🤖';
 }
 
-onMounted(fetchAgents);
+function handleGlobalClick(e: MouseEvent) {
+  const target = e.target as Node | null;
+  if (!target) return;
+  // Column menu close on outside click
+  if (showColumnMenu.value) {
+    if (!columnMenuRef.value?.contains(target) && !columnMenuButtonRef.value?.contains(target)) {
+      showColumnMenu.value = false;
+    }
+  }
+  // Row actions dropdown close on outside click
+  if (openActionsForAgent.value) {
+    const withinActionsMenu = (target as HTMLElement | null)?.closest?.('.agent-actions-menu');
+    if (!withinActionsMenu) {
+      openActionsForAgent.value = null;
+    }
+  }
+}
+
+onMounted(() => {
+  fetchAgents();
+  document.addEventListener('click', handleGlobalClick);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleGlobalClick);
+});
 
 async function handleCreate(payload: Parameters<typeof createAgent>[0]) {
   creating.value = true;
@@ -133,6 +242,58 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
         <p class="page-subtitle">{{ agents.length }} agents · {{ agents.filter(a => a.status === 'running').length }} running<span v-if="managedAgents.length"> · {{ managedAgents.length }} managed</span></p>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
+        <!-- Column visibility menu -->
+        <div style="position: relative;" ref="columnMenuButtonRef">
+          <button
+            class="btn btn-ghost btn-sm"
+            style="padding-inline: 8px;"
+            title="Configure table columns"
+            @click="showColumnMenu = !showColumnMenu"
+          >
+            ⋯
+          </button>
+          <div
+            v-if="showColumnMenu"
+            ref="columnMenuRef"
+            style="position: absolute; right: 0; top: 110%; z-index: 60; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 170px; box-shadow: 0 10px 30px rgba(0,0,0,0.45);"
+          >
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px;">
+              Visible columns
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.status" type="checkbox" /> Status
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.autonomyLevel" type="checkbox" /> Autonomy
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.pairs" type="checkbox" /> Pairs
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.model" type="checkbox" /> Model
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.analysisInterval" type="checkbox" /> Interval
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.paperBalance" type="checkbox" /> Balance
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.maxPositionSizePct" type="checkbox" /> Max Pos
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.slTp" type="checkbox" /> SL / TP
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.totalPnl" type="checkbox" /> Total P&amp;L
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px;">
+                <input v-model="visibleColumns.actions" type="checkbox" /> Actions
+              </label>
+            </div>
+          </div>
+        </div>
         <!-- View toggle -->
         <div class="view-toggle">
           <button :class="['toggle-btn', { active: viewMode === 'table' }]" title="Table view" @click="viewMode = 'table'">☰</button>
@@ -161,114 +322,156 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 
     <!-- TABLE VIEW -->
     <div v-else-if="viewMode === 'table'">
-      <!-- User-created agents -->
-      <div v-if="userAgents.length > 0">
-        <div v-if="managedAgents.length > 0" class="section-header">Your agents</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 32px;"></th>
-                <th class="sortable" @click="toggleSort('name')">Name <span class="sort-icon">{{ sortIcon('name') }}</span></th>
-                <th class="sortable" @click="toggleSort('status')">Status <span class="sort-icon">{{ sortIcon('status') }}</span></th>
-                <th class="sortable" @click="toggleSort('autonomyLevel')">Autonomy <span class="sort-icon">{{ sortIcon('autonomyLevel') }}</span></th>
-                <th>Pairs</th>
-                <th>Model</th>
-                <th class="sortable" @click="toggleSort('analysisInterval')">Interval <span class="sort-icon">{{ sortIcon('analysisInterval') }}</span></th>
-                <th class="sortable" @click="toggleSort('paperBalance')">Balance <span class="sort-icon">{{ sortIcon('paperBalance') }}</span></th>
-                <th class="sortable" @click="toggleSort('maxPositionSizePct')">Max Pos <span class="sort-icon">{{ sortIcon('maxPositionSizePct') }}</span></th>
-                <th>SL / TP</th>
-                <th style="text-align: right; white-space: nowrap;">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="agent in sortedUserAgents"
-                :key="agent.id"
-                class="agent-table-row"
-                @click="$router.push(`/agents/${agent.id}`)"
+      <div class="table-wrap" style="overflow: visible;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 32px;"></th>
+              <th class="sortable" @click="toggleSort('name')">Name <span class="sort-icon">{{ sortIcon('name') }}</span></th>
+              <th
+                v-if="visibleColumns.status"
+                class="sortable"
+                @click="toggleSort('status')"
               >
-                <td style="font-size: 18px; line-height: 1;">{{ agentEmoji(agent) }}</td>
-                <td>
-                  <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
-                </td>
-                <td><span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span></td>
-                <td style="color: var(--text-muted); font-size: 12px;">{{ agent.autonomyLevel }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.pairs.join(', ') }}</td>
-                <td style="color: var(--text-muted); font-size: 12px;">{{ agent.llmModel.split('/')[1]?.replace(':free', '') ?? agent.llmModel }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.analysisInterval }}</td>
-                <td class="mono" style="font-size: 12px;">${{ agent.config.paperBalance.toLocaleString() }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.maxPositionSizePct }}%</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%</td>
-                <td style="text-align: right;" @click.stop>
-                  <div style="display: flex; gap: 4px; justify-content: flex-end;">
-                    <button v-if="agent.status !== 'running'" class="btn btn-success btn-sm" @click="startAgent(agent.id)">▶</button>
-                    <button v-else class="btn btn-ghost btn-sm" @click="stopAgent(agent.id)">■</button>
-                    <button class="btn btn-ghost btn-sm" @click="handleEditClick(agent.id)">✎</button>
-                    <button class="btn btn-danger btn-sm" @click="handleDelete(agent.id)">✕</button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Manager-created agents -->
-      <div v-if="managedAgents.length > 0" :style="userAgents.length > 0 ? 'margin-top: 28px;' : ''">
-        <div class="section-header">
-          <span>Managed by Agent Manager</span>
-          <span class="section-count">{{ managedAgents.length }}</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 32px;"></th>
-                <th class="sortable" @click="toggleSort('name')">Name <span class="sort-icon">{{ sortIcon('name') }}</span></th>
-                <th class="sortable" @click="toggleSort('status')">Status <span class="sort-icon">{{ sortIcon('status') }}</span></th>
-                <th class="sortable" @click="toggleSort('autonomyLevel')">Autonomy <span class="sort-icon">{{ sortIcon('autonomyLevel') }}</span></th>
-                <th>Pairs</th>
-                <th>Model</th>
-                <th class="sortable" @click="toggleSort('analysisInterval')">Interval <span class="sort-icon">{{ sortIcon('analysisInterval') }}</span></th>
-                <th class="sortable" @click="toggleSort('paperBalance')">Balance <span class="sort-icon">{{ sortIcon('paperBalance') }}</span></th>
-                <th class="sortable" @click="toggleSort('maxPositionSizePct')">Max Pos <span class="sort-icon">{{ sortIcon('maxPositionSizePct') }}</span></th>
-                <th>SL / TP</th>
-                <th style="text-align: right; white-space: nowrap;">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="agent in sortedManagedAgents"
-                :key="agent.id"
-                class="agent-table-row"
-                @click="$router.push(`/agents/${agent.id}`)"
+                Status <span class="sort-icon">{{ sortIcon('status') }}</span>
+              </th>
+              <th
+                v-if="visibleColumns.autonomyLevel"
+                class="sortable"
+                @click="toggleSort('autonomyLevel')"
               >
-                <td style="font-size: 18px; line-height: 1;">{{ agentEmoji(agent) }}</td>
-                <td>
-                  <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
-                  <span class="managed-tag">🧠</span>
-                </td>
-                <td><span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span></td>
-                <td style="color: var(--text-muted); font-size: 12px;">{{ agent.autonomyLevel }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.pairs.join(', ') }}</td>
-                <td style="color: var(--text-muted); font-size: 12px;">{{ agent.llmModel.split('/')[1]?.replace(':free', '') ?? agent.llmModel }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.analysisInterval }}</td>
-                <td class="mono" style="font-size: 12px;">${{ agent.config.paperBalance.toLocaleString() }}</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.maxPositionSizePct }}%</td>
-                <td class="mono" style="font-size: 12px;">{{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%</td>
-                <td style="text-align: right;" @click.stop>
-                  <div style="display: flex; gap: 4px; justify-content: flex-end;">
-                    <button v-if="agent.status !== 'running'" class="btn btn-success btn-sm" @click="startAgent(agent.id)">▶</button>
-                    <button v-else class="btn btn-ghost btn-sm" @click="stopAgent(agent.id)">■</button>
-                    <button class="btn btn-ghost btn-sm" @click="handleEditClick(agent.id)">✎</button>
-                    <button class="btn btn-danger btn-sm" @click="handleDelete(agent.id)">✕</button>
+                Autonomy <span class="sort-icon">{{ sortIcon('autonomyLevel') }}</span>
+              </th>
+              <th v-if="visibleColumns.pairs">Pairs</th>
+              <th v-if="visibleColumns.model">Model</th>
+              <th
+                v-if="visibleColumns.analysisInterval"
+                class="sortable"
+                @click="toggleSort('analysisInterval')"
+              >
+                Interval <span class="sort-icon">{{ sortIcon('analysisInterval') }}</span>
+              </th>
+              <th
+                v-if="visibleColumns.paperBalance"
+                class="sortable"
+                @click="toggleSort('paperBalance')"
+              >
+                Balance <span class="sort-icon">{{ sortIcon('paperBalance') }}</span>
+              </th>
+              <th
+                v-if="visibleColumns.maxPositionSizePct"
+                class="sortable"
+                @click="toggleSort('maxPositionSizePct')"
+              >
+                Max Pos <span class="sort-icon">{{ sortIcon('maxPositionSizePct') }}</span>
+              </th>
+              <th v-if="visibleColumns.slTp" style="min-width: 120px; white-space: nowrap;">SL / TP</th>
+              <th
+                v-if="visibleColumns.totalPnl"
+                class="sortable"
+                @click="toggleSort('totalPnl')"
+              >
+                Total P&amp;L <span class="sort-icon">{{ sortIcon('totalPnl') }}</span>
+              </th>
+              <th v-if="visibleColumns.actions" style="text-align: right; white-space: nowrap;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="agent in sortedAgents"
+              :key="agent.id"
+              class="agent-table-row"
+              @click="$router.push(`/agents/${agent.id}`)"
+            >
+              <td style="font-size: 18px; line-height: 1;">{{ agentEmoji(agent) }}</td>
+              <td>
+                <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
+                <span v-if="agent.managerId" class="managed-tag">🧠 managed</span>
+              </td>
+              <td v-if="visibleColumns.status">
+                <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
+              </td>
+              <td v-if="visibleColumns.autonomyLevel" style="color: var(--text-muted); font-size: 12px;">
+                {{ agent.autonomyLevel }}
+              </td>
+              <td v-if="visibleColumns.pairs" class="mono" style="font-size: 12px;">
+                {{ agent.config.pairs.join(', ') }}
+              </td>
+              <td v-if="visibleColumns.model" style="color: var(--text-muted); font-size: 12px;">
+                {{ agent.llmModel.split('/')[1]?.replace(':free', '') ?? agent.llmModel }}
+              </td>
+              <td v-if="visibleColumns.analysisInterval" class="mono" style="font-size: 12px;">
+                {{ agent.config.analysisInterval }}
+              </td>
+              <td v-if="visibleColumns.paperBalance" class="mono" style="font-size: 12px;">
+                ${{ agent.config.paperBalance.toLocaleString() }}
+              </td>
+              <td v-if="visibleColumns.maxPositionSizePct" class="mono" style="font-size: 12px;">
+                {{ agent.config.maxPositionSizePct }}%
+              </td>
+              <td v-if="visibleColumns.slTp" class="mono" style="font-size: 12px; white-space: nowrap;">
+                {{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%
+              </td>
+              <td v-if="visibleColumns.totalPnl" class="mono" style="font-size: 12px;">
+                <template v-if="agentPnl[agent.id]">
+                  <span :class="agentPnl[agent.id]!.totalPnlUsd >= 0 ? 'positive' : 'negative'">
+                    {{ agentPnl[agent.id]!.totalPnlUsd >= 0 ? '+' : '' }}${{ agentPnl[agent.id]!.totalPnlUsd.toFixed(0) }}
+                  </span>
+                  <span style="color: var(--text-muted); margin-left: 4px;">
+                    ({{ agentPnl[agent.id]!.totalPnlPct >= 0 ? '+' : '' }}{{ agentPnl[agent.id]!.totalPnlPct.toFixed(1) }}%)
+                  </span>
+                </template>
+                <span v-else style="color: var(--text-muted);">—</span>
+              </td>
+              <td v-if="visibleColumns.actions" style="text-align: right;" @click.stop>
+                <div class="agent-actions-menu">
+                  <button
+                    type="button"
+                    class="agent-actions-trigger"
+                    @click="openActionsForAgent = openActionsForAgent === agent.id ? null : agent.id"
+                  >
+                    ⋯
+                  </button>
+                  <div
+                    v-if="openActionsForAgent === agent.id"
+                    class="agent-actions-dropdown"
+                  >
+                    <button
+                      v-if="agent.status !== 'running'"
+                      type="button"
+                      class="menu-item"
+                      @click="startAgent(agent.id)"
+                    >
+                      ▶ Start
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="menu-item"
+                      @click="stopAgent(agent.id)"
+                    >
+                      ■ Stop
+                    </button>
+                    <button
+                      type="button"
+                      class="menu-item"
+                      @click="handleEditClick(agent.id)"
+                    >
+                      ✎ Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="menu-item menu-item--danger"
+                      @click="handleDelete(agent.id)"
+                    >
+                      ✕ Delete
+                    </button>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -436,6 +639,54 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
-  font-size: 13px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.agent-actions-menu {
+  position: relative;
+  display: inline-block;
+}
+.agent-actions-trigger {
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #777;
+  font-size: 14px;
+}
+.agent-actions-trigger::-webkit-details-marker {
+  display: none;
+}
+.agent-actions-dropdown {
+  position: absolute;
+  right: 0;
+  top: 0;
+  background: var(--bg-card);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  padding: 6px 0;
+  min-width: 140px;
+  z-index: 999;
+}
+.menu-item {
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--bg-hover);
+}
+.menu-item--danger {
+  color: var(--danger, #f87171);
 }
 </style>

@@ -248,7 +248,7 @@ export async function listFreeModels(
     .map((m) => ({ id: m.id, name: m.name, context: m.context_length }));
 
   await cache.put(cacheKey, JSON.stringify(freeModels), {
-    expirationTtl: 3600,
+    expirationTtl: 86400, // 24h — model list changes at most daily
   });
 
   return freeModels;

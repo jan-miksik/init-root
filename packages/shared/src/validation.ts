@@ -82,7 +82,7 @@ export const AgentConfigSchema = z.object({
 
   // Timeframe
   analysisInterval: z
-    .enum(['1m', '5m', '15m', '1h', '4h', '1d'])
+    .enum(['15m', '1h', '4h', '1d'])
     .default('15m'),
 
   // Strategies
@@ -145,7 +145,7 @@ export const CreateAgentRequestSchema = z.object({
   takeProfitPct: z.number().min(0.5).max(100).default(7),
   slippageSimulation: z.number().min(0).max(5).default(0.3),
   analysisInterval: z
-    .enum(['1m', '5m', '15m', '1h', '4h', '1d'])
+    .enum(['15m', '1h', '4h', '1d'])
     .default('15m'),
   strategies: z
     .array(

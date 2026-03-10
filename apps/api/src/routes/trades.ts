@@ -99,9 +99,21 @@ tradesRoute.post('/:id/close', async (c) => {
   return c.json({ ok: true, trade: updated });
 });
 
-/** GET /api/trades/stats — aggregate stats */
+/** GET /api/trades/stats — aggregate stats scoped to the authenticated user */
 tradesRoute.get('/stats', async (c) => {
+  const walletAddress = c.get('walletAddress');
   const db = drizzle(c.env.DB);
+
+  const ownedAgents = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(eq(agents.ownerAddress, walletAddress));
+
+  if (ownedAgents.length === 0) {
+    return c.json({ totalTrades: 0, openTrades: 0, closedTrades: 0, winRate: 0, totalPnlUsd: 0, avgPnlPct: 0 });
+  }
+
+  const agentIds = ownedAgents.map((a) => a.id);
 
   const statsResult = await db
     .select({
@@ -112,7 +124,8 @@ tradesRoute.get('/stats', async (c) => {
       totalPnlUsd: sql<number>`sum(coalesce(pnl_usd, 0))`,
       avgPnlPct: sql<number>`avg(pnl_pct)`,
     })
-    .from(trades);
+    .from(trades)
+    .where(inArray(trades.agentId, agentIds));
 
   const stats = statsResult[0];
   const winRate =

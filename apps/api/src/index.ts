@@ -22,8 +22,6 @@ export { AgentManagerDO } from './agents/agent-manager.js';
 
 function cronToMs(cron: string): number | null {
   switch (cron) {
-    case '*/5 * * * *':
-      return 5 * 60_000;
     case '*/15 * * * *':
       return 15 * 60_000;
     case '0 * * * *':
@@ -74,14 +72,21 @@ async function shouldRunCron(cron: string, env: Env): Promise<boolean> {
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
-// Global per-IP rate limiting for all API routes.
-// This is a fixed-window limiter backed by KV and is best-effort under high concurrency.
+// Rate limiting only on unauthenticated auth endpoints — protect against brute force
+// on nonce/verify. Authenticated routes are already gated by session middleware so
+// per-IP KV counters there are pure waste (1 write per request).
 app.use(
-  '/api/*',
+  '/api/auth/nonce',
   createRateLimitMiddleware<{ Bindings: Env; Variables: AuthVariables }>({
-    // Allow up to 60 requests per IP per 60s window across all API endpoints.
-    limit: 60,
-    windowSecs: 60,
+    limit: 10,
+    windowSecs: 300, // 10 nonce requests per 5 min per IP
+  })
+);
+app.use(
+  '/api/auth/verify',
+  createRateLimitMiddleware<{ Bindings: Env; Variables: AuthVariables }>({
+    limit: 10,
+    windowSecs: 300, // 10 verify attempts per 5 min per IP
   })
 );
 
@@ -231,7 +236,6 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
   const runningAgents = await db.select().from(agents).where(eq(agents.status, 'running'));
 
   const cronToInterval: Record<string, string> = {
-    '*/5 * * * *': '5m',
     '*/15 * * * *': '15m',
     '0 * * * *': '1h',
     '0 */4 * * *': '4h',
@@ -246,10 +250,12 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
       paperBalance: number;
       slippageSimulation: number;
     };
-    const intervalMatches =
-      config.analysisInterval === targetInterval ||
-      (targetInterval === '5m' && config.analysisInterval === '1m');
-    if (!intervalMatches) continue;
+    // Legacy agents with 1m or 5m are treated as 15m (minimum interval)
+    const effectiveInterval =
+      config.analysisInterval === '1m' || config.analysisInterval === '5m'
+        ? '15m'
+        : config.analysisInterval;
+    if (effectiveInterval !== targetInterval) continue;
 
     const doId = env.TRADING_AGENT.idFromName(agent.id);
     const stub = env.TRADING_AGENT.get(doId);

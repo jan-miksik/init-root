@@ -654,6 +654,24 @@ function formatLatency(ms: number): string {
                     <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Confidence</div>
                     <div class="mono" style="font-size: 13px;">{{ (trade.confidenceBefore * 100).toFixed(0) }}%</div>
                   </div>
+                  <div>
+                    <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">P&amp;L</div>
+                    <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-summary-pnl'">
+                      <div
+                        v-if="pnl"
+                        class="mono"
+                        style="font-size: 13px; font-weight: 600;"
+                        :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
+                      >
+                        {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
+                        /
+                        {{ pnl.pnlPct >= 0 ? '+' : '' }}${{ ((pnl.pnlPct / 100) * trade.amountUsd).toFixed(2) }}
+                      </div>
+                      <div v-else class="mono" style="font-size: 13px; color: var(--text-muted);">
+                        —
+                      </div>
+                    </template>
+                  </div>
                 </div>
 
                 <!-- Unrealized P&L -->
@@ -667,9 +685,9 @@ function formatLatency(ms: number): string {
                       >
                         {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
                       </div>
-                      <div style="font-size: 11px; color: var(--text-muted);">
+                      <!-- <div style="font-size: 11px; color: var(--text-muted);">
                         now ${{ formatPrice(pnl.currentPrice) }}
-                      </div>
+                      </div> -->
                     </template>
                     <div v-else style="font-size: 12px; color: var(--text-muted);">P&L: —</div>
                   </template>

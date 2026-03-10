@@ -1,6 +1,10 @@
 /**
  * Agents composable — CRUD operations and state management for trading agents.
  */
+
+const AGENTS_TTL = 15 * 60 * 1000; // 15 min
+const AGENTS_KEY = 'agents';
+
 export interface Agent {
   id: string;
   name: string;
@@ -49,6 +53,7 @@ export interface CreateAgentPayload {
 
 export function useAgents() {
   const { request } = useApi();
+  const cache = useClientCache();
 
   const agents = ref<Agent[]>([]);
   const loading = ref(false);
@@ -58,7 +63,13 @@ export function useAgents() {
     loading.value = true;
     error.value = null;
     try {
+      const cached = cache.get<{ agents: Agent[] }>(AGENTS_KEY);
+      if (cached) {
+        agents.value = cached.agents;
+        return;
+      }
       const res = await request<{ agents: Agent[] }>('/api/agents');
+      cache.set(AGENTS_KEY, res, AGENTS_TTL);
       agents.value = res.agents;
     } catch (e) {
       error.value = extractApiError(e);
@@ -72,6 +83,7 @@ export function useAgents() {
       method: 'POST',
       body: payload,
     });
+    cache.invalidate(AGENTS_KEY);
     agents.value = [agent, ...agents.value];
     return agent;
   }
@@ -82,24 +94,28 @@ export function useAgents() {
 
   async function startAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/start`, { method: 'POST' });
+    cache.invalidate(AGENTS_KEY);
     const agent = agents.value.find((a) => a.id === id);
     if (agent) agent.status = 'running';
   }
 
   async function stopAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/stop`, { method: 'POST' });
+    cache.invalidate(AGENTS_KEY);
     const agent = agents.value.find((a) => a.id === id);
     if (agent) agent.status = 'stopped';
   }
 
   async function pauseAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}/pause`, { method: 'POST' });
+    cache.invalidate(AGENTS_KEY);
     const agent = agents.value.find((a) => a.id === id);
     if (agent) agent.status = 'paused';
   }
 
   async function deleteAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}`, { method: 'DELETE' });
+    cache.invalidate(AGENTS_KEY);
     agents.value = agents.value.filter((a) => a.id !== id);
   }
 
@@ -108,6 +124,7 @@ export function useAgents() {
       method: 'PATCH',
       body: payload,
     });
+    cache.invalidate(AGENTS_KEY);
     const idx = agents.value.findIndex((a) => a.id === id);
     if (idx >= 0) agents.value.splice(idx, 1, agent);
     return agent;

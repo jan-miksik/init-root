@@ -61,7 +61,9 @@ const personaEmoji = computed(() => {
       </div>
       <div>
         <div class="agent-stat-label">SL / TP</div>
-        <div class="agent-stat-value">{{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%</div>
+        <div class="agent-stat-value agent-stat-value--sl-tp">
+          {{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%
+        </div>
       </div>
     </div>
 
@@ -113,5 +115,8 @@ const personaEmoji = computed(() => {
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   letter-spacing: 0.02em;
+}
+.agent-stat-value--sl-tp {
+  white-space: nowrap;
 }
 </style>
