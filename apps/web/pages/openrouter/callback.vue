@@ -10,13 +10,14 @@ const errorMsg = ref('');
 
 onMounted(async () => {
   const code = route.query.code as string | undefined;
-  if (!code) {
+  const state = route.query.state as string | undefined;
+  if (!code || !state) {
     status.value = 'error';
-    errorMsg.value = 'No code in callback URL.';
+    errorMsg.value = 'Missing code or state in callback URL.';
     return;
   }
   try {
-    await handleCallback(code);
+    await handleCallback(code, state);
     await fetchMe();
     status.value = 'success';
     setTimeout(() => navigateTo('/'), 1500);

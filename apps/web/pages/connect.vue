@@ -12,9 +12,16 @@ watch(isAuthenticated, (val) => {
 
 const { initConnect } = useOpenRouter();
 const connectingOR = ref(false);
+const connectORError = ref<string | null>(null);
 async function handleConnectOR() {
   connectingOR.value = true;
-  await initConnect(); // redirects away, so no finally needed
+  connectORError.value = null;
+  try {
+    await initConnect(); // redirects away on success
+  } catch (err) {
+    connectORError.value = (err as Error)?.message ?? 'Failed to initiate connection.';
+    connectingOR.value = false;
+  }
 }
 
 async function handleSignIn() {
@@ -102,6 +109,7 @@ function truncate(addr: string): string {
           <button class="btn btn-primary" :disabled="connectingOR" @click="handleConnectOR">
             {{ connectingOR ? 'Redirecting…' : 'Connect OpenRouter →' }}
           </button>
+          <p v-if="connectORError" class="connect-or-error">{{ connectORError }}</p>
           <NuxtLink to="/" class="skip-link">Skip for now</NuxtLink>
         </template>
       </div>
@@ -307,4 +315,5 @@ function truncate(addr: string): string {
   text-decoration: none;
 }
 .skip-link:hover { color: var(--text); }
+.connect-or-error { font-size: 12px; color: var(--danger, #ef4444); margin-top: 6px; }
 </style>

@@ -18,7 +18,11 @@ async function handleDisconnect() {
 
 async function handleConnect() {
   connecting.value = true;
-  await initConnect(); // redirects away
+  try {
+    await initConnect(); // redirects away on success
+  } catch {
+    connecting.value = false;
+  }
 }
 </script>
 
