@@ -116,8 +116,8 @@ export const TradeDecisionSchema = z.object({
   action: z.enum(['buy', 'sell', 'hold', 'close']),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
-  targetPair: z.string().optional(),
-  suggestedPositionSizePct: z.number().min(0).max(100).optional(),
+  targetPair: z.string().nullable().optional(),
+  suggestedPositionSizePct: z.number().min(0).max(100).nullable().optional(),
 });
 
 export const CreateAgentRequestSchema = z.object({

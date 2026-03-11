@@ -57,7 +57,7 @@ export function useOpenRouter() {
 
     await $fetch('/api/auth/openrouter/exchange', {
       method: 'POST',
-      body: { code, code_verifier: verifier },
+      body: { code, code_verifier: verifier, code_challenge_method: 'S256' },
       credentials: 'include',
     });
   }

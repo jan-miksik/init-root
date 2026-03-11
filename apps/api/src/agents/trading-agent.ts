@@ -125,7 +125,8 @@ export class TradingAgentDO extends DurableObject<Env> {
 
       try {
         // forceRun=true allows analysis even if agent is stopped/paused in DB
-        await runAgentLoop(agentId, engine, this.env, this.ctx, { forceRun: true });
+        // bypassCache=true ensures fresh market data on every manual trigger
+        await runAgentLoop(agentId, engine, this.env, this.ctx, { forceRun: true, bypassCache: true });
       } catch (err) {
         console.error(`[TradingAgentDO] manual analyze error for ${agentId}:`, err);
         // Still persist engine state and reschedule alarm before returning error

@@ -86,7 +86,7 @@ export interface DexDataService {
   getTopPairsForChain(chainId: string): Promise<DexPair[]>;
 }
 
-export function createDexDataService(cache: KVNamespace): DexDataService {
+export function createDexDataService(cache: KVNamespace, { bypassCache = false } = {}): DexDataService {
   /**
    * Fetch with KV caching. Returns cached value if fresh, otherwise fetches
    * and stores the result.
@@ -96,11 +96,13 @@ export function createDexDataService(cache: KVNamespace): DexDataService {
     url: string,
     schema: z.ZodType<T>
   ): Promise<T> {
-    // Try cache first
-    const cached = await cache.get(cacheKey, 'text');
-    if (cached !== null) {
-      const parsed = schema.safeParse(JSON.parse(cached));
-      if (parsed.success) return parsed.data;
+    // Try cache first (skipped when bypassCache=true)
+    if (!bypassCache) {
+      const cached = await cache.get(cacheKey, 'text');
+      if (cached !== null) {
+        const parsed = schema.safeParse(JSON.parse(cached));
+        if (parsed.success) return parsed.data;
+      }
     }
 
     const controller = new AbortController();
@@ -162,10 +164,12 @@ export function createDexDataService(cache: KVNamespace): DexDataService {
 
     async getTopPairsForChain(chainId: string): Promise<DexPair[]> {
       const cacheKey = `dex:top:${chainId.toLowerCase()}`;
-      const cached = await cache.get(cacheKey, 'text');
-      if (cached !== null) {
-        const parsed = z.array(PairSchema).safeParse(JSON.parse(cached));
-        if (parsed.success) return parsed.data;
+      if (!bypassCache) {
+        const cached = await cache.get(cacheKey, 'text');
+        if (cached !== null) {
+          const parsed = z.array(PairSchema).safeParse(JSON.parse(cached));
+          if (parsed.success) return parsed.data;
+        }
       }
 
       const tokenAddresses =

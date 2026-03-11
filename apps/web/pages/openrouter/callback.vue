@@ -7,8 +7,12 @@ const route = useRoute();
 
 const status = ref<'loading' | 'success' | 'error'>('loading');
 const errorMsg = ref('');
+let exchangeStarted = false;
 
 onMounted(async () => {
+  if (exchangeStarted) return; // guard against double-mount
+  exchangeStarted = true;
+
   const code = route.query.code as string | undefined;
   const state = route.query.state as string | undefined;
   if (!code || !state) {
@@ -20,7 +24,7 @@ onMounted(async () => {
     await handleCallback(code, state);
     await fetchMe();
     status.value = 'success';
-    setTimeout(() => navigateTo('/'), 1500);
+    setTimeout(() => navigateTo('/settings'), 1500);
   } catch (err) {
     status.value = 'error';
     errorMsg.value = (err as Error).message ?? 'Exchange failed.';

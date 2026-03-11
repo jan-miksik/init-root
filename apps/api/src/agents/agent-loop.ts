@@ -65,13 +65,14 @@ export async function runAgentLoop(
   engine: PaperEngine,
   env: Env,
   ctx: DurableObjectState,
-  options?: { forceRun?: boolean }
+  options?: { forceRun?: boolean; bypassCache?: boolean }
 ): Promise<void> {
   const db = drizzle(env.DB);
   // Enable FK enforcement (session-level in SQLite, must be set per connection)
   try { await db.run(sql`PRAGMA foreign_keys = ON`); } catch { /* non-fatal */ }
-  const geckoSvc = createGeckoTerminalService(env.CACHE);
-  const dexSvc = createDexDataService(env.CACHE);
+  const bypassCache = options?.bypassCache ?? false;
+  const geckoSvc = createGeckoTerminalService(env.CACHE, { bypassCache });
+  const dexSvc = createDexDataService(env.CACHE, { bypassCache });
 
   // 1. Load agent config
   const [agentRow] = await db.select().from(agents).where(eq(agents.id, agentId));

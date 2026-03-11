@@ -34,7 +34,11 @@
       "Bash(npm install:*)",
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('hex'\\)\\)\")",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh search:*)"
     ]
   }
 }

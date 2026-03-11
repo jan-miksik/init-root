@@ -174,8 +174,16 @@ const totalPnlUsd = computed(() => {
 });
 const latestSnapshot = computed(() => snapshots.value[0] ?? null);
 
-const totalTokensUsed = computed(() =>
-  decisions.value.reduce((sum, d) => sum + (d.llmTokensUsed ?? 0), 0),
+const totalTokensUsed = computed(
+  () => decisions.value.reduce((sum, d) => sum + (d.llmTokensUsed ?? 0), 0),
+);
+
+const totalPromptTokens = computed(
+  () => decisions.value.reduce((sum, d) => sum + (d.llmPromptTokens ?? 0), 0),
+);
+
+const totalCompletionTokens = computed(
+  () => decisions.value.reduce((sum, d) => sum + (d.llmCompletionTokens ?? 0), 0),
 );
 
 /** Seconds until next agent analysis cycle */
@@ -555,7 +563,7 @@ function formatLatency(ms: number): string {
       </div>
 
       <!-- Stats row -->
-      <div class="stats-grid" style="margin-bottom: 24px; grid-template-columns: repeat(5, minmax(0, 1fr));">
+      <div class="stats-grid" style="margin-bottom: 8px;">
         <div class="stat-card">
           <div class="stat-label">Balance</div>
           <div class="stat-value">${{ (latestSnapshot?.balance ?? agent.config.paperBalance).toLocaleString('en', { maximumFractionDigits: 0 }) }}</div>
@@ -590,12 +598,18 @@ function formatLatency(ms: number): string {
           </div>
           <div class="stat-change">{{ openTrades.length }} of {{ agent.config.maxOpenPositions }} positions open</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label">LLM Tokens Used</div>
-          <div class="stat-value mono">
-            {{ totalTokensUsed.toLocaleString('en') }}
-          </div>
-          <div class="stat-change">All analysis cycles</div>
+      </div>
+
+      <div class="tokens-summary-row">
+        <div class="tokens-summary-label">LLM tokens used</div>
+        <div class="tokens-summary-values mono">
+          <span class="tokens-summary-total">
+            {{ totalTokensUsed.toLocaleString('en') }} total
+          </span>
+          <span class="tokens-summary-split">
+            ({{ totalPromptTokens.toLocaleString('en') }} in / {{ totalCompletionTokens.toLocaleString('en') }} out)
+          </span>
+          <span class="tokens-summary-scope">· All analysis cycles</span>
         </div>
       </div>
 

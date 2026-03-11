@@ -88,12 +88,14 @@ export interface GeckoPoolNorm {
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
-export function createGeckoTerminalService(cache: KVNamespace) {
+export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = false } = {}) {
   async function cachedFetch<T>(cacheKey: string, url: string, schema: z.ZodType<T>): Promise<T> {
-    const hit = await cache.get(cacheKey, 'text');
-    if (hit) {
-      const parsed = schema.safeParse(JSON.parse(hit));
-      if (parsed.success) return parsed.data;
+    if (!bypassCache) {
+      const hit = await cache.get(cacheKey, 'text');
+      if (hit) {
+        const parsed = schema.safeParse(JSON.parse(hit));
+        if (parsed.success) return parsed.data;
+      }
     }
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);

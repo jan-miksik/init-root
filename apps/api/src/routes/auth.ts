@@ -134,21 +134,34 @@ authRoute.post('/openrouter/exchange', async (c) => {
   const session = await getSession(c.env.CACHE, token);
   if (!session) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = await c.req.json<{ code?: string; code_verifier?: string }>();
+  const body = await c.req.json<{ code?: string; code_verifier?: string; code_challenge_method?: string }>();
   if (!body.code || !body.code_verifier) {
     return c.json({ error: 'Missing code or code_verifier' }, 400);
   }
 
-  const res = await fetch('https://openrouter.ai/api/v1/auth/keys', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: body.code, code_verifier: body.code_verifier }),
-  });
+  let res: Response;
+  try {
+    res = await fetch('https://openrouter.ai/api/v1/auth/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: body.code,
+        code_verifier: body.code_verifier,
+        code_challenge_method: body.code_challenge_method ?? 'S256',
+      }),
+    });
+  } catch (fetchErr) {
+    console.error('[auth/openrouter/exchange] Network error reaching OpenRouter:', fetchErr);
+    return c.json({ error: 'Could not reach OpenRouter — network error' }, 502);
+  }
 
   if (!res.ok) {
     const text = await res.text();
     console.error('[auth/openrouter/exchange] OpenRouter error:', res.status, text);
-    return c.json({ error: 'OpenRouter exchange failed' }, 502);
+    // Parse JSON error if available, otherwise return raw text
+    let detail = text;
+    try { detail = JSON.parse(text)?.error ?? text; } catch { /* raw text is fine */ }
+    return c.json({ error: `OpenRouter exchange failed (${res.status}): ${detail}` }, 502);
   }
 
   const data = await res.json<{ key?: string }>();
