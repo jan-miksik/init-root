@@ -88,7 +88,7 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
       </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="grid-2">
       <!-- Active Agents -->
       <div class="card">
         <div class="card-header">Active Agents</div>
@@ -99,7 +99,7 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
               <div class="skeleton" style="width: 120px; height: 14px; margin-bottom: 6px;" />
               <div class="skeleton" style="width: 80px; height: 11px;" />
             </div>
-            <div class="skeleton" style="width: 48px; height: 22px; border-radius: 20px;" />
+            <div class="skeleton" style="width: 48px; height: 22px;" />
           </div>
         </div>
         <!-- Empty state (only after load) -->
@@ -153,7 +153,7 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
         <div v-if="initialLoading" style="display: flex; flex-direction: column; gap: 4px;">
           <div v-for="i in 4" :key="i" style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
             <div style="display: flex; align-items: center; gap: 8px;">
-              <div class="skeleton" style="width: 32px; height: 20px; border-radius: 20px;" />
+              <div class="skeleton" style="width: 32px; height: 20px;" />
               <div class="skeleton" style="width: 90px; height: 13px;" />
             </div>
             <div style="text-align: right;">
@@ -206,7 +206,7 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
   padding: 10px 8px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  border-radius: var(--radius, 6px);
+  border-radius: var(--radius);
   transition: background 0.15s;
   margin: 0 -8px;
 }
@@ -218,13 +218,15 @@ const openTrades = computed(() => trades.value.filter((t) => t.status === 'open'
   align-items: center;
   gap: 2px;
   padding: 1px 5px;
-  border-radius: 8px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   background: var(--accent-dim);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 </style>
