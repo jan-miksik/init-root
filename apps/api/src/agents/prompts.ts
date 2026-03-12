@@ -18,6 +18,8 @@ Analyze the provided market data, portfolio state, and recent decision history, 
 Hard constraints (always enforced, cannot be overridden by persona or behavior):
 - Only trade pairs explicitly listed in your allowed list
 - Always include a confidence value (0.0–1.0) that reflects your actual conviction
+- A "hold" decision is fully valid and often the best decision — do not trade for the sake of trading
+- Only act when multiple signals align. When there is no compelling setup, output hold with high confidence
 
 Your persona and behavior profile define everything else: your risk appetite, trading style, confidence thresholds, and how much autonomy you exercise. Follow those.`;
 
@@ -29,13 +31,24 @@ export function buildAnalysisPrompt(params: {
     dailyPnlPct: number;
     totalPnlPct: number;
   };
+  openPositions: Array<{
+    pair: string;
+    side: 'buy' | 'sell';
+    entryPrice: number;
+    amountUsd: number;
+    unrealizedPct: number;
+    currentPrice: number;
+    openedAt: string;
+    slPct: number;
+    tpPct: number;
+  }>;
   marketData: {
     pair: string;
     priceUsd: number;
     priceChange: Record<string, number | undefined>;
     volume24h?: number;
     liquidity?: number;
-    indicators?: Record<string, unknown>;
+    indicatorText: string;
   }[];
   lastDecisions: Array<{
     decision: string;
@@ -45,33 +58,49 @@ export function buildAnalysisPrompt(params: {
   config: {
     pairs: string[];
     maxPositionSizePct: number;
-    strategies: string[];
+    maxOpenPositions: number;
+    stopLossPct: number;
+    takeProfitPct: number;
   };
   behavior?: Partial<AgentBehaviorConfig>;
   personaMd?: string | null;
 }): string {
-  const { portfolioState, marketData, lastDecisions, config, behavior, personaMd } = params;
+  const { portfolioState, openPositions, marketData, lastDecisions, config, behavior, personaMd } = params;
+
+  const maxPerTrade = (portfolioState.balance * config.maxPositionSizePct) / 100;
+  const fmtPrice = (p: number) => p < 0.01 ? p.toFixed(6) : p.toFixed(2);
+
+  const openPositionsSection = openPositions.length > 0
+    ? `\n## Open Positions\n${openPositions.map((p) => {
+        const slPrice = p.side === 'buy'
+          ? p.entryPrice * (1 - p.slPct / 100)
+          : p.entryPrice * (1 + p.slPct / 100);
+        const tpPrice = p.side === 'buy'
+          ? p.entryPrice * (1 + p.tpPct / 100)
+          : p.entryPrice * (1 - p.tpPct / 100);
+        const pnlSign = p.unrealizedPct >= 0 ? '+' : '';
+        const hoursOpen = Math.round((Date.now() - new Date(p.openedAt).getTime()) / 3_600_000);
+        return `- ${p.pair} ${p.side.toUpperCase()} · entry $${fmtPrice(p.entryPrice)} → now $${fmtPrice(p.currentPrice)} · unrealized ${pnlSign}${p.unrealizedPct.toFixed(2)}% · $${p.amountUsd.toFixed(0)} · ${hoursOpen}h open\n  SL at $${fmtPrice(slPrice)} | TP at $${fmtPrice(tpPrice)}`;
+      }).join('\n')}\n`
+    : '';
 
   return `## Portfolio State
 Balance: $${portfolioState.balance.toFixed(2)} USDC
-Open positions: ${portfolioState.openPositions}/${config.maxPositionSizePct}% max
+Open positions: ${portfolioState.openPositions} of ${config.maxOpenPositions} max
+Max per trade: ${config.maxPositionSizePct}% ($${maxPerTrade.toFixed(0)})
 Daily P&L: ${portfolioState.dailyPnlPct >= 0 ? '+' : ''}${portfolioState.dailyPnlPct.toFixed(2)}%
 Total P&L: ${portfolioState.totalPnlPct >= 0 ? '+' : ''}${portfolioState.totalPnlPct.toFixed(2)}%
-
+${openPositionsSection}
 ## Market Data
 ${marketData
   .map(
     (m) => `### ${m.pair}
-Price: $${m.priceUsd.toFixed(6)}
+Price: $${fmtPrice(m.priceUsd)}
 24h change: ${m.priceChange.h24 !== undefined ? `${m.priceChange.h24 >= 0 ? '+' : ''}${m.priceChange.h24.toFixed(2)}%` : 'N/A'}
 1h change: ${m.priceChange.h1 !== undefined ? `${m.priceChange.h1 >= 0 ? '+' : ''}${m.priceChange.h1.toFixed(2)}%` : 'N/A'}
 Volume 24h: ${m.volume24h !== undefined ? `$${(m.volume24h / 1_000).toFixed(1)}K` : 'N/A'}
 Liquidity: ${m.liquidity !== undefined ? `$${(m.liquidity / 1_000_000).toFixed(2)}M` : 'N/A'}
-${
-  m.indicators
-    ? `Indicators: ${JSON.stringify(m.indicators, null, 2)}`
-    : ''
-}`
+${m.indicatorText}`
   )
   .join('\n\n')}
 
@@ -84,7 +113,9 @@ ${lastDecisions
 ## Constraints
 Allowed pairs: ${config.pairs.join(', ')}
 Max position size: ${config.maxPositionSizePct}% of balance
-Active strategies: ${config.strategies.join(', ')}
+Max open positions: ${config.maxOpenPositions}
+Stop loss: ${config.stopLossPct}%
+Take profit: ${config.takeProfitPct}%
 
 ${behavior ? '\n\n' + buildBehaviorSection(behavior) : ''}${personaMd ? '\n\n## Your Persona\n' + personaMd : ''}
 

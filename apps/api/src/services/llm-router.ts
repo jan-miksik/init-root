@@ -29,13 +29,24 @@ export interface TradeDecisionRequest {
     dailyPnlPct: number;
     totalPnlPct: number;
   };
+  openPositions: Array<{
+    pair: string;
+    side: 'buy' | 'sell';
+    entryPrice: number;
+    amountUsd: number;
+    unrealizedPct: number;
+    currentPrice: number;
+    openedAt: string;
+    slPct: number;
+    tpPct: number;
+  }>;
   marketData: Array<{
     pair: string;
     priceUsd: number;
     priceChange: Record<string, number | undefined>;
     volume24h?: number;
     liquidity?: number;
-    indicators?: Record<string, unknown>;
+    indicatorText: string;
   }>;
   lastDecisions: Array<{
     decision: string;
@@ -45,7 +56,9 @@ export interface TradeDecisionRequest {
   config: {
     pairs: string[];
     maxPositionSizePct: number;
-    strategies: string[];
+    maxOpenPositions: number;
+    stopLossPct: number;
+    takeProfitPct: number;
   };
   behavior?: Partial<AgentBehaviorConfig>;
   personaMd?: string | null;
@@ -113,6 +126,7 @@ export async function getTradeDecision(
   const systemPrompt = BASE_AGENT_PROMPT + JSON_SCHEMA_INSTRUCTION;
   const userPrompt = buildAnalysisPrompt({
     portfolioState: request.portfolioState,
+    openPositions: request.openPositions,
     marketData: request.marketData,
     lastDecisions: request.lastDecisions,
     config: request.config,

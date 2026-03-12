@@ -651,23 +651,25 @@ function formatLatency(ms: number): string {
               <span class="dec-action-badge" :class="`dec-action--${dec.decision}`">{{ dec.decision.toUpperCase() }}</span>
 
               <div class="dec-conf">
+                <span class="dec-conf-label">Confidence</span>
                 <span class="dec-conf-num">{{ (dec.confidence * 100).toFixed(0) }}%</span>
                 <div class="dec-conf-track">
                   <div class="dec-conf-fill" :class="`dec-conf-fill--${dec.decision}`" :style="{ width: (dec.confidence * 100) + '%' }" />
                 </div>
               </div>
 
-              <span class="dec-meta-sep" />
-              <span class="dec-time">{{ timeAgo(dec.createdAt) }}</span>
-              <span class="dec-meta-dot">·</span>
-              <span class="dec-model" :title="dec.llmModel">{{ dec.llmModel.split('/').pop() }}</span>
-              <span class="dec-meta-dot">·</span>
-              <span class="dec-latency">{{ formatLatency(dec.llmLatencyMs) }}</span>
-              <template v-if="dec.llmPromptTokens != null || dec.llmCompletionTokens != null">
+              <div class="dec-meta-right">
+                <span class="dec-time">{{ timeAgo(dec.createdAt) }}</span>
                 <span class="dec-meta-dot">·</span>
-                <span class="dec-tokens">{{ (dec.llmPromptTokens ?? 0).toLocaleString() }}↑ {{ (dec.llmCompletionTokens ?? 0).toLocaleString() }}↓</span>
-              </template>
-              <span class="dec-chevron" :class="{ 'dec-chevron--open': expandedDecisions.has(dec.id) }">›</span>
+                <span class="dec-model" :title="dec.llmModel">{{ dec.llmModel.split('/').pop() }}</span>
+                <span class="dec-meta-dot">·</span>
+                <span class="dec-latency">{{ formatLatency(dec.llmLatencyMs) }}</span>
+                <template v-if="dec.llmPromptTokens != null || dec.llmCompletionTokens != null">
+                  <span class="dec-meta-dot">·</span>
+                  <span class="dec-tokens">{{ (dec.llmPromptTokens ?? 0).toLocaleString() }}↑ {{ (dec.llmCompletionTokens ?? 0).toLocaleString() }}↓</span>
+                </template>
+                <span class="dec-chevron" :class="{ 'dec-chevron--open': expandedDecisions.has(dec.id) }">›</span>
+              </div>
             </div>
 
             <!-- ── Reasoning — the hero ── -->

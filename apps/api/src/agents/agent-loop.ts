@@ -11,7 +11,7 @@ import { agents, trades, agentDecisions, users } from '../db/schema.js';
 import { createDexDataService, getPriceUsd } from '../services/dex-data.js';
 import type { DexPair } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
-import { computeIndicators } from '../services/indicators.js';
+import { computeIndicators, evaluateSignals, combineSignals } from '../services/indicators.js';
 import { PaperEngine, type Position } from '../services/paper-engine.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { getTradeDecision } from '../services/llm-router.js';
@@ -250,7 +250,7 @@ export async function runAgentLoop(
     priceChange: Record<string, number | undefined>;
     volume24h?: number;
     liquidity?: number;
-    indicators?: Record<string, unknown>;
+    indicatorText: string;
   }> = [];
 
   for (const pairName of pairsToFetch) {
@@ -358,8 +358,8 @@ export async function runAgentLoop(
     // If we don't have real data we skip indicators entirely rather than use fabricated prices.
     const indicators = prices.length >= 14 ? computeIndicators(prices) : null;
 
-    // Summarize indicators for LLM prompt (only if real OHLCV was available)
-    const indicatorSummary: Record<string, unknown> = {};
+    // Build inline indicator text + pre-interpreted signal verdict for LLM prompt
+    let indicatorText = 'No OHLCV data available — indicators skipped';
     if (indicators) {
       const lastRsi = indicators.rsi?.at(-1);
       const lastEma9 = indicators.ema9?.at(-1);
@@ -367,26 +367,35 @@ export async function runAgentLoop(
       const lastMacd = indicators.macd?.at(-1);
       const lastBb = indicators.bollingerBands?.at(-1);
 
-      if (lastRsi !== undefined) indicatorSummary.rsi = lastRsi.toFixed(2);
-      if (lastEma9 !== undefined && lastEma21 !== undefined) {
-        indicatorSummary.ema9 = lastEma9.toFixed(4);
-        indicatorSummary.ema21 = lastEma21.toFixed(4);
-        indicatorSummary.emaTrend = lastEma9 > lastEma21 ? 'bullish' : 'bearish';
+      const parts: string[] = [];
+
+      if (lastRsi !== undefined) {
+        const rsiLabel = lastRsi < 30 ? 'oversold' : lastRsi > 70 ? 'overbought' : 'neutral';
+        parts.push(`RSI: ${lastRsi.toFixed(1)} (${rsiLabel})`);
       }
-      if (lastMacd?.MACD !== undefined) {
-        indicatorSummary.macdHistogram = (
-          (lastMacd.MACD ?? 0) - (lastMacd.signal ?? 0)
-        ).toFixed(6);
+      if (lastEma9 !== undefined && lastEma21 !== undefined) {
+        const trend = lastEma9 > lastEma21 ? 'bullish' : 'bearish';
+        parts.push(`EMA9/21: ${trend} (${lastEma9.toFixed(2)} / ${lastEma21.toFixed(2)})`);
+      }
+      if (lastMacd?.MACD !== undefined && lastMacd?.signal !== undefined) {
+        const hist = lastMacd.MACD - lastMacd.signal;
+        const macdLabel = hist > 0 ? 'bullish' : 'bearish';
+        parts.push(`MACD: ${macdLabel} (histogram ${hist >= 0 ? '+' : ''}${hist.toFixed(4)})`);
       }
       if (lastBb !== undefined) {
         const bandWidth = lastBb.upper - lastBb.lower;
-        indicatorSummary.bollingerPB =
-          bandWidth > 0
-            ? ((priceUsd - lastBb.lower) / bandWidth).toFixed(3)
-            : 'N/A';
+        if (bandWidth > 0) {
+          const pb = (priceUsd - lastBb.lower) / bandWidth;
+          const bbLabel = pb < 0.2 ? 'near lower band' : pb > 0.8 ? 'near upper band' : 'mid-range';
+          parts.push(`Bollinger %B: ${pb.toFixed(2)} (${bbLabel})`);
+        }
       }
-    } else {
-      indicatorSummary.note = 'No OHLCV data available — indicators skipped';
+
+      const signals = evaluateSignals(indicators, priceUsd);
+      const combined = combineSignals(signals);
+      parts.push(`Signal verdict: ${combined.signal.toUpperCase()} (${(combined.confidence * 100).toFixed(0)}% conf) — ${combined.reason}`);
+
+      indicatorText = parts.join('\n');
     }
 
     marketData.push({
@@ -397,7 +406,7 @@ export async function runAgentLoop(
       priceChange,
       volume24h,
       liquidity,
-      indicators: indicatorSummary,
+      indicatorText,
     });
   }
 
@@ -511,6 +520,27 @@ export async function runAgentLoop(
     llmApiKey = resolvedKey;
   }
 
+  // Build open position summaries for the LLM — includes unrealized P&L and SL/TP context
+  const openPositionsSummary = engine.openPositions.map((pos) => {
+    const currentPriceData = marketData.find((m) => m.pair === pos.pair);
+    const currentPrice = currentPriceData?.priceUsd ?? pos.entryPrice;
+    const unrealizedPct =
+      pos.side === 'buy'
+        ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
+        : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+    return {
+      pair: pos.pair,
+      side: pos.side,
+      entryPrice: pos.entryPrice,
+      amountUsd: pos.amountUsd,
+      unrealizedPct,
+      currentPrice,
+      openedAt: pos.openedAt,
+      slPct: config.stopLossPct,
+      tpPct: config.takeProfitPct,
+    };
+  });
+
   let decision: Awaited<ReturnType<typeof getTradeDecision>>;
   try {
     decision = await getTradeDecision(
@@ -531,12 +561,15 @@ export async function runAgentLoop(
           dailyPnlPct: engine.getDailyPnlPct(),
           totalPnlPct: engine.getTotalPnlPct(),
         },
+        openPositions: openPositionsSummary,
         marketData,
         lastDecisions: recentDecisions,
         config: {
           pairs: pairsToFetch,
           maxPositionSizePct: config.maxPositionSizePct,
-          strategies: config.strategies,
+          maxOpenPositions: config.maxOpenPositions,
+          stopLossPct: config.stopLossPct,
+          takeProfitPct: config.takeProfitPct,
         },
         behavior: config.behavior,
         personaMd: agentRow.personaMd,
