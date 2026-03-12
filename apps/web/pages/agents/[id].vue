@@ -551,29 +551,24 @@ function formatLatency(ms: number): string {
       </div>
 
       <!-- Analysis error banner -->
-      <div
-        v-if="analyzeError"
-        style="background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #f87171;"
-      >
-        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
-          <div style="flex: 1; min-width: 0;">
-            <span v-if="isModelUnavailableError">
-              This model is currently unavailable. Choose another model in agent settings, or enable “Try fallback model” if you’ve set one.
-            </span>
-            <span v-else>⚠ {{ analyzeError }}</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-            <button
-              v-if="isModelUnavailableError"
-              type="button"
-              class="btn btn-ghost btn-sm"
-              style="color: #f87171; border-color: rgba(239,68,68,0.5);"
-              @click="showEditModal = true; analyzeError = null"
-            >
-              Select other model
-            </button>
-            <button style="background: none; border: none; cursor: pointer; color: #f87171; font-size: 16px; line-height: 1; padding: 0;" @click="analyzeError = null" aria-label="Dismiss">✕</button>
-          </div>
+      <div v-if=”analyzeError” class=”api-error-banner” style=”margin-bottom: 16px; align-items: flex-start;”>
+        <span class=”error-icon” style=”margin-top: 1px;”>!</span>
+        <div style=”flex: 1; min-width: 0;”>
+          <span v-if=”isModelUnavailableError”>
+            This model is currently unavailable. Choose another model in agent settings, or enable “Try fallback model” if you’ve set one.
+          </span>
+          <span v-else>{{ analyzeError }}</span>
+        </div>
+        <div style=”display: flex; align-items: center; gap: 8px; flex-shrink: 0;”>
+          <button
+            v-if=”isModelUnavailableError”
+            type=”button”
+            class=”btn btn-ghost btn-sm”
+            @click=”showEditModal = true; analyzeError = null”
+          >
+            Select other model
+          </button>
+          <button class=”btn btn-ghost btn-sm” @click=”analyzeError = null” aria-label=”Dismiss”>✕</button>
         </div>
       </div>
 
@@ -743,9 +738,10 @@ function formatLatency(ms: number): string {
 
       <!-- Open Positions section — full width, grouped by pair -->
       <div v-if="openTrades.length > 0" style="margin-bottom: 24px;">
-        <h2 style="font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">
-          Open Positions
-        </h2>
+        <div class="dec-section-header" style="margin-bottom: 12px;">
+          <span class="dec-section-title">Open Positions</span>
+          <span class="dec-section-count">{{ openTrades.length }}</span>
+        </div>
         <div style="display: flex; flex-direction: column; gap: 16px;">
           <div
             v-for="[pair, pairTrades] in openTradesByPair"
@@ -784,7 +780,7 @@ function formatLatency(ms: number): string {
             <div
               v-for="trade in pairTrades"
               :key="trade.id"
-              style="border-top: 1px solid var(--border-color, #2a2a3e);"
+              style="border-top: 1px solid var(--border);"
             >
               <!-- Position details row -->
               <div style="padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
@@ -872,7 +868,7 @@ function formatLatency(ms: number): string {
 
               <!-- Reasoning (collapsed) -->
               <div
-                style="padding: 8px 16px 10px; cursor: pointer; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border-color, #2a2a3e);"
+                style="padding: 8px 16px 10px; cursor: pointer; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border);"
                 @click="toggleTrade(trade.id)"
               >
                 <span style="margin-right: 6px;">{{ expandedTrades.has(trade.id) ? '▼' : '▶' }}</span>
@@ -943,9 +939,9 @@ function formatLatency(ms: number): string {
                   <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>
                 </tr>
                 <tr v-if="expandedTrades.has(trade.id)">
-                  <td colspan="11" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
+                  <td colspan="11" style="background: var(--bg-card); padding: 12px 16px;">
                     <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;">
-                      <strong style="color: var(--text-primary);">Reasoning:</strong> {{ trade.reasoning }}
+                      <strong style="color: var(--text);">Reasoning:</strong> {{ trade.reasoning }}
                     </div>
                   </td>
                 </tr>
