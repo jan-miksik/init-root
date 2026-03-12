@@ -255,7 +255,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
           <div
             v-if="showColumnMenu"
             ref="columnMenuRef"
-            style="position: absolute; right: 0; top: 110%; z-index: 60; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 170px; box-shadow: 0 10px 30px rgba(0,0,0,0.45);"
+            style="position: absolute; right: 0; top: 110%; z-index: 60; background: var(--bg-card); border: 1px solid var(--border); padding: 8px 10px; min-width: 170px;"
           >
             <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px;">
               Visible columns
@@ -587,11 +587,12 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: var(--bg-card);
   border: 1px solid var(--border);
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--text-dim);
 }
 .view-toggle {
@@ -599,7 +600,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   gap: 2px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius, 6px);
+  border-radius: var(--radius);
   padding: 2px;
 }
 .toggle-btn {
@@ -615,7 +616,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 }
 .toggle-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: #000;
 }
 .agent-table-row {
   cursor: pointer;
@@ -639,9 +640,13 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent-dim);
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
@@ -653,10 +658,16 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 .agent-actions-trigger {
   cursor: pointer;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #777;
+  background: var(--bg-card);
+  color: var(--text-muted);
   font-size: 14px;
+  transition: border-color 150ms ease-out, color 150ms ease-out;
+}
+.agent-actions-trigger:hover {
+  border-color: var(--border-light);
+  color: var(--text);
 }
 .agent-actions-trigger::-webkit-details-marker {
   display: none;
@@ -666,9 +677,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   right: 0;
   top: 0;
   background: var(--bg-card);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  border: 1px solid var(--border-light);
   padding: 6px 0;
   min-width: 140px;
   z-index: 999;
