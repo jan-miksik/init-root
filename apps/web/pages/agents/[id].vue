@@ -551,24 +551,24 @@ function formatLatency(ms: number): string {
       </div>
 
       <!-- Analysis error banner -->
-      <div v-if=”analyzeError” class=”api-error-banner” style=”margin-bottom: 16px; align-items: flex-start;”>
-        <span class=”error-icon” style=”margin-top: 1px;”>!</span>
-        <div style=”flex: 1; min-width: 0;”>
-          <span v-if=”isModelUnavailableError”>
-            This model is currently unavailable. Choose another model in agent settings, or enable “Try fallback model” if you’ve set one.
+      <div v-if="analyzeError" class="api-error-banner" style="margin-bottom: 16px; align-items: flex-start;">
+        <span class="error-icon" style="margin-top: 1px;">!</span>
+        <div style="flex: 1; min-width: 0;">
+          <span v-if="isModelUnavailableError">
+            This model is currently unavailable. Choose another model in agent settings, or enable "Try fallback model" if you've set one.
           </span>
           <span v-else>{{ analyzeError }}</span>
         </div>
-        <div style=”display: flex; align-items: center; gap: 8px; flex-shrink: 0;”>
+        <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
           <button
-            v-if=”isModelUnavailableError”
-            type=”button”
-            class=”btn btn-ghost btn-sm”
-            @click=”showEditModal = true; analyzeError = null”
+            v-if="isModelUnavailableError"
+            type="button"
+            class="btn btn-ghost btn-sm"
+            @click="showEditModal = true; analyzeError = null"
           >
             Select other model
           </button>
-          <button class=”btn btn-ghost btn-sm” @click=”analyzeError = null” aria-label=”Dismiss”>✕</button>
+          <button class="btn btn-ghost btn-sm" @click="analyzeError = null" aria-label="Dismiss">✕</button>
         </div>
       </div>
 

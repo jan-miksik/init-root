@@ -389,7 +389,6 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: var(--shadow-accent);
 }
 .btn-ghost {
   background: transparent;
@@ -399,7 +398,6 @@ tbody tr:last-child td { border-bottom: none; }
 .btn-ghost:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--text-muted);
-  box-shadow: var(--shadow-interactive);
 }
 .btn-danger {
   background: var(--red-dim);
@@ -408,7 +406,6 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .btn-danger:hover:not(:disabled) {
   border-color: var(--red);
-  box-shadow: 3px 3px 0px var(--red);
 }
 .btn-success {
   background: var(--green-dim);
@@ -417,7 +414,6 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .btn-success:hover:not(:disabled) {
   border-color: var(--green);
-  box-shadow: 3px 3px 0px var(--green);
 }
 .btn-sm {
   padding: 4px 10px;
