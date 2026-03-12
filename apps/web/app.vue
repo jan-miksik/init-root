@@ -90,19 +90,23 @@ function truncate(addr: string): string {
   align-items: center;
   justify-content: space-between;
   background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  padding: 0 24px;
-  height: 56px;
+  border-bottom: 2px solid var(--border);
+  padding: 0 var(--space-lg);
+  height: 52px;
 }
 
 .navbar-brand {
   flex-shrink: 0;
-  font-size: 15px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
+  text-decoration: none;
 }
 
 .navbar-nav {
@@ -111,39 +115,50 @@ function truncate(addr: string): string {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 2px;
 }
 
 .navbar-nav a {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
   text-decoration: none;
-  padding: 6px 12px;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  transition: color var(--t-snap), border-color var(--t-snap);
 }
 
 .navbar-nav a:hover,
 .navbar-nav a.router-link-active {
-  background: var(--bg-hover);
   color: var(--text);
+  border-color: var(--border-light);
+  text-decoration: none;
+}
+
+.navbar-nav a.router-link-active {
+  color: var(--accent);
+  border-color: var(--accent-dim);
 }
 
 .navbar-auth {
   display: flex;
   align-items: center;
+  gap: var(--space-sm);
   flex-shrink: 0;
 }
 
 .beta-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
-  border-radius: 20px;
-  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   background: var(--accent-dim);
   color: var(--accent);
@@ -154,76 +169,78 @@ function truncate(addr: string): string {
 .wallet-trigger {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  font-family: 'JetBrains Mono', monospace;
-  color: var(--text-secondary);
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
   background: transparent;
   border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
+  padding: 5px 10px;
   cursor: pointer;
+  transition: border-color var(--t-snap), color var(--t-snap);
 }
 
 .wallet-trigger:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  border-color: var(--border-light);
+  color: var(--text);
 }
 
 .wallet-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--success, #22c55e);
+  background: var(--green);
   flex-shrink: 0;
 }
 
 .wallet-dot--disconnected {
-  background: var(--text-dim);
+  background: var(--text-muted);
 }
 
 .provider-badge {
-  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 9px;
   padding: 1px 5px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--accent-dim);
   color: var(--accent);
-  text-transform: capitalize;
-  font-family: 'Inter', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .btn-sm {
   padding: 4px 10px;
-  font-size: 0.75rem;
+  font-size: 10px;
 }
 
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--border);
-  color: var(--text-secondary);
+  color: var(--text-dim);
 }
 
 .btn-ghost:hover {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  border-color: var(--border-light);
+  color: var(--text);
 }
 
 .settings-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  color: var(--text-dim);
-  margin-right: 8px;
+  color: var(--text-muted);
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: border-color var(--t-snap), color var(--t-snap);
 }
 .settings-icon-btn:hover {
-  background: var(--bg-secondary);
+  border-color: var(--border-light);
   color: var(--text);
 }
 </style>
