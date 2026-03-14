@@ -218,6 +218,9 @@ export async function getTradeDecision(
 
       return {
         ...object,
+        targetPair: object.targetPair ?? undefined,
+        suggestedPositionSizePct: object.suggestedPositionSizePct ?? undefined,
+        selfModification: object.selfModification ?? undefined,
         latencyMs,
         tokensUsed: usage.totalTokens,
         tokensIn: usage.inputTokens,

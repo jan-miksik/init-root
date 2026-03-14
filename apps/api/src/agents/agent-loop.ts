@@ -626,7 +626,7 @@ export async function runAgentLoop(
       const modId = generateId('selfmod');
 
       const meetsConfidence = decision.confidence >= 0.6;
-      const cyclesSinceLastMod: number = (rawConfig as any).cyclesSinceLastMod ?? 999;
+      const cyclesSinceLastMod: number = (config as any).cyclesSinceLastMod ?? 999;
       const cooldownCycles = config.selfModCooldownCycles ?? 3;
       const cooldownPassed = cyclesSinceLastMod >= cooldownCycles;
 
@@ -671,7 +671,7 @@ export async function runAgentLoop(
             if (c.maxPositionSizePct !== undefined) configPatch.maxPositionSizePct = c.maxPositionSizePct;
           }
 
-          agentUpdates.config = JSON.stringify({ ...rawConfig, ...configPatch });
+          agentUpdates.config = JSON.stringify({ ...config, ...configPatch });
           await db.update(agents).set(agentUpdates).where(eq(agents.id, agentId));
           console.log(`[agent-loop] ${agentId}: Applied self-modification — ${mod.reason}`);
         }
@@ -681,7 +681,7 @@ export async function runAgentLoop(
       if (!canApply || !shouldAutoApply) {
         const newCycles = cyclesSinceLastMod === 999 ? 1 : cyclesSinceLastMod + 1;
         await db.update(agents)
-          .set({ config: JSON.stringify({ ...rawConfig, cyclesSinceLastMod: newCycles }) })
+          .set({ config: JSON.stringify({ ...config, cyclesSinceLastMod: newCycles }) })
           .where(eq(agents.id, agentId));
       }
     }
