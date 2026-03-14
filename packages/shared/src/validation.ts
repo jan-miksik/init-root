@@ -112,12 +112,28 @@ export const AgentConfigSchema = z.object({
 export type AgentConfigInput = z.input<typeof AgentConfigSchema>;
 export type AgentConfigOutput = z.output<typeof AgentConfigSchema>;
 
+export const SelfModificationSchema = z.object({
+  reason: z.string().max(500),
+  changes: z.object({
+    personaMd: z.string().max(4000).optional(),
+    behavior: z.record(z.unknown()).optional(),
+    config: z.object({
+      stopLossPct:        z.number().min(0.5).max(50).optional(),
+      takeProfitPct:      z.number().min(0.5).max(100).optional(),
+      maxPositionSizePct: z.number().min(1).max(100).optional(),
+    }).optional(),
+  }),
+});
+
+export type SelfModification = z.infer<typeof SelfModificationSchema>;
+
 export const TradeDecisionSchema = z.object({
   action: z.enum(['buy', 'sell', 'hold', 'close']),
   confidence: z.number().min(0).max(1),
   reasoning: z.string(),
   targetPair: z.string().nullable().optional(),
   suggestedPositionSizePct: z.number().min(0).max(100).nullable().optional(),
+  selfModification: SelfModificationSchema.optional().nullable(),
 });
 
 export const CreateAgentRequestSchema = z.object({

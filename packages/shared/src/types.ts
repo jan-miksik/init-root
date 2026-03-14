@@ -127,4 +127,16 @@ export interface TradeDecision {
   reasoning: string;
   targetPair?: string;
   suggestedPositionSizePct?: number;
+  selfModification?: {
+    reason: string;
+    changes: {
+      personaMd?: string;
+      behavior?: Record<string, unknown>;
+      config?: {
+        stopLossPct?: number;
+        takeProfitPct?: number;
+        maxPositionSizePct?: number;
+      };
+    };
+  } | null;
 }
