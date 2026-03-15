@@ -293,7 +293,7 @@ function resetPersona() {
               <div class="prompt-section__toggle-row">
                 <button class="prompt-section__toggle" style="flex:1" @click="marketDataExpanded = false">
                   <span class="prompt-section__label">[EDITABLE SETUP]</span>
-                  <span class="prompt-section__live-badge">live</span>
+                  <span class="prompt-section__live-badge">live preview</span>
                 </button>
                 <button v-if="!editingSetup" class="btn btn-ghost btn-sm" style="margin-right:8px" @click="startEditingSetup">
                   Edit

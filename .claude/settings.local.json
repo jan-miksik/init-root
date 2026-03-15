@@ -56,5 +56,9 @@
       "Bash(npx vue-tsc:*)",
       "Bash(grep -n \"<style\" /Users/janmiksik/Desktop/projects/own/+/heppy-market/apps/web/pages/agents/[id].vue)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
   }
 }
