@@ -25,6 +25,7 @@ const marketDataAt = ref<string | null>(null);
 const hasMarketData = ref(false);
 
 const showMdPreview = ref(false);
+const showSetupDiff = ref(false);
 
 // Collapsible pill state
 const systemExpanded = ref(false);
@@ -104,6 +105,10 @@ const setupChanged = computed(() => {
   return prev.length > 0 && next !== prev;
 });
 
+watch(setupChanged, (changed) => {
+  if (!changed) showSetupDiff.value = false;
+});
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -177,8 +182,8 @@ const setupDiffHtml = computed(() => {
   for (const p of parts) {
     const safe = escapeHtmlPlain(p.line);
     if (p.op === 'equal') lines.push(`<span class="diff-line diff-line--eq">${safe}</span>`);
-    if (p.op === 'insert') lines.push(`<span class="diff-line diff-line--add">+ ${safe}</span>`);
-    if (p.op === 'delete') lines.push(`<span class="diff-line diff-line--del">− ${safe}</span>`);
+    if (p.op === 'insert') lines.push(`<span class="diff-line diff-line--add">${safe}</span>`);
+    if (p.op === 'delete') lines.push(`<span class="diff-line diff-line--del">${safe}</span>`);
   }
   return lines.join('\n');
 });
@@ -484,6 +489,14 @@ function resetRole() {
                   <span class="prompt-section__label">[EDITABLE SETUP]</span>
                   <span v-if="setupChanged" class="prompt-section__edited-badge">edited</span>
                 </button>
+                <button
+                  v-if="!editingSetup && !showMdPreview && setupChanged"
+                  class="btn btn-ghost btn-sm"
+                  style="margin-right:8px"
+                  @click="showSetupDiff = !showSetupDiff"
+                >
+                  {{ showSetupDiff ? 'Text' : 'Diff' }}
+                </button>
                 <button v-if="!editingSetup" class="btn btn-ghost btn-sm" style="margin-right:8px" @click="startEditingSetup">
                   Edit
                 </button>
@@ -494,13 +507,13 @@ function resetRole() {
 
               <!-- View mode: show full live text -->
               <pre
-                v-if="!editingSetup && !showMdPreview && !setupChanged"
+                v-if="!editingSetup && !showMdPreview && (!setupChanged || !showSetupDiff)"
                 class="prompt-section__content prompt-section__content--setup"
               >{{ liveEditableSetup }}</pre>
               <!-- Diff view when edited (prev vs current) -->
               <!-- eslint-disable-next-line vue/no-v-html -->
               <pre
-                v-else-if="!editingSetup && !showMdPreview && setupChanged"
+                v-else-if="!editingSetup && !showMdPreview && setupChanged && showSetupDiff"
                 class="prompt-section__content prompt-section__content--setup prompt-section__content--diff"
                 v-html="setupDiffHtml"
               />
@@ -838,22 +851,34 @@ function resetRole() {
 }
 .diff-line {
   display: block;
-  padding: 0 2px;
+  position: relative;
+  padding: 0 2px 0 16px;
   border-radius: 3px;
+}
+.diff-line::before {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 10px;
+  text-align: center;
+  opacity: 0.85;
 }
 .diff-line--add {
   background: color-mix(in srgb, #22c55e 14%, transparent);
   color: color-mix(in srgb, #22c55e 70%, #e0e0e0);
 }
+.diff-line--add::before { content: '+'; }
 .diff-line--del {
   background: color-mix(in srgb, #ef4444 14%, transparent);
   color: color-mix(in srgb, #ef4444 70%, #e0e0e0);
   text-decoration: line-through;
   opacity: 0.9;
 }
+.diff-line--del::before { content: '−'; }
 .diff-line--eq {
   opacity: 0.75;
 }
+.diff-line--eq::before { content: ' '; }
 
 /* Prompt pill rows */
 .prompt-pills {

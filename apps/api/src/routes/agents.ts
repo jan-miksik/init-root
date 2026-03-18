@@ -18,6 +18,7 @@ import {
 import { validateBody, ValidationError } from '../lib/validation.js';
 import { generateId, nowIso } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
+import { resolveAgentPersonaMd } from '../agents/resolve-agent-persona.js';
 
 const agentsRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -54,6 +55,8 @@ agentsRoute.post('/', async (c) => {
     pairs: normalizePairsForDex(body.pairs),
   };
 
+  const profileId = typeof body.profileId === 'string' ? resolveAgentProfileId(body.profileId) : null;
+
   await db.insert(agents).values({
     id,
     name: body.name,
@@ -62,6 +65,8 @@ agentsRoute.post('/', async (c) => {
     config: JSON.stringify(config),
     llmModel: body.llmModel,
     ownerAddress: walletAddress,
+    profileId,
+    personaMd: body.personaMd ?? null,
     createdAt: now,
     updatedAt: now,
   });
@@ -502,6 +507,12 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
   const totalPnlPct = paperBalance > 0 ? (totalPnlUsd / paperBalance) * 100 : 0;
 
   const systemPrompt = BASE_AGENT_PROMPT + buildJsonSchemaInstruction();
+  const personaMd = resolveAgentPersonaMd({
+    agentName: agent.name,
+    agentPersonaMd: agent.personaMd,
+    agentProfileId: agent.profileId,
+    config,
+  });
   const userPrompt = rawMarketData.length > 0
     ? buildAnalysisPrompt({
         portfolioState: {
@@ -521,8 +532,7 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
           takeProfitPct: (config.takeProfitPct as number) ?? 7,
         },
         behavior: config.behavior as any,
-        personaMd: agent.personaMd
-          ?? (agent.profileId ? getAgentPersonaTemplate(agent.profileId, agent.name) : getDefaultAgentPersona(agent.name)),
+        personaMd,
         behaviorMd: (config.behaviorMd as string | undefined) ?? null,
         roleMd: (config.roleMd as string | undefined) ?? null,
       })
