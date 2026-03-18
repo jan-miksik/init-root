@@ -54,7 +54,10 @@
       "Bash(wc -l /Users/janmiksik/Desktop/projects/own/+/heppy-market/.worktrees/analysis-log-redesign/apps/web/pages/agents/\\\\[id\\\\].vue)",
       "Bash(pnpm --filter api test 2>&1 | tail -5 && git branch -d feat/analysis-log-redesign && git worktree remove .worktrees/analysis-log-redesign)",
       "Bash(npx vue-tsc:*)",
-      "Bash(grep -n \"<style\" /Users/janmiksik/Desktop/projects/own/+/heppy-market/apps/web/pages/agents/[id].vue)"
+      "Bash(grep -n \"<style\" /Users/janmiksik/Desktop/projects/own/+/heppy-market/apps/web/pages/agents/[id].vue)",
+      "Bash(cd:*)",
+      "Read(//Users/janmiksik/Desktop/projects/own/+/heppy-market/**)",
+      "Read(//Users/janmiksik/Desktop/projects/own/+/heppy-market/=== routes/**)"
     ]
   },
   "sandbox": {

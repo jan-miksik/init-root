@@ -9,7 +9,6 @@ export interface Agent {
   id: string;
   name: string;
   status: 'running' | 'stopped' | 'paused';
-  autonomyLevel: 'full' | 'guided' | 'strict';
   llmModel: string;
   config: {
     pairs: string[];
@@ -23,8 +22,7 @@ export interface Agent {
     slippageSimulation: number;
     temperature: number;
     allowFallback?: boolean;
-    behavior?: Record<string, unknown>;
-  };
+    behavior?: Record<string, unknown>;  };
   managerId?: string | null;
   profileId?: string | null;
   personaMd?: string | null;
@@ -33,11 +31,7 @@ export interface Agent {
 }
 
 export interface CreateAgentPayload {
-  name: string;
-  autonomyLevel: 'full' | 'guided' | 'strict';
-  autoApplySelfModification?: boolean;
-  selfModCooldownCycles?: number;
-  pairs?: string[];
+  name: string;  pairs?: string[];
   paperBalance?: number;
   strategies?: string[];
   analysisInterval?: string;
@@ -51,6 +45,7 @@ export interface CreateAgentPayload {
   behavior?: Record<string, unknown>;
   profileId?: string;
   personaMd?: string;
+  behaviorMd?: string;
 }
 
 export function useAgents() {
@@ -115,6 +110,10 @@ export function useAgents() {
     if (agent) agent.status = 'paused';
   }
 
+  async function clearAgentHistory(id: string): Promise<void> {
+    await request(`/api/agents/${id}/history/clear`, { method: 'POST' });
+  }
+
   async function deleteAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}`, { method: 'DELETE' });
     cache.invalidate(AGENTS_KEY);
@@ -144,5 +143,6 @@ export function useAgents() {
     pauseAgent,
     deleteAgent,
     updateAgent,
+    clearAgentHistory,
   };
 }

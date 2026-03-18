@@ -14,6 +14,10 @@
   - Integrates with **OpenRouter** (and optionally Anthropic) to run AI models that drive trading agents.
   - Uses **Durable Objects** for long‑lived agent/manager state and **cron triggers** for periodic analysis.
 
+- **Shared package (`packages/shared`)**
+  - Exports validation schemas (`AgentConfigSchema`, `SelfModificationSchema`, etc.) used by both frontend and backend.
+  - Exports prompt builders (`BASE_AGENT_PROMPT`, `buildJsonSchemaInstruction`, `buildBehaviorSection`, `buildConstraintsSection`) — consumed by the agent loop, the API prompt-preview endpoint, and the frontend edit page for live preview.
+
 Overall architecture:
 
 ```text
@@ -36,7 +40,7 @@ The API Worker is **internal-only** (no public route); the browser only talks to
   - `nitro.preset = 'cloudflare-pages'`
   - `compatibilityDate: '2026-02-17'`
 - Deploy script from repository root (`package.json`):
-  - `npm run deploy:web` → builds the web app and runs  
+  - `npm run deploy:web` → builds the web app and runs
     `npx wrangler pages deploy dist --project-name=heppy-market`.
 - **Pages Functions**:
   - `apps/web/server/api/[...path].ts` is a Nitro/Pages Function that:
@@ -57,7 +61,7 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 - Build pipeline from monorepo root (root `package.json`):
   - `build:worker` bundles `apps/api/src/index.ts` with esbuild for the Workers runtime.
 
-### 3. D1 (Cloudflare’s SQLite database)
+### 3. D1 (Cloudflare's SQLite database)
 
 - `apps/api/wrangler.toml` defines **D1 bindings**:
   - Local:
@@ -118,8 +122,126 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 
 ---
 
+## Key Subsystems
+
+### Agent Loop (`apps/api/src/agents/agent-loop.ts`)
+
+Called by `TradingAgentDO.alarm()` on each scheduled tick. Full flow:
+
+1. Load + migrate agent config from D1 (clamps out-of-range LLM-generated values, upgrades legacy interval strings).
+2. Drain any `pendingTrade` from DO storage (durability: if D1 write failed last tick, retry now).
+3. Check daily loss limit and cooldown — pause agent or skip tick if triggered.
+4. Check open positions for stop-loss / take-profit using `price-resolver.ts`. Tracks consecutive price-miss counter; alerts after 3 misses.
+5. Fetch OHLCV market data: **GeckoTerminal** primary → **DexScreener** fallback → **well-known token address** last resort.
+6. Compute technical indicators (RSI, EMA9/21, MACD, Bollinger Bands) when ≥14 candles are available.
+7. Call LLM (`getTradeDecision`) via OpenRouter or Anthropic (only for tester-role users). Supports per-user OpenRouter key (stored encrypted in D1).
+8. Log decision to `agentDecisions` table (includes raw prompt + raw response for debugging).
+9. Handle self-modification suggestions (gated by autonomy level and confidence/cooldown checks).
+10. Execute paper trade via `PaperEngine` if confidence ≥ 0.65 and position limits allow.
+
+### Self-Modification System
+
+Agents can suggest changes to themselves (persona, behavior, and — if `full` autonomy — hard config):
+- LLM returns optional `selfModification` field in the trade decision JSON.
+- Validated against `SelfModificationSchema` (shared package).
+- Gated by: confidence ≥ 0.6, cooldown cycles, and autonomy level.
+- `guided` autonomy: can modify `personaMd` and `behavior`, not hard config.
+- `full` autonomy: can also modify `stopLossPct`, `takeProfitPct`, `maxPositionSizePct`.
+- `autoApplySelfModification: true` → applied immediately; otherwise status = `pending`, user must approve via API.
+- API endpoints for user review: `GET/POST /api/agents/:id/self-modifications`, `.../approve`, `.../reject`.
+
+### Agent Edit Page (`apps/web/pages/agents/[id]/edit.vue`)
+
+Full-featured two-panel edit UI:
+- **Sticky command bar**: breadcrumb + running-badge + Cancel/Save actions (Save targets the form's `form` attribute).
+- **Left panel**: `AgentConfigForm` with `hide-persona-editor` and `hide-footer` flags (persona editing is in the right panel).
+- **Right panel – Prompt Preview**:
+  - **[SYSTEM]** collapsible pill: live-computed from `BASE_AGENT_PROMPT + buildJsonSchemaInstruction(autonomyLevel)` — updates immediately when autonomy level changes in the form.
+  - **[MARKET DATA]** collapsible pill: API-fetched from `GET /api/agents/:id/prompt-preview`, refreshable.
+  - **[EDITABLE SETUP]** always-visible block with live preview: behavior section (auto-generated or custom markdown), persona section, constraints section. Toggle to edit mode for inline textarea editing with auto-resize, Reset buttons, and Custom/auto-generated badges.
+- Optimistic version conflict: PATCH includes `_version` (agent's `updatedAt`); server returns 409 on conflict.
+
+### API Endpoints (agents)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/agents` | List agents owned by auth user |
+| POST | `/api/agents` | Create agent |
+| GET | `/api/agents/:id` | Get agent |
+| PATCH | `/api/agents/:id` | Update agent config (supports `_version` optimistic lock) |
+| DELETE | `/api/agents/:id` | Delete agent + all related data |
+| POST | `/api/agents/:id/start` | Start agent (wakes DO) |
+| POST | `/api/agents/:id/stop` | Stop agent |
+| POST | `/api/agents/:id/pause` | Pause agent |
+| POST | `/api/agents/:id/reset` | Reset paper balance |
+| POST | `/api/agents/:id/analyze` | Manual analysis trigger |
+| GET | `/api/agents/:id/status` | Live DO status |
+| GET | `/api/agents/:id/trades` | Trade history |
+| GET | `/api/agents/:id/decisions` | Decision log |
+| GET | `/api/agents/:id/performance` | Performance snapshots |
+| GET | `/api/agents/:id/persona` | Get persona markdown |
+| PUT | `/api/agents/:id/persona` | Set persona markdown |
+| POST | `/api/agents/:id/persona/reset` | Reset persona to profile template |
+| GET | `/api/agents/:id/prompt-preview` | Build full prompt from last market snapshot |
+| GET | `/api/agents/:id/self-modifications` | List self-modification suggestions |
+| POST | `/api/agents/:id/self-modifications/:modId/approve` | Apply a pending modification |
+| POST | `/api/agents/:id/self-modifications/:modId/reject` | Reject a pending modification |
+
+### LLM Routing (`apps/api/src/services/llm-router.ts`)
+
+- Uses Vercel AI SDK with `generateObject` + Zod schema for structured output.
+- Routes to **Anthropic** if model starts with `claude-` and `ANTHROPIC_API_KEY` is set (tester-role only).
+- Routes to **OpenRouter** for all other models; resolves per-user encrypted OR key from D1, falls back to server key.
+- `buildJsonSchemaInstruction(autonomyLevel)` (shared package) appends the response schema to the system prompt; `selfModification` field varies by autonomy level.
+
+### Shared Package (`packages/shared`)
+
+Exports consumed by both API and frontend:
+- **Validation schemas**: `AgentConfigSchema`, `SelfModificationSchema`, `TradeDecisionSchema`, `CreateAgentRequestSchema`, `UpdateAgentRequestSchema`, `ManagerConfigSchema`, `CreateBehaviorProfileSchema`, `UpdatePersonaSchema`, persona template helpers.
+- **Prompt builders**: `BASE_AGENT_PROMPT`, `buildJsonSchemaInstruction`, `buildBehaviorSection`, `buildConstraintsSection` — single source of truth for agent prompt construction.
+
+### Services
+
+| File | Purpose |
+|------|---------|
+| `gecko-terminal.ts` | Primary OHLCV source — pool search + price series (48 hourly candles) |
+| `dex-data.ts` | DexScreener fallback — pair search + token address lookup |
+| `price-resolver.ts` | Resolves current price for open position SL/TP checks |
+| `paper-engine.ts` | PaperEngine: open/close positions, P&L math, slippage simulation |
+| `indicators.ts` | Technical indicators wrapping `technicalindicators` npm package |
+| `snapshot.ts` | Periodic performance snapshot writes to D1 |
+| `llm-router.ts` | LLM call routing, JSON extraction, fallback handling |
+
+### Lib Utilities
+
+| File | Purpose |
+|------|---------|
+| `auth.ts` | SIWE authentication + session management (security boundary) |
+| `crypto.ts` | AES-GCM encryption/decryption for user API keys stored in D1 |
+| `pairs.ts` | Pair name normalization (e.g. `ETH-USD` → `WETH/USDC`) |
+| `rate-limit.ts` | Per-agent LLM call rate limiting |
+| `utils.ts` | `generateId`, `nowIso`, `autonomyLevelToInt`, `intToAutonomyLevel` |
+| `validation.ts` | Request body validation helper + `ValidationError` class |
+
+---
+
+## Frontend Route Structure
+
+```text
+apps/web/pages/
+  agents/
+    index.vue          — agent list
+    new.vue            — create agent form
+    [id]/
+      index.vue        — agent detail / dashboard
+      edit.vue         — agent config editor with live prompt preview
+```
+
+---
+
 ## TL;DR
 
 - **Frontend**: Nuxt SPA on **Cloudflare Pages**, with a Pages Function proxy and Service Binding to the API Worker.
 - **Backend**: Hono‑based **Cloudflare Worker** using **D1**, **KV**, **Durable Objects**, and **cron triggers**.
-- **Security model**: API is **internal-only**; the browser talks only to the Pages origin, and Cloudflare’s internal Service Binding handles communication to the Worker.
+- **Shared**: Single `packages/shared` package owns all validation schemas and prompt-builder functions — used by API and frontend.
+- **Security model**: API is **internal-only**; the browser talks only to the Pages origin, and Cloudflare's internal Service Binding handles communication to the Worker.

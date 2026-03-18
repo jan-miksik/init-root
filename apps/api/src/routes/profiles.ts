@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
 import type { AuthVariables } from '../lib/auth.js';
 import { behaviorProfiles } from '../db/schema.js';
-import { CreateBehaviorProfileSchema, AGENT_PROFILES, MANAGER_PROFILES } from '@dex-agents/shared';
+import { CreateBehaviorProfileSchema, AGENT_PROFILES, MANAGER_PROFILES, getAgentProfile, isAgentProfileId } from '@dex-agents/shared';
 import { validateBody } from '../lib/validation.js';
 import { generateId, nowIso } from '../lib/utils.js';
 
@@ -81,7 +81,7 @@ profilesRoute.post('/', async (c) => {
 profilesRoute.get('/:id', async (c) => {
   const id = c.req.param('id');
 
-  const agentPreset = AGENT_PROFILES.find((p) => p.id === id);
+  const agentPreset = getAgentProfile(id);
   if (agentPreset) {
     return c.json({ id: agentPreset.id, name: agentPreset.name, emoji: agentPreset.emoji, description: agentPreset.description, type: 'agent', isPreset: true, behaviorConfig: agentPreset.behavior });
   }
@@ -100,7 +100,7 @@ profilesRoute.get('/:id', async (c) => {
 profilesRoute.patch('/:id', async (c) => {
   const id = c.req.param('id');
 
-  const isPresetAgent = AGENT_PROFILES.some((p) => p.id === id);
+  const isPresetAgent = isAgentProfileId(id);
   const isPresetManager = MANAGER_PROFILES.some((p) => p.id === id);
   if (isPresetAgent || isPresetManager) return c.json({ error: 'Cannot modify preset profiles' }, 403);
 
@@ -126,7 +126,7 @@ profilesRoute.patch('/:id', async (c) => {
 profilesRoute.delete('/:id', async (c) => {
   const id = c.req.param('id');
 
-  const isPreset = AGENT_PROFILES.some((p) => p.id === id) || MANAGER_PROFILES.some((p) => p.id === id);
+  const isPreset = isAgentProfileId(id) || MANAGER_PROFILES.some((p) => p.id === id);
   if (isPreset) return c.json({ error: 'Cannot delete preset profiles' }, 403);
 
   const db = drizzle(c.env.DB);

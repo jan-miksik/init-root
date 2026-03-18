@@ -62,7 +62,7 @@ describe('Phase 1: Agent Config Validation', async () => {
     if (result.success) {
       expect(result.data.paperBalance).toBe(10000);
       expect(result.data.pairs).toContain('WETH/USDC');
-      expect(result.data.llmModel).toBe('nvidia/nemotron-3-nano-30b-a3b:free');
+      expect(result.data.llmModel).toBe('nvidia/nemotron-3-super-120b-a12b:free');
     }
   });
 

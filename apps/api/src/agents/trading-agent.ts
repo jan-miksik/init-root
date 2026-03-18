@@ -118,12 +118,14 @@ export class TradingAgentDO extends DurableObject<Env> {
 
       if (!agentId) return Response.json({ error: 'Agent not initialized. Start the agent first.' }, { status: 400 });
 
-      // Prevent concurrent loop runs (e.g. manual trigger racing with scheduled alarm)
-      const isLoopRunning = await this.ctx.storage.get<boolean>('isLoopRunning');
-      if (isLoopRunning) {
+      // Prevent concurrent loop runs (e.g. manual trigger racing with scheduled alarm).
+      // Store a timestamp so stale locks (dev restart, crash) self-clear after 10 minutes.
+      const LOCK_TTL_MS = 10 * 60_000;
+      const lockAt = await this.ctx.storage.get<number>('isLoopRunning');
+      if (lockAt && Date.now() - lockAt < LOCK_TTL_MS) {
         return Response.json({ error: 'Analysis already in progress' }, { status: 409 });
       }
-      await this.ctx.storage.put('isLoopRunning', true);
+      await this.ctx.storage.put('isLoopRunning', Date.now());
 
       const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
       const engine = engineState
@@ -243,14 +245,15 @@ export class TradingAgentDO extends DurableObject<Env> {
     const agentId = await this.ctx.storage.get<string>('agentId');
     if (!agentId) return;
 
-    // Skip if a manual analyze is already running
-    const isLoopRunning = await this.ctx.storage.get<boolean>('isLoopRunning');
-    if (isLoopRunning) {
+    // Skip if a manual analyze is already running (stale locks >10min are ignored)
+    const LOCK_TTL_MS = 10 * 60_000;
+    const lockAt = await this.ctx.storage.get<number>('isLoopRunning');
+    if (lockAt && Date.now() - lockAt < LOCK_TTL_MS) {
       console.warn(`[TradingAgentDO] ${agentId}: Loop already running, skipping alarm tick`);
       await this.rescheduleAlarmIfRunning();
       return;
     }
-    await this.ctx.storage.put('isLoopRunning', true);
+    await this.ctx.storage.put('isLoopRunning', Date.now());
 
     try {
       // Restore or init engine

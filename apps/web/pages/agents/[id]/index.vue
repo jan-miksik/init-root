@@ -7,7 +7,7 @@ import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 
 const route = useRoute();
 const id = computed(() => route.params.id as string);
-const { getAgent, startAgent, stopAgent, pauseAgent, deleteAgent } = useAgents();
+const { getAgent, startAgent, stopAgent, pauseAgent, deleteAgent, clearAgentHistory } = useAgents();
 const { modifications, pendingModifications, modDecisionIds, fetchModifications, approve, reject } = useSelfModifications();
 const { fetchAgentTrades, closeTrade, formatPnl, pnlClass } = useTrades();
 const { request } = useApi();
@@ -81,6 +81,9 @@ const doStatus = ref<DoStatus | null>(null);
 const loading = ref(true);
 const loadError = ref<string | null>(null);
 const isAnalyzing = ref(false);
+const livePrices = ref<Record<string, number>>({});
+const livePricesLoading = ref(false);
+const livePricesError = ref<string | null>(null);
 /** Tracks which pill sections are open per decision id */
 const expandedSections = ref<Record<string, Set<string>>>({});
 
@@ -153,6 +156,7 @@ const expandedTrades = ref<Set<string>>(new Set());
 const analyzeError = ref<string | null>(null);
 const personaMd = ref('');
 const personaSaving = ref(false);
+const clearingHistory = ref(false);
 
 const personaEmoji = computed(() => {
   if (!agent.value) return '';
@@ -204,6 +208,7 @@ async function loadAll() {
     trades.value = t;
     decisions.value = d.decisions;
     snapshots.value = p.snapshots;
+    await fetchLivePrices();
     // Load DO status for countdown
     await refreshDoStatus();
     try {
@@ -215,6 +220,31 @@ async function loadAll() {
     loadError.value = extractApiError(err);
   } finally {
     loading.value = false;
+  }
+}
+
+async function fetchLivePrices() {
+  livePricesLoading.value = true;
+  livePricesError.value = null;
+  try {
+    const cfgPairs = (agent.value?.config?.pairs as string[] | undefined) ?? [];
+    const tradePairs = trades.value.map((t) => t.pair);
+    const pairs = Array.from(new Set([...cfgPairs, ...tradePairs])).filter(Boolean);
+    if (pairs.length === 0) {
+      livePrices.value = {};
+      return;
+    }
+
+    const res = await request<{ prices: Record<string, number> }>(`/api/pairs/prices`, {
+      method: 'POST',
+      body: { pairs },
+      timeout: 30_000,
+    });
+    livePrices.value = res.prices ?? {};
+  } catch (err) {
+    livePricesError.value = extractApiError(err);
+  } finally {
+    livePricesLoading.value = false;
   }
 }
 
@@ -361,6 +391,18 @@ function getExitBounds(trade: Trade): { target: number; stop: number } {
 
 /** Estimate unrealized P&L for an open position using latest known price */
 function getUnrealizedPnl(trade: Trade): { pnlPct: number; currentPrice: number } | null {
+  const live = livePrices.value[trade.pair];
+  if (live && live > 0) {
+    const slippage = agent.value?.config.slippageSimulation ?? 0.3;
+    const effectiveEntry = trade.side === 'buy'
+      ? trade.entryPrice * (1 + slippage / 100)
+      : trade.entryPrice * (1 - slippage / 100);
+    const pnlPct = trade.side === 'buy'
+      ? ((live - effectiveEntry) / effectiveEntry) * 100
+      : ((effectiveEntry - live) / effectiveEntry) * 100;
+    return { pnlPct, currentPrice: live };
+  }
+
   for (const dec of decisions.value) {
     const snap = parseSnapshot(dec.marketDataSnapshot);
     const entry = snap.find((e) => e.pair === trade.pair);
@@ -427,6 +469,20 @@ async function handleDelete() {
   router.push('/agents');
 }
 
+async function handleClearHistory() {
+  if (!agent.value) return;
+  if (!confirm('Clear all trades, decisions, and P&L snapshots for this agent? This cannot be undone.')) return;
+  clearingHistory.value = true;
+  try {
+    await clearAgentHistory(id.value);
+    trades.value = [];
+    decisions.value = [];
+    snapshots.value = [];
+  } finally {
+    clearingHistory.value = false;
+  }
+}
+
 async function savePersona(md: string) {
   personaSaving.value = true;
   try {
@@ -458,14 +514,17 @@ function parsePromptSections(promptText: string | undefined): {
   if (!promptText) return { system: '', marketData: '', editableSetup: '' };
 
   const portfolioIdx = promptText.indexOf('## Portfolio State');
+  const roleIdx      = promptText.indexOf('## Your Role');
   const behaviorIdx  = promptText.indexOf('## Your Behavior Profile');
   const personaIdx   = promptText.indexOf('## Your Persona');
+  const constraintsIdx = promptText.indexOf('## Constraints');
 
   // SYSTEM: everything before ## Portfolio State
   const system = portfolioIdx >= 0 ? promptText.slice(0, portfolioIdx).trim() : promptText.trim();
 
-  // EDITABLE SETUP: ## Your Behavior Profile and/or ## Your Persona onwards
-  const editableStart = behaviorIdx >= 0 ? behaviorIdx : (personaIdx >= 0 ? personaIdx : -1);
+  // EDITABLE SETUP: earliest editable section onwards (Role/Behavior/Persona/Constraints)
+  const candidates = [roleIdx, behaviorIdx, personaIdx, constraintsIdx].filter((i) => i >= 0);
+  const editableStart = candidates.length > 0 ? Math.min(...candidates) : -1;
   const editableSetup = editableStart >= 0 ? promptText.slice(editableStart).trim() : '';
 
   // MARKET DATA: between system and editableSetup
@@ -557,7 +616,9 @@ function formatLatency(ms: number): string {
             <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
           </div>
           <p class="page-subtitle">
-            {{ agent.autonomyLevel }} · {{ agent.llmModel.split('/')[1] ?? agent.llmModel }} · {{ formatInterval(agent.config.analysisInterval) }} interval · temp {{ (agent.config.temperature ?? 0.7).toFixed(1) }}
+            {{ agent.llmModel.split('/')[1] ?? agent.llmModel }} · {{ formatInterval(agent.config.analysisInterval) }} interval · temp {{ (agent.config.temperature ?? 0.7).toFixed(1) }}
+            <span v-if="livePricesLoading" class="mono" style="opacity: 0.7;"> · fetching live prices…</span>
+            <span v-else-if="livePricesError" class="mono" style="opacity: 0.7;"> · live price unavailable</span>
           </p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
@@ -575,6 +636,13 @@ function formatLatency(ms: number): string {
             ▶ Start
           </button>
           <button v-else class="btn btn-ghost" @click="handleStop">■ Stop</button>
+          <button
+            class="btn btn-ghost btn-sm"
+            :disabled="clearingHistory"
+            @click="handleClearHistory"
+          >
+            {{ clearingHistory ? 'Clearing…' : 'Clear history' }}
+          </button>
           <button class="btn btn-danger btn-sm" @click="handleDelete">Delete</button>
         </div>
       </div>

@@ -5,7 +5,7 @@ import { filterSupportedBasePairs } from './pairs.js';
 describe('ManagerConfigSchema', () => {
   it('accepts valid config', () => {
     const result = ManagerConfigSchema.safeParse({
-      llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+      llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
       temperature: 0.7,
       decisionInterval: '1h',
       riskParams: { maxTotalDrawdown: 0.2, maxAgents: 5, maxCorrelatedPositions: 3 },
@@ -25,7 +25,7 @@ describe('ManagerConfigSchema', () => {
 
   it('applies defaults', () => {
     const result = ManagerConfigSchema.parse({
-      llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+      llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
     });
     expect(result.temperature).toBe(0.7);
     expect(result.decisionInterval).toBe('1h');
@@ -43,7 +43,7 @@ describe('CreateManagerRequestSchema', () => {
   it('accepts minimal valid request', () => {
     const result = CreateManagerRequestSchema.safeParse({
       name: 'My Manager',
-      llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+      llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
     });
     expect(result.success).toBe(true);
     if (result.success) {

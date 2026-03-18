@@ -6,8 +6,8 @@ export const AgentConfigSchema = z.object({
     // Autonomy
     autonomyLevel: z.enum(['full', 'guided', 'strict']),
     // LLM
-    llmModel: z.string().default('openai/gpt-oss-20b:free'),
-    llmFallback: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+    llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+    llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
     maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
     // Trading
     chain: z.literal('base').default('base'),
@@ -56,8 +56,8 @@ export const CreateAgentRequestSchema = z.object({
     name: z.string().min(1).max(50),
     description: z.string().max(500).optional(),
     autonomyLevel: z.enum(['full', 'guided', 'strict']).default('guided'),
-    llmModel: z.string().default('openai/gpt-oss-20b:free'),
-    llmFallback: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+    llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+    llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
     maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
     chain: z.literal('base').default('base'),
     dexes: z
@@ -98,7 +98,7 @@ export const ManagerRiskParamsSchema = z.object({
     maxCorrelatedPositions: z.number().min(1).max(10).default(3),
 });
 export const ManagerConfigSchema = z.object({
-    llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+    llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
     temperature: z.number().min(0).max(2).default(0.7),
     decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
     riskParams: ManagerRiskParamsSchema.default({}),
@@ -106,7 +106,7 @@ export const ManagerConfigSchema = z.object({
 export const CreateManagerRequestSchema = z.object({
     name: z.string().min(1).max(50),
     description: z.string().max(500).optional(),
-    llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+    llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
     temperature: z.number().min(0).max(2).default(0.7),
     decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
     riskParams: ManagerRiskParamsSchema.optional(),

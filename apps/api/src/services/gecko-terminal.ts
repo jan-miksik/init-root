@@ -151,12 +151,13 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
   }
 
   /**
-   * Fetch hourly OHLCV close prices for a pool (up to `limit` candles).
+   * Fetch OHLCV close prices for a pool.
+   * @param timeframe 'hour' (default) or 'day'
    * Returns close prices oldest→newest (ready for technicalindicators).
    */
-  async function getPoolPriceSeries(address: string, limit = 48): Promise<number[]> {
-    const cacheKey = `gecko:ohlcv:base:${address.toLowerCase()}:${limit}`;
-    const url = `${GECKO_BASE}/networks/base/pools/${address}/ohlcv/hour?limit=${limit}&currency=usd`;
+  async function getPoolPriceSeries(address: string, limit = 48, timeframe: 'hour' | 'day' = 'hour'): Promise<number[]> {
+    const cacheKey = `gecko:ohlcv:base:${address.toLowerCase()}:${timeframe}:${limit}`;
+    const url = `${GECKO_BASE}/networks/base/pools/${address}/ohlcv/${timeframe}?limit=${limit}&currency=usd`;
     const data = await cachedFetch(cacheKey, url, GeckoOHLCVSchema);
     // ohlcv_list is newest-first; reverse to oldest-first for TA libraries
     const closes = data.data.attributes.ohlcv_list.map(([, , , , close]) => close).reverse();

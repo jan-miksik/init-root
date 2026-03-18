@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getAgentPersonaTemplate } from '@dex-agents/shared';
+import { getAgentPersonaTemplate, resolveAgentProfileId } from '@dex-agents/shared';
 import type { CreateAgentPayload } from '~/composables/useAgents';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
@@ -7,17 +7,39 @@ import { useAuth } from '~/composables/useAuth';
 const { user } = useAuth();
 const isTester = computed(() => user.value?.role === 'tester');
 
+type ModelItem = {
+  id: string;
+  label: string;
+  ctx: string;
+  /** Display-only, e.g. "$0.20/$1.20" (in/out) */
+  price: string;
+  tier: 'free' | 'paid' | 'tester';
+  desc?: string;
+};
+
+const FREE_MODELS: ModelItem[] = [
+  { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 120B Super', ctx: '131K', price: '$0/$0', tier: 'free', desc: 'default free' },
+  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', label: 'Nemotron 30B', ctx: '131K', price: '$0/$0', tier: 'free' },
+  { id: 'openrouter/hunter-alpha', label: 'Hunter Alpha', ctx: '1M', price: '$0/$0', tier: 'free', desc: 'OpenRouter (free)' },
+  { id: 'stepfun/step-3.5-flash:free', label: 'Step 3.5 Flash', ctx: '256K', price: '$0/$0', tier: 'free' },
+  { id: 'nvidia/nemotron-nano-9b-v2:free', label: 'Nemotron 9B', ctx: '131K', price: '$0/$0', tier: 'free' },
+  { id: 'arcee-ai/trinity-large-preview:free', label: 'Trinity-Large', ctx: '64K', price: '$0/$0', tier: 'free' },
+  { id: 'xiaomi/mimo-v2-flash:free', label: 'MiMo Flash', ctx: '256K', price: '$0/$0', tier: 'free' },
+] as const;
+
 const PAID_MODELS = [
-  { id: 'google/gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro',        ctx: '2M',   price: '$2/$12' },
-  { id: 'anthropic/claude-sonnet-4.6',    label: 'Claude Sonnet 4.6',     ctx: '1M',   price: '$3/$15' },
+  { id: 'minimax/minimax-m2.5',           label: 'MiniMax M2.5',          ctx: '196K', price: '$0.20/$1.20' },
+  { id: 'mistralai/mistral-small-2603',   label: 'Mistral Small 2603',    ctx: '262K', price: '$0.15/$0.60' },
   { id: 'google/gemini-3.1-flash-lite',   label: 'Gemini 3.1 Flash Lite', ctx: '1M',   price: '$0.25/$1.50' },
-  { id: 'openai/gpt-5.4',                 label: 'GPT-5.4',               ctx: '1M',   price: '$2.50/$20' },
   { id: 'deepseek/deepseek-v3.2',         label: 'DeepSeek V3.2',         ctx: '128K', price: '$0.25/$0.38' },
+  { id: 'anthropic/claude-sonnet-4.6',    label: 'Claude Sonnet 4.6',     ctx: '1M',   price: '$3/$15' },
+  { id: 'google/gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro',        ctx: '2M',   price: '$2/$12' },
+  { id: 'openai/gpt-5.4',                 label: 'GPT-5.4',               ctx: '1M',   price: '$2.50/$20' },
   { id: 'anthropic/claude-opus-4.6',      label: 'Claude Opus 4.6',       ctx: '200K', price: '$5/$25' },
 ] as const;
 
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
-const dropdownModel = ref('nvidia/nemotron-3-nano-30b-a3b:free');
+const dropdownModel = ref('nvidia/nemotron-3-super-120b-a12b:free');
 const customModel = ref('');
 // Keep form.llmModel in sync: custom input overrides dropdown; clearing restores dropdown value.
 watch(dropdownModel, (val) => { form.llmModel = val; });
@@ -25,13 +47,77 @@ watch(customModel, (val) => {
   form.llmModel = val.trim() || dropdownModel.value;
 });
 
+// ─── Model picker (table dropdown) ───────────────────────────────────────────
+
+const modelPickerOpen = ref(false);
+const modelQuery = ref('');
+const modelPickerRef = ref<HTMLElement | null>(null);
+
+const MODEL_CATALOG = computed<ModelItem[]>(() => {
+  const paid = PAID_MODELS.map((m) => ({ ...m, tier: 'paid' as const }));
+  const tester: ModelItem[] = isTester.value
+    ? [
+        { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', ctx: '—', price: 'direct', tier: 'tester', desc: 'Anthropic direct' },
+        { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', ctx: '—', price: 'direct', tier: 'tester', desc: 'Anthropic direct' },
+      ]
+    : [];
+
+  // Paid models only visible if user has their own OpenRouter key.
+  return [...FREE_MODELS, ...(hasOwnKey.value ? paid : []), ...tester];
+});
+
+const selectedModelMeta = computed<ModelItem | null>(() => {
+  const id = customModel.value.trim() || dropdownModel.value;
+  return MODEL_CATALOG.value.find((m) => m.id === id) ?? null;
+});
+
+const filteredModels = computed<ModelItem[]>(() => {
+  const q = modelQuery.value.trim().toLowerCase();
+  if (!q) return MODEL_CATALOG.value;
+  return MODEL_CATALOG.value.filter((m) =>
+    (m.label + ' ' + m.id + ' ' + (m.desc ?? '')).toLowerCase().includes(q)
+  );
+});
+
+function selectModel(id: string) {
+  dropdownModel.value = id;
+  modelPickerOpen.value = false;
+  modelQuery.value = '';
+}
+
+function closeModelPicker() {
+  modelPickerOpen.value = false;
+  modelQuery.value = '';
+}
+
+function onDocPointerDown(e: PointerEvent) {
+  if (!modelPickerOpen.value) return;
+  const el = modelPickerRef.value;
+  if (el && e.target instanceof Node && !el.contains(e.target)) closeModelPicker();
+}
+
+function onDocKeydown(e: KeyboardEvent) {
+  if (!modelPickerOpen.value) return;
+  if (e.key === 'Escape') closeModelPicker();
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocPointerDown);
+  document.addEventListener('keydown', onDocKeydown);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocPointerDown);
+  document.removeEventListener('keydown', onDocKeydown);
+});
+
 const props = defineProps<{
   initialValues?: Partial<CreateAgentPayload & { pairs: string[] }>;
   hidePersonaEditor?: boolean;
+  hideFooter?: boolean;
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: CreateAgentPayload];
+  submit: [payload: Partial<CreateAgentPayload>];
   cancel: [];
 }>();
 
@@ -39,24 +125,22 @@ const isEditing = computed(() => !!props.initialValues);
 
 const form = reactive<CreateAgentPayload & { pairs: string[] }>({
   name: '',
-  autonomyLevel: 'guided',
-  autoApplySelfModification: false,
-  selfModCooldownCycles: 3,
   pairs: ['WETH/USDC'],
-  paperBalance: 10000,
+  paperBalance: 1000,
   strategies: ['combined'],
   analysisInterval: '15m',
-  maxPositionSizePct: 5,
-  stopLossPct: 5,
-  takeProfitPct: 7,
+  maxPositionSizePct: 2,
+  stopLossPct: 2,
+  takeProfitPct: 3,
   maxOpenPositions: 3,
-  llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+  llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
   allowFallback: false,
   temperature: 0.7,
 });
 
 const submitting = ref(false);
 const validationError = ref('');
+const initialSubmitPayload = ref<CreateAgentPayload | null>(null);
 
 // Accordions — all collapsed by default
 const configOpen = ref(false);
@@ -92,6 +176,10 @@ const behavior = ref<Record<string, unknown>>({
 
 const personaMd = ref('');
 const isPersonaCustomized = ref(false);
+const behaviorMd = ref('');
+const isBehaviorCustomized = ref(false);
+const roleMd = ref('');
+const isRoleCustomized = ref(false);
 
 // ─── Behavior → Persona sync helpers ──────────────────────────────────────
 
@@ -128,6 +216,11 @@ function restorePersona() {
   if (syncNameWithModel.value) form.name = generateName();
 }
 
+function restoreBehavior() {
+  behaviorMd.value = '';
+  isBehaviorCustomized.value = false;
+}
+
 // ─── Name helpers ──────────────────────────────────────────────────────────
 
 const AVAILABLE_PAIRS = ['WETH/USDC', 'cbBTC/USDC', 'AERO/WETH'] as const;
@@ -139,11 +232,15 @@ function togglePair(p: string) {
 function shortModelName(m: string): string {
   const PAID_MODEL_NAMES = Object.fromEntries(PAID_MODELS.map((p) => [p.id, p.label]));
   const n: Record<string, string> = {
+    'nvidia/nemotron-3-super-120b-a12b:free': 'Nemotron-120B',
     'nvidia/nemotron-3-nano-30b-a3b:free': 'Nemotron-30B',
     'stepfun/step-3.5-flash:free': 'Step-3.5',
     'nvidia/nemotron-nano-9b-v2:free': 'Nemotron-9B',
     'arcee-ai/trinity-large-preview:free': 'Trinity-Large',
     'xiaomi/mimo-v2-flash:free': 'MiMo Flash',
+    'openrouter/hunter-alpha': 'Hunter',
+    'minimax/minimax-m2.5': 'MiniMax M2.5',
+    'mistralai/mistral-small-2603': 'Mistral Small',
     'claude-sonnet-4-5': 'Claude Sonnet',
     'claude-haiku-4-5': 'Claude Haiku',
     ...PAID_MODEL_NAMES,
@@ -152,7 +249,7 @@ function shortModelName(m: string): string {
 }
 
 function generateName(): string {
-  const model = shortModelName(form.llmModel ?? 'nvidia/nemotron-3-nano-30b-a3b:free');
+  const model = shortModelName(form.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free');
   const pair = form.pairs.length === 1 ? form.pairs[0] : form.pairs.length > 1 ? `${form.pairs[0]} +${form.pairs.length - 1}` : 'Base';
   const style = isPersonaCustomized.value
     ? 'Custom'
@@ -161,13 +258,6 @@ function generateName(): string {
 }
 
 const syncNameWithModel = ref(true);
-
-// Auto-set autoApplySelfModification default based on autonomy level (only when not editing existing)
-watch(() => form.autonomyLevel, (level) => {
-  if (!props.initialValues?.autoApplySelfModification) {
-    form.autoApplySelfModification = level === 'full';
-  }
-});
 
 watch([() => form.llmModel, () => [...form.pairs], isPersonaCustomized, selectedProfileName], () => {
   if (syncNameWithModel.value) form.name = generateName();
@@ -193,9 +283,22 @@ onMounted(() => {
     const allowed = new Set<string>(AVAILABLE_PAIRS);
     form.pairs = form.pairs.filter((p) => allowed.has(p));
     if (form.pairs.length === 0) form.pairs = [AVAILABLE_PAIRS[0]];
+
+    // Normalize legacy/invalid values so PATCH passes current API validation
+    const clamp = (n: unknown, min: number, max: number, fallback: number) => {
+      const v = typeof n === 'number' && Number.isFinite(n) ? n : fallback;
+      return Math.min(max, Math.max(min, v));
+    };
+    form.paperBalance = clamp(form.paperBalance, 100, 1_000_000, 10_000);
+    form.maxPositionSizePct = clamp(form.maxPositionSizePct, 1, 100, 5);
+    form.stopLossPct = clamp(form.stopLossPct, 0.5, 50, 5);
+    form.takeProfitPct = clamp(form.takeProfitPct, 0.5, 100, 7);
+    form.maxOpenPositions = clamp(form.maxOpenPositions, 1, 10, 3);
+    form.temperature = clamp(form.temperature, 0, 2, 0.7);
+
     if (props.initialValues.behavior) behavior.value = props.initialValues.behavior as Record<string, unknown>;
     if (props.initialValues.profileId) {
-      selectedProfileId.value = props.initialValues.profileId;
+      selectedProfileId.value = resolveAgentProfileId(props.initialValues.profileId);
       // Profile name will be set by BehaviorProfilePicker via profile-selected once loaded
     }
     if (props.initialValues.personaMd) {
@@ -204,28 +307,75 @@ onMounted(() => {
     } else if (props.initialValues.profileId) {
       generatePersonaMd();
     }
+    if (props.initialValues.behaviorMd) {
+      behaviorMd.value = props.initialValues.behaviorMd;
+      isBehaviorCustomized.value = true;
+    }
+    if ((props.initialValues as any).roleMd) {
+      roleMd.value = (props.initialValues as any).roleMd;
+      isRoleCustomized.value = true;
+    }
+
+    // Snapshot the payload shape we submit in edit mode,
+    // so we can send only deltas (avoids resending legacy invalid fields).
+    initialSubmitPayload.value = buildSubmitPayload();
   } else {
     form.name = generateName();
   }
 });
+
+function buildSubmitPayload(): CreateAgentPayload {
+  return {
+    ...form,
+    llmModel: form.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free',
+    allowFallback: form.allowFallback ?? false,
+    behavior: behavior.value,
+    profileId: selectedProfileId.value ?? undefined,
+    personaMd: personaMd.value || undefined,
+    behaviorMd: behaviorMd.value || undefined,
+    roleMd: roleMd.value || undefined,
+  } as CreateAgentPayload;
+}
 
 async function handleSubmit() {
   if (!form.name.trim()) { validationError.value = 'Agent name is required'; return; }
   if (!form.pairs.length) { validationError.value = 'Select at least one pair'; return; }
   validationError.value = '';
   submitting.value = true;
-  emit('submit', {
-    ...form,
-    llmModel: form.llmModel ?? 'nvidia/nemotron-3-nano-30b-a3b:free',
-    allowFallback: form.allowFallback ?? false,
-    behavior: behavior.value,
-    profileId: selectedProfileId.value ?? undefined,
-    personaMd: personaMd.value || undefined,
-  } as CreateAgentPayload);
+  const full = buildSubmitPayload();
+
+  if (isEditing.value && initialSubmitPayload.value) {
+    const base = initialSubmitPayload.value as unknown as Record<string, unknown>;
+    const next = full as unknown as Record<string, unknown>;
+    const changed: Record<string, unknown> = {};
+    for (const key of Object.keys(next)) {
+      const a = base[key];
+      const b = next[key];
+      const same = (typeof a === 'object' || typeof b === 'object')
+        ? JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+        : a === b;
+      if (!same) changed[key] = b;
+    }
+    emit('submit', changed as Partial<CreateAgentPayload>);
+  } else {
+    emit('submit', full);
+  }
   submitting.value = false;
 }
 
-defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, generatePersonaMd });
+function openBehaviorSection() {
+  finetuneOpen.value = true;
+  nextTick(() => {
+    document.getElementById('acf-behavior-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function restoreRole() {
+  roleMd.value = '';
+  isRoleCustomized.value = false;
+}
+
+defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, generatePersonaMd, openBehaviorSection, behaviorMd, isBehaviorCustomized, restoreBehavior, roleMd, isRoleCustomized, restoreRole });
 </script>
 
 <template>
@@ -244,24 +394,69 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
     <!-- LLM Model (top-level) -->
     <div class="form-group">
       <label class="form-label">LLM Model</label>
-      <select v-model="dropdownModel" class="form-select">
-        <optgroup label="Free models (OpenRouter)">
-          <option value="nvidia/nemotron-3-nano-30b-a3b:free">Nemotron-30B (free)</option>
-          <option value="stepfun/step-3.5-flash:free">Step-3.5 Flash (free)</option>
-          <option value="nvidia/nemotron-nano-9b-v2:free">Nemotron-9B (free)</option>
-          <option value="arcee-ai/trinity-large-preview:free">Trinity-Large (free)</option>
-          <option value="xiaomi/mimo-v2-flash:free">MiMo Flash · 256K (free)</option>
-        </optgroup>
-        <optgroup v-if="hasOwnKey" label="Paid (your OpenRouter key)">
-          <option v-for="m in PAID_MODELS" :key="m.id" :value="m.id">
-            {{ m.label }} · {{ m.ctx }} · {{ m.price }}
-          </option>
-        </optgroup>
-        <optgroup v-if="isTester" label="Anthropic direct (tester)">
-          <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-          <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
-        </optgroup>
-      </select>
+      <div ref="modelPickerRef" class="model-picker">
+        <button
+          type="button"
+          class="model-picker__btn form-select"
+          :aria-expanded="modelPickerOpen ? 'true' : 'false'"
+          aria-haspopup="dialog"
+          @click="modelPickerOpen = !modelPickerOpen"
+        >
+          <span class="model-picker__btn-left">
+            <span class="model-picker__btn-label">{{ selectedModelMeta?.label ?? (customModel.trim() || dropdownModel) }}</span>
+            <span class="model-picker__btn-sub">
+              <span class="model-picker__mono">{{ customModel.trim() || dropdownModel }}</span>
+              <span v-if="selectedModelMeta" class="model-picker__meta">
+                · {{ selectedModelMeta.ctx }} · {{ selectedModelMeta.price }}
+              </span>
+            </span>
+          </span>
+          <span class="model-picker__chev" :class="{ open: modelPickerOpen }">›</span>
+        </button>
+
+        <div v-if="modelPickerOpen" class="model-picker__panel" role="dialog" aria-label="Select model">
+          <div class="model-picker__panel-top">
+            <input
+              v-model="modelQuery"
+              class="model-picker__search"
+              placeholder="Search models…"
+              autocomplete="off"
+            />
+            <div class="model-picker__hint">Pick a row · Esc to close</div>
+          </div>
+
+          <div class="model-picker__table">
+            <div class="model-picker__thead">
+              <div>Model</div>
+              <div>Context</div>
+              <div>Price (in/out)</div>
+              <div>Tier</div>
+            </div>
+            <button
+              v-for="m in filteredModels"
+              :key="m.id"
+              type="button"
+              class="model-picker__row"
+              :class="{ active: (customModel.trim() || dropdownModel) === m.id }"
+              @click="selectModel(m.id)"
+            >
+              <div class="model-picker__cell model-picker__model">
+                <div class="model-picker__model-label">{{ m.label }}</div>
+                <div class="model-picker__model-id">{{ m.id }}</div>
+                <div v-if="m.desc" class="model-picker__model-desc">{{ m.desc }}</div>
+              </div>
+              <div class="model-picker__cell model-picker__mono">{{ m.ctx }}</div>
+              <div class="model-picker__cell model-picker__mono">{{ m.price }}</div>
+              <div class="model-picker__cell">
+                <span class="model-picker__pill" :data-tier="m.tier">{{ m.tier }}</span>
+              </div>
+            </button>
+            <div v-if="filteredModels.length === 0" class="model-picker__empty">
+              No matches.
+            </div>
+          </div>
+        </div>
+      </div>
       <template v-if="hasOwnKey">
         <input
           v-model="customModel"
@@ -281,27 +476,6 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
       </p>
     </div>
 
-    <!-- Autonomy Level + self-mod settings (top-level) -->
-    <div class="form-group">
-      <label class="form-label">Autonomy Level</label>
-      <select v-model="form.autonomyLevel" class="form-select">
-        <option value="full">Full — agent decides everything</option>
-        <option value="guided">Guided — within bounds (default)</option>
-        <option value="strict">Strict — rule-based only</option>
-      </select>
-    </div>
-    <div v-if="form.autonomyLevel !== 'strict'" class="acf__selfmod-row">
-      <label class="acf__selfmod-label">
-        <input v-model="form.autoApplySelfModification" type="checkbox" />
-        <span>Auto-apply self-modifications</span>
-        <span class="acf__hint-chip">agent can update its own persona/behavior each cycle</span>
-      </label>
-      <div v-if="form.autoApplySelfModification" class="form-group" style="margin-top:8px">
-        <label class="form-label">Cooldown (cycles between modifications)</label>
-        <input v-model.number="form.selfModCooldownCycles" type="number" class="form-input" min="1" max="20" />
-      </div>
-    </div>
-
     <!-- Persona style (profile picker) -->
     <div class="acf__section">
       <div class="acf__section-label">
@@ -315,7 +489,7 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
     </div>
 
     <!-- Fine-tune Behavior accordion -->
-    <div class="acf__accordion">
+    <div id="acf-behavior-section" class="acf__accordion">
       <button type="button" class="acf__accordion-btn" @click="finetuneOpen = !finetuneOpen">
         <span>Fine-tune Behavior</span>
         <span class="acf__chevron" :class="{ open: finetuneOpen }">›</span>
@@ -430,7 +604,7 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
     </div>
 
     <!-- Footer -->
-    <div class="acf__footer">
+    <div v-if="!hideFooter" class="acf__footer">
       <button type="button" class="btn btn-ghost" @click="$emit('cancel')">Cancel</button>
       <button type="submit" class="btn btn-primary" :disabled="submitting">
         <span v-if="submitting" class="spinner" style="width:14px;height:14px;" />
@@ -611,21 +785,6 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
 }
 
 /* Config body */
-/* Self-mod row */
-.acf__selfmod-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.acf__selfmod-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text, #e0e0e0);
-  cursor: pointer;
-}
-.acf__selfmod-label input[type="checkbox"] { cursor: pointer; }
 
 .acf__config {
   padding: 16px;
@@ -671,4 +830,156 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
   margin-top: 6px;
 }
 .model-nudge a { color: var(--accent, #7c6af7); }
+
+/* Model picker — table dropdown */
+.model-picker { position: relative; }
+.model-picker__btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.model-picker__btn-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.model-picker__btn-label {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-picker__btn-sub {
+  font-size: 11px;
+  color: var(--text-muted, #6a6a6a);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.model-picker__meta { white-space: nowrap; opacity: 0.9; }
+.model-picker__mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+}
+.model-picker__chev {
+  font-size: 18px;
+  color: var(--text-muted, #555);
+  transition: transform 0.2s;
+  display: inline-block;
+  transform: rotate(0deg);
+  flex-shrink: 0;
+}
+.model-picker__chev.open { transform: rotate(90deg); }
+
+.model-picker__panel {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--surface, #141414) 92%, black);
+  border: 1px solid var(--border, #2a2a2a);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.model-picker__panel-top {
+  padding: 10px 12px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: color-mix(in srgb, var(--border, #2a2a2a) 20%, transparent);
+}
+.model-picker__search {
+  flex: 1;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid color-mix(in srgb, var(--border, #2a2a2a) 70%, transparent);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 13px;
+  color: var(--text, #e0e0e0);
+  outline: none;
+}
+.model-picker__search:focus { border-color: var(--accent, #7c6af7); }
+.model-picker__hint {
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  white-space: nowrap;
+}
+
+.model-picker__table { max-height: 360px; overflow: auto; }
+.model-picker__thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 92px 110px 72px;
+  gap: 10px;
+  padding: 9px 12px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted, #666);
+  background: color-mix(in srgb, var(--surface, #141414) 96%, black);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.model-picker__row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 92px 110px 72px;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text, #e0e0e0);
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border, #2a2a2a) 65%, transparent);
+}
+.model-picker__row:hover {
+  background: color-mix(in srgb, var(--accent, #7c6af7) 10%, transparent);
+}
+.model-picker__row.active {
+  background: color-mix(in srgb, var(--accent, #7c6af7) 18%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent, #7c6af7) 55%, transparent);
+  outline-offset: -1px;
+}
+.model-picker__cell { display: flex; align-items: flex-start; }
+.model-picker__model { flex-direction: column; gap: 2px; }
+.model-picker__model-label { font-size: 13px; font-weight: 650; }
+.model-picker__model-id { font-size: 11px; color: var(--text-muted, #777); font-family: inherit; }
+.model-picker__model-desc { font-size: 10px; color: var(--text-muted, #666); }
+
+.model-picker__pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border, #2a2a2a) 80%, transparent);
+  background: rgba(0,0,0,0.25);
+  color: var(--text-muted, #aaa);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.model-picker__pill[data-tier="free"] {
+  border-color: color-mix(in srgb, #4ade80 35%, transparent);
+  color: color-mix(in srgb, #4ade80 85%, white);
+}
+.model-picker__pill[data-tier="paid"] {
+  border-color: color-mix(in srgb, #fbbf24 35%, transparent);
+  color: color-mix(in srgb, #fbbf24 85%, white);
+}
+.model-picker__pill[data-tier="tester"] {
+  border-color: color-mix(in srgb, #60a5fa 35%, transparent);
+  color: color-mix(in srgb, #60a5fa 85%, white);
+}
+
+.model-picker__empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
 </style>

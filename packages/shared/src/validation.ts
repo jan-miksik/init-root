@@ -52,14 +52,9 @@ export const AgentConfigSchema = z.object({
   name: z.string().min(1).max(50),
   description: z.string().max(500).optional(),
 
-  // Autonomy
-  autonomyLevel: z.enum(['full', 'guided', 'strict']),
-  autoApplySelfModification: z.boolean().default(false),
-  selfModCooldownCycles: z.number().min(1).max(20).default(3),
-
   // LLM
-  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
-  llmFallback: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   /** When true, if primary model fails we try the fallback model. No automatic fallbacks without consent. */
   allowFallback: z.boolean().default(false),
   maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
@@ -109,25 +104,12 @@ export const AgentConfigSchema = z.object({
   // Behavior (optional — falls back to defaults / profile)
   behavior: AgentBehaviorConfigSchema.optional(),
   profileId: z.string().optional(),
+  behaviorMd: z.string().max(4000).optional(),
+  roleMd: z.string().max(4000).optional(),
 });
 
 export type AgentConfigInput = z.input<typeof AgentConfigSchema>;
 export type AgentConfigOutput = z.output<typeof AgentConfigSchema>;
-
-export const SelfModificationSchema = z.object({
-  reason: z.string().max(500),
-  changes: z.object({
-    personaMd: z.string().max(4000).optional(),
-    behavior: z.record(z.unknown()).optional(),
-    config: z.object({
-      stopLossPct:        z.number().min(0.5).max(50).optional(),
-      takeProfitPct:      z.number().min(0.5).max(100).optional(),
-      maxPositionSizePct: z.number().min(1).max(100).optional(),
-    }).optional(),
-  }),
-});
-
-export type SelfModification = z.infer<typeof SelfModificationSchema>;
 
 export const TradeDecisionSchema = z.object({
   action: z.enum(['buy', 'sell', 'hold', 'close']),
@@ -135,17 +117,13 @@ export const TradeDecisionSchema = z.object({
   reasoning: z.string(),
   targetPair: z.string().nullable().optional(),
   suggestedPositionSizePct: z.number().min(0).max(100).nullable().optional(),
-  selfModification: SelfModificationSchema.optional().nullable(),
 });
 
 export const CreateAgentRequestSchema = z.object({
   name: z.string().min(1).max(50),
   description: z.string().max(500).optional(),
-  autonomyLevel: z.enum(['full', 'guided', 'strict']).default('guided'),
-  autoApplySelfModification: z.boolean().default(false),
-  selfModCooldownCycles: z.number().min(1).max(20).default(3),
-  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
-  llmFallback: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   allowFallback: z.boolean().default(false),
   maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
   temperature: z.number().min(0).max(2).default(0.7),
@@ -187,6 +165,8 @@ export const CreateAgentRequestSchema = z.object({
   behavior: AgentBehaviorConfigSchema.optional(),
   profileId: z.string().optional(),
   personaMd: z.string().max(4000).optional(),
+  behaviorMd: z.string().max(4000).optional(),
+  roleMd: z.string().max(4000).optional(),
 });
 
 export const UpdateAgentRequestSchema = CreateAgentRequestSchema.partial();
@@ -198,14 +178,16 @@ export const ManagerRiskParamsSchema = z.object({
 });
 
 const FREE_MANAGER_MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
   'nvidia/nemotron-3-nano-30b-a3b:free',
   'stepfun/step-3.5-flash:free',
   'nvidia/nemotron-nano-9b-v2:free',
   'arcee-ai/trinity-large-preview:free',
+  'xiaomi/mimo-v2-flash:free',
 ] as const;
 
 export const ManagerConfigSchema = z.object({
-  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   temperature: z.number().min(0).max(2).default(0.7),
   decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
   riskParams: ManagerRiskParamsSchema.default({}),
@@ -220,7 +202,7 @@ export type ManagerConfig = z.infer<typeof ManagerConfigSchema>;
 export const CreateManagerRequestSchema = z.object({
   name: z.string().min(1).max(50),
   description: z.string().max(500).optional(),
-  llmModel: z.string().default('nvidia/nemotron-3-nano-30b-a3b:free'),
+  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   temperature: z.number().min(0).max(2).default(0.7),
   decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
   riskParams: ManagerRiskParamsSchema.optional(),

@@ -14,7 +14,7 @@ import { agents, trades, performanceSnapshots, agentManagers, agentManagerLogs, 
 import { decryptKey } from '../lib/crypto.js';
 import { createDexDataService, getPriceUsd } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
-import { generateId, nowIso, autonomyLevelToInt } from '../lib/utils.js';
+import { generateId, nowIso } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
 import type { ManagerConfig } from '@dex-agents/shared';
 import { filterSupportedBasePairs, SUPPORTED_BASE_PAIRS, getAgentPersonaTemplate, getDefaultAgentPersona, AGENT_PROFILES } from '@dex-agents/shared';
@@ -83,14 +83,9 @@ export interface ManagedAgentSnapshot {
 
 const VALID_ACTIONS: ManagerAction[] = ['create_agent', 'start_agent', 'pause_agent', 'modify_agent', 'terminate_agent', 'hold'];
 
-const VALID_AUTONOMY_LEVELS: ReadonlySet<string> = new Set(['full', 'guided', 'strict']);
-function parseAutonomyLevel(v: unknown): 'full' | 'guided' | 'strict' {
-  if (typeof v === 'string' && VALID_AUTONOMY_LEVELS.has(v)) return v as 'full' | 'guided' | 'strict';
-  return 'guided';
-}
-
 // Restrict manager-created agents to free OpenRouter models only, to avoid accidental paid usage.
 const FREE_AGENT_MODELS = new Set<string>([
+  'nvidia/nemotron-3-super-120b-a12b:free',
   'nvidia/nemotron-3-nano-30b-a3b:free',
   'stepfun/step-3.5-flash:free',
   'nvidia/nemotron-nano-9b-v2:free',
@@ -98,7 +93,7 @@ const FREE_AGENT_MODELS = new Set<string>([
 ]);
 
 function normaliseAgentModel(requested: unknown): string {
-  const fallback = 'nvidia/nemotron-3-nano-30b-a3b:free';
+  const fallback = 'nvidia/nemotron-3-super-120b-a12b:free';
   if (typeof requested !== 'string') return fallback;
   return FREE_AGENT_MODELS.has(requested) ? requested : fallback;
 }
@@ -230,12 +225,13 @@ ${SUPPORTED_BASE_PAIRS.map((p: string) => `- "${p}"`).join('\n')}
 
 ## Model Cost Constraints
 You must use only the following free OpenRouter models when creating or modifying agents:
+- "nvidia/nemotron-3-super-120b-a12b:free"
 - "nvidia/nemotron-3-nano-30b-a3b:free"
 - "stepfun/step-3.5-flash:free"
 - "nvidia/nemotron-nano-9b-v2:free"
 - "arcee-ai/trinity-large-preview:free"
 
-Never propose or use any paid or other model IDs (no OpenAI, GPT-4, GPT-3.5, etc). If unsure, default to "nvidia/nemotron-3-nano-30b-a3b:free".
+Never propose or use any paid or other model IDs (no OpenAI, GPT-4, GPT-3.5, etc). If unsure, default to "nvidia/nemotron-3-super-120b-a12b:free".
 
 ## Available Agent Profiles
 When creating agents, pick a profileId that naturally fits your management style and risk tolerance — or combine several across your fleet for diversity. You can also write a fully custom personaMd instead.
@@ -245,10 +241,10 @@ ${AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), autonomyLevel ("full"|"guided"|"strict"), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
+- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
 - "start_agent": start a stopped or paused agent (provide agentId)
 - "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, autonomyLevel ("full"|"guided"|"strict"), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
+- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
 - "terminate_agent": permanently stop an agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 
@@ -328,11 +324,8 @@ export async function executeManagerAction(
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
       const existingConfig = JSON.parse(agent.config);
-      const { personaMd: paramsPersona, autonomyLevel: paramsAutonomy, ...restParams } = params as Record<string, unknown> & { personaMd?: string; autonomyLevel?: string };
+      const { personaMd: paramsPersona, ...restParams } = params as Record<string, unknown> & { personaMd?: string };
       const patch: Record<string, unknown> = { ...restParams };
-      if (paramsAutonomy !== undefined) {
-        patch.autonomyLevel = parseAutonomyLevel(paramsAutonomy);
-      }
       if (typeof patch.llmModel === 'string') {
         patch.llmModel = normaliseAgentModel(patch.llmModel);
       }
@@ -350,14 +343,11 @@ export async function executeManagerAction(
       const mergedConfig = { ...existingConfig, ...patch };
       const updates: Partial<typeof agents.$inferInsert> = {
         config: JSON.stringify(mergedConfig),
-        llmModel: (mergedConfig.llmModel ?? agent.llmModel) || 'nvidia/nemotron-3-nano-30b-a3b:free',
+        llmModel: (mergedConfig.llmModel ?? agent.llmModel) || 'nvidia/nemotron-3-super-120b-a12b:free',
         updatedAt: nowIso(),
       };
       if (paramsPersona !== undefined) {
         updates.personaMd = typeof paramsPersona === 'string' ? paramsPersona : null;
-      }
-      if (paramsAutonomy !== undefined) {
-        updates.autonomyLevel = autonomyLevelToInt(parseAutonomyLevel(paramsAutonomy));
       }
       await db.update(agents).set(updates).where(eq(agents.id, agentId));
       return { success: true, detail: `Agent ${agentId} modified` };
@@ -380,12 +370,10 @@ export async function executeManagerAction(
           : profileId
           ? getAgentPersonaTemplate(profileId, agentName)
           : getDefaultAgentPersona(agentName);
-      const autonomyLevelStr = parseAutonomyLevel(params.autonomyLevel);
       const normalizedPairs = normalizePairsForDex((params.pairs as string[] | undefined) ?? ['WETH/USDC']);
       const supportedPairs = filterSupportedBasePairs(normalizedPairs);
       const config = {
         name: agentName,
-        autonomyLevel: autonomyLevelStr,
         llmModel,
         temperature: params.temperature ?? 0.7,
         pairs: supportedPairs.length > 0 ? supportedPairs : ['WETH/USDC'],
@@ -403,7 +391,7 @@ export async function executeManagerAction(
         dexes: ['aerodrome', 'uniswap-v3'],
         maxLlmCallsPerHour: 12,
         allowFallback: false,
-        llmFallback: 'nvidia/nemotron-3-nano-30b-a3b:free',
+        llmFallback: 'nvidia/nemotron-3-super-120b-a12b:free',
       };
       const id = generateId('agent');
       const now = nowIso();
@@ -411,7 +399,7 @@ export async function executeManagerAction(
         id,
         name: agentName,
         status: 'running',
-        autonomyLevel: autonomyLevelToInt(autonomyLevelStr),
+    autonomyLevel: 2,
         config: JSON.stringify(config),
         llmModel,
         ownerAddress,

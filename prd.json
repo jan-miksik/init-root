@@ -1,0 +1,27 @@
+[
+  {
+    "category": "database",
+    "description": "Create SQLite database with better-auth schema",
+    "steps": [
+      "Create data/ directory and app.db SQLite file",
+      "Create user table with id, name, email, emailVerified, image, timestamps",
+      "Create session table with userId foreign key and token",
+      "Create account table for credential provider",
+      "Create verification table",
+      "Verify all tables exist with correct structure"
+    ],
+    "passes": false
+  },
+  {
+    "category": "database",
+    "description": "Create notes table with indexes",
+    "steps": [
+      "Create notes table with id, user_id, title, content_json, is_public, public_slug, timestamps",
+      "Add FOREIGN KEY on user_id references user(id)",
+      "Add UNIQUE constraint on public_slug",
+      "Create indexes on user_id, public_slug, is_public",
+      "Verify table structure and indexes"
+    ],
+    "passes": false
+  }
+]

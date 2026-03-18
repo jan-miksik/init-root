@@ -6,6 +6,19 @@ import type { TradeDecision, AgentBehaviorConfig } from '@dex-agents/shared';
 import { sleep } from '../lib/utils.js';
 import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../agents/prompts.js';
 
+export function buildJsonSchemaInstruction(): string {
+  return `
+IMPORTANT: Respond with ONLY a valid JSON object — no markdown, no code blocks, no explanation.
+The JSON must match this schema exactly:
+{
+  "action": "buy" | "sell" | "hold" | "close",
+  "confidence": <number 0.0–1.0>,
+  "reasoning": "<string>",
+  "targetPair": "<string, optional>",
+  "suggestedPositionSizePct": <number 0–100, optional>
+}`;
+}
+
 /** When true, if the primary model fails we try the user-configured fallback model. No automatic emergency fallbacks. */
 export interface LLMRouterConfig {
   apiKey: string;
@@ -22,7 +35,6 @@ export interface LLMRouterConfig {
 }
 
 export interface TradeDecisionRequest {
-  autonomyLevel: 'full' | 'guided' | 'strict';
   portfolioState: {
     balance: number;
     openPositions: number;
@@ -47,6 +59,7 @@ export interface TradeDecisionRequest {
     volume24h?: number;
     liquidity?: number;
     indicatorText: string;
+    dailyIndicatorText?: string;
   }>;
   lastDecisions: Array<{
     decision: string;
@@ -62,26 +75,8 @@ export interface TradeDecisionRequest {
   };
   behavior?: Partial<AgentBehaviorConfig>;
   personaMd?: string | null;
-}
-
-export function buildJsonSchemaInstruction(autonomyLevel: 'full' | 'guided' | 'strict'): string {
-  const selfModField = autonomyLevel === 'strict' ? '' :
-    autonomyLevel === 'guided'
-      ? `,
-  "selfModification": { "reason": "<string>", "changes": { "personaMd": "<string, optional>", "behavior": {<object, optional>} } } (optional)`
-      : `,
-  "selfModification": { "reason": "<string>", "changes": { "personaMd": "<string, optional>", "behavior": {<object, optional>}, "config": { "stopLossPct": <number, optional>, "takeProfitPct": <number, optional>, "maxPositionSizePct": <number, optional> } } } (optional)`;
-
-  return `
-IMPORTANT: Respond with ONLY a valid JSON object — no markdown, no code blocks, no explanation.
-The JSON must match this schema exactly:
-{
-  "action": "buy" | "sell" | "hold" | "close",
-  "confidence": <number 0.0–1.0>,
-  "reasoning": "<string>",
-  "targetPair": "<string, optional>",
-  "suggestedPositionSizePct": <number 0–100, optional>${selfModField}
-}`;
+  behaviorMd?: string | null;
+  roleMd?: string | null;
 }
 
 /**
@@ -132,16 +127,17 @@ export async function getTradeDecision(
   const isAnthropic = config.provider === 'anthropic';
   const openrouter = isAnthropic ? null : createOpenRouter({ apiKey: config.apiKey });
   const anthropic = isAnthropic ? createAnthropic({ apiKey: config.apiKey }) : null;
-  const systemPrompt = BASE_AGENT_PROMPT + buildJsonSchemaInstruction(request.autonomyLevel);
+  const systemPrompt = BASE_AGENT_PROMPT + buildJsonSchemaInstruction();
   const userPrompt = buildAnalysisPrompt({
     portfolioState: request.portfolioState,
     openPositions: request.openPositions,
     marketData: request.marketData,
     lastDecisions: request.lastDecisions,
     config: request.config,
-    autonomyLevel: request.autonomyLevel,
     behavior: request.behavior,
     personaMd: request.personaMd,
+    behaviorMd: request.behaviorMd,
+    roleMd: request.roleMd,
   });
 
   const startTime = Date.now();
@@ -229,7 +225,6 @@ export async function getTradeDecision(
         ...object,
         targetPair: object.targetPair ?? undefined,
         suggestedPositionSizePct: object.suggestedPositionSizePct ?? undefined,
-        selfModification: object.selfModification ?? undefined,
         latencyMs,
         tokensUsed: usage.totalTokens,
         tokensIn: usage.inputTokens,

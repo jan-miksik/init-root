@@ -142,8 +142,10 @@ app.get('/api/models', async (c) => {
   if (!c.env.OPENROUTER_API_KEY) {
     return c.json({
       models: [
+        { id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'Nvidia Nemotron 120B Super (free)', context: 131072 },
         { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nvidia Nemotron Nano 30B (free)', context: 131072 },
-        { id: 'stepfun/step-3.5-flash:free', name: 'Step 3.5 Flash (free)', context: 65536 },
+        { id: 'openrouter/hunter-alpha', name: 'OpenRouter Hunter Alpha (free)', context: 1048576 },
+        { id: 'stepfun/step-3.5-flash:free', name: 'Step 3.5 Flash (free)', context: 256000 },
         { id: 'arcee-ai/trinity-large-preview:free', name: 'Trinity Large Preview (free)', context: 65536 },
         { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'LFM 2.5 1.2B Thinking (free)', context: 65536 },
         { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'LFM 2.5 1.2B Instruct (free)', context: 65536 },

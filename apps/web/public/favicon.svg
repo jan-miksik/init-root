@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Background -->
+  <rect width="32" height="32" rx="4" fill="#0a0a0a"/>
+
+  <!-- H — left vertical -->
+  <rect x="5" y="5" width="5" height="22" rx="1" fill="#c8c8c8"/>
+
+  <!-- H — right vertical -->
+  <rect x="22" y="5" width="5" height="22" rx="1" fill="#c8c8c8"/>
+
+  <!-- H crossbar: price spike in brand purple -->
+  <!-- spike: (10,17) → apex (16,9) → (22,17) -->
+  <polyline
+    points="10,17 16,9 22,17"
+    fill="none"
+    stroke="#7c6af7"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

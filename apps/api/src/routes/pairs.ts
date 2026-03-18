@@ -6,8 +6,10 @@ import {
   filterBaseChainPairs,
 } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
+import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { validateQuery } from '../lib/validation.js';
 import { ValidationError } from '../lib/validation.js';
+import { normalizePairForDex } from '../lib/pairs.js';
 
 const pairs = new Hono<{ Bindings: Env }>();
 
@@ -53,6 +55,48 @@ pairs.get('/top', async (c) => {
     pairs: topPairs,
     updatedAt: new Date().toISOString(),
   });
+});
+
+/**
+ * POST /api/pairs/prices
+ * Body: { pairs: string[] }
+ * Returns:
+ * - prices: Record<string, number> keyed by both normalized and input pair labels
+ * - normalizedByInput: Record<input, normalized>
+ */
+pairs.post('/prices', async (c) => {
+  const body = await c.req.json().catch(() => null) as unknown;
+  const parsed = z.object({ pairs: z.array(z.string().min(1)).min(1).max(50) }).safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'pairs must be a non-empty string[] (max 50)' }, 400);
+  }
+
+  const normalizedByInput: Record<string, string> = {};
+  for (const input of parsed.data.pairs) {
+    normalizedByInput[input] = normalizePairForDex(input);
+  }
+
+  const uniqueNormalized = Array.from(new Set(Object.values(normalizedByInput).filter(Boolean)));
+
+  const entries = await Promise.all(
+    uniqueNormalized.map(async (pair) => {
+      try {
+        const priceUsd = await resolveCurrentPriceUsd(c.env, pair);
+        return [pair, priceUsd] as const;
+      } catch (err) {
+        console.warn('[pairs/prices] failed', pair, err);
+        return [pair, 0] as const;
+      }
+    })
+  );
+
+  const pricesByNormalized = Object.fromEntries(entries) as Record<string, number>;
+  const prices: Record<string, number> = { ...pricesByNormalized };
+  for (const [input, normalized] of Object.entries(normalizedByInput)) {
+    prices[input] = pricesByNormalized[normalized] ?? 0;
+  }
+
+  return c.json({ prices, normalizedByInput });
 });
 
 /** GET /api/pairs/:chain/:address */

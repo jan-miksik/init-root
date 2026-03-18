@@ -7,7 +7,7 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { eq, desc, sql } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
-import { agents, trades, agentDecisions, agentSelfModifications, users } from '../db/schema.js';
+import { agents, trades, agentDecisions, users } from '../db/schema.js';
 import { createDexDataService, getPriceUsd } from '../services/dex-data.js';
 import type { DexPair } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
@@ -15,11 +15,11 @@ import { computeIndicators, evaluateSignals, combineSignals } from '../services/
 import { PaperEngine, type Position } from '../services/paper-engine.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { getTradeDecision } from '../services/llm-router.js';
-import { generateId, nowIso, intToAutonomyLevel } from '../lib/utils.js';
+import { generateId, nowIso } from '../lib/utils.js';
 import { decryptKey } from '../lib/crypto.js';
 import { normalizePairForDex } from '../lib/pairs.js';
 import type { AgentBehaviorConfig } from '@dex-agents/shared';
-import { AgentConfigSchema, SelfModificationSchema } from '@dex-agents/shared';
+import { AgentBehaviorConfigSchema, AgentConfigSchema } from '@dex-agents/shared';
 
 /** Build a search query from a pair name.
  *  "WETH/USDC" → "WETH USDC"
@@ -140,11 +140,6 @@ export async function runAgentLoop(
     if (typeof rawConfig.paperBalance === 'number')       rawConfig.paperBalance       = Math.min(1_000_000, Math.max(100, rawConfig.paperBalance));
     if (typeof rawConfig.temperature === 'number')        rawConfig.temperature        = Math.min(2,   Math.max(0,   rawConfig.temperature));
 
-    // Backfill autonomyLevel if missing from config JSON (read from DB column)
-    if (!rawConfig.autonomyLevel) {
-      rawConfig.autonomyLevel = intToAutonomyLevel(agentRow.autonomyLevel) || 'guided';
-    }
-
     config = AgentConfigSchema.parse(rawConfig);
   } catch (configErr) {
     console.error(`[agent-loop] ${agentId}: Invalid agent config in DB:`, configErr);
@@ -152,11 +147,9 @@ export async function runAgentLoop(
   }
 
   // Use DB column as source of truth for model (avoids stale/missing config.llmModel)
-  const effectiveLlmModel = agentRow.llmModel?.trim() || config.llmModel || 'nvidia/nemotron-3-nano-30b-a3b:free';
-  const effectiveLlmFallback = config.llmFallback?.trim() || 'nvidia/nemotron-3-nano-30b-a3b:free';
+  const effectiveLlmModel = agentRow.llmModel?.trim() || config.llmModel || 'nvidia/nemotron-3-super-120b-a12b:free';
+  const effectiveLlmFallback = config.llmFallback?.trim() || 'nvidia/nemotron-3-super-120b-a12b:free';
   const allowFallback = config.allowFallback === true;
-
-  const autonomyLevel = intToAutonomyLevel(agentRow.autonomyLevel) as 'full' | 'guided' | 'strict';
 
   // 2. Check risk limits before doing anything
   const dailyPnl = engine.getDailyPnlPct();
@@ -251,6 +244,7 @@ export async function runAgentLoop(
     volume24h?: number;
     liquidity?: number;
     indicatorText: string;
+    dailyIndicatorText: string;
   }> = [];
 
   for (const pairName of pairsToFetch) {
@@ -262,6 +256,7 @@ export async function runAgentLoop(
     let volume24h: number | undefined;
     let liquidity: number | undefined;
     let prices: number[] = [];
+    let dailyPrices: number[] = [];
 
     // ── Try GeckoTerminal first ──────────────────────────────────────────────
     try {
@@ -278,12 +273,22 @@ export async function runAgentLoop(
         liquidity = pool.liquidityUsd;
         console.log(`[agent-loop] ${agentId}: GeckoTerminal found ${pool.name} @ $${priceUsd} liq=$${(liquidity ?? 0).toLocaleString()}`);
 
-        // Fetch real OHLCV price series (48 hourly candles)
-        try {
-          prices = await geckoSvc.getPoolPriceSeries(pool.address, 48);
-          console.log(`[agent-loop] ${agentId}: Got ${prices.length} real OHLCV candles`);
-        } catch (ohlcvErr) {
-          console.warn(`[agent-loop] ${agentId}: OHLCV unavailable — indicators will be skipped:`, ohlcvErr);
+        // Fetch hourly (48 candles) and daily (30 candles) OHLCV in parallel
+        const [hourlyResult, dailyResult] = await Promise.allSettled([
+          geckoSvc.getPoolPriceSeries(pool.address, 48, 'hour'),
+          geckoSvc.getPoolPriceSeries(pool.address, 30, 'day'),
+        ]);
+        if (hourlyResult.status === 'fulfilled') {
+          prices = hourlyResult.value;
+          console.log(`[agent-loop] ${agentId}: Got ${prices.length} hourly candles`);
+        } else {
+          console.warn(`[agent-loop] ${agentId}: Hourly OHLCV unavailable:`, hourlyResult.reason);
+        }
+        if (dailyResult.status === 'fulfilled') {
+          dailyPrices = dailyResult.value;
+          console.log(`[agent-loop] ${agentId}: Got ${dailyPrices.length} daily candles`);
+        } else {
+          console.warn(`[agent-loop] ${agentId}: Daily OHLCV unavailable:`, dailyResult.reason);
         }
       }
     } catch (geckoErr) {
@@ -358,17 +363,20 @@ export async function runAgentLoop(
     // If we don't have real data we skip indicators entirely rather than use fabricated prices.
     const indicators = prices.length >= 14 ? computeIndicators(prices) : null;
 
-    // Build inline indicator text + pre-interpreted signal verdict for LLM prompt
-    let indicatorText = 'No OHLCV data available — indicators skipped';
-    if (indicators) {
-      const lastRsi = indicators.rsi?.at(-1);
-      const lastEma9 = indicators.ema9?.at(-1);
-      const lastEma21 = indicators.ema21?.at(-1);
-      const lastMacd = indicators.macd?.at(-1);
-      const lastBb = indicators.bollingerBands?.at(-1);
-
+    /** Build a human-readable indicator summary string from a computed indicator set */
+    function buildIndicatorText(
+      indics: ReturnType<typeof computeIndicators> | null,
+      currentPrice: number,
+      noDataMsg: string,
+      includeSignalVerdict: boolean,
+    ): string {
+      if (!indics) return noDataMsg;
+      const lastRsi = indics.rsi?.at(-1);
+      const lastEma9 = indics.ema9?.at(-1);
+      const lastEma21 = indics.ema21?.at(-1);
+      const lastMacd = indics.macd?.at(-1);
+      const lastBb = indics.bollingerBands?.at(-1);
       const parts: string[] = [];
-
       if (lastRsi !== undefined) {
         const rsiLabel = lastRsi < 30 ? 'oversold' : lastRsi > 70 ? 'overbought' : 'neutral';
         parts.push(`RSI: ${lastRsi.toFixed(1)} (${rsiLabel})`);
@@ -379,24 +387,39 @@ export async function runAgentLoop(
       }
       if (lastMacd?.MACD !== undefined && lastMacd?.signal !== undefined) {
         const hist = lastMacd.MACD - lastMacd.signal;
-        const macdLabel = hist > 0 ? 'bullish' : 'bearish';
-        parts.push(`MACD: ${macdLabel} (histogram ${hist >= 0 ? '+' : ''}${hist.toFixed(4)})`);
+        parts.push(`MACD: ${hist > 0 ? 'bullish' : 'bearish'} (histogram ${hist >= 0 ? '+' : ''}${hist.toFixed(4)})`);
       }
       if (lastBb !== undefined) {
         const bandWidth = lastBb.upper - lastBb.lower;
         if (bandWidth > 0) {
-          const pb = (priceUsd - lastBb.lower) / bandWidth;
+          const pb = (currentPrice - lastBb.lower) / bandWidth;
           const bbLabel = pb < 0.2 ? 'near lower band' : pb > 0.8 ? 'near upper band' : 'mid-range';
           parts.push(`Bollinger %B: ${pb.toFixed(2)} (${bbLabel})`);
         }
       }
-
-      const signals = evaluateSignals(indicators, priceUsd);
-      const combined = combineSignals(signals);
-      parts.push(`Signal verdict: ${combined.signal.toUpperCase()} (${(combined.confidence * 100).toFixed(0)}% conf) — ${combined.reason}`);
-
-      indicatorText = parts.join('\n');
+      if (includeSignalVerdict) {
+        const signals = evaluateSignals(indics, currentPrice);
+        const combined = combineSignals(signals);
+        parts.push(`Signal verdict: ${combined.signal.toUpperCase()} (${(combined.confidence * 100).toFixed(0)}% conf) — ${combined.reason}`);
+      }
+      return parts.length > 0 ? parts.join('\n') : noDataMsg;
     }
+
+    const indicatorText = buildIndicatorText(
+      indicators,
+      priceUsd,
+      'No OHLCV data available — indicators skipped',
+      true,
+    );
+
+    // Daily indicators: RSI/EMA/Bollinger only (MACD needs 36+ points; 30 daily candles is borderline)
+    const dailyIndicators = dailyPrices.length >= 14 ? computeIndicators(dailyPrices) : null;
+    const dailyIndicatorText = buildIndicatorText(
+      dailyIndicators,
+      priceUsd,
+      'No daily OHLCV data — daily trend skipped',
+      false,
+    );
 
     marketData.push({
       pair: pairName,
@@ -407,6 +430,7 @@ export async function runAgentLoop(
       volume24h,
       liquidity,
       indicatorText,
+      dailyIndicatorText,
     });
   }
 
@@ -554,7 +578,6 @@ export async function runAgentLoop(
         provider: llmProvider,
       },
       {
-        autonomyLevel,
         portfolioState: {
           balance: engine.balance,
           openPositions: engine.openPositions.length,
@@ -573,6 +596,8 @@ export async function runAgentLoop(
         },
         behavior: config.behavior,
         personaMd: agentRow.personaMd,
+        behaviorMd: (config as any).behaviorMd ?? null,
+        roleMd: (config as any).roleMd ?? null,
       }
     );
   } catch (err) {
@@ -592,6 +617,26 @@ export async function runAgentLoop(
     return;
   }
 
+  // Execution threshold is defined by the agent itself (its behavior profile).
+  // Even when config.behavior is missing, the schema supplies defaults.
+  // confidenceThreshold is 0–100, convert to 0–1.
+  const effectiveBehavior = AgentBehaviorConfigSchema.parse(config.behavior ?? {});
+  const minConfidence = effectiveBehavior.confidenceThreshold / 100;
+
+  // Determine upfront whether we intend to execute a trade for this decision.
+  // (We still log the LLM decision either way, but we want the UI to clearly show
+  // why a BUY/SELL did not result in a trade.)
+  const wantsTrade = decision.action === 'buy' || decision.action === 'sell';
+  const hasCapacity = engine.openPositions.length < config.maxOpenPositions;
+  const meetsConfidence = decision.confidence >= minConfidence;
+
+  let executionNote: string | null = null;
+  if (wantsTrade && !meetsConfidence) {
+    executionNote = `Execution: skipped (confidence ${(decision.confidence * 100).toFixed(0)}% < threshold ${(minConfidence * 100).toFixed(0)}%).`;
+  } else if (wantsTrade && !hasCapacity) {
+    executionNote = `Execution: skipped (already at max open positions: ${engine.openPositions.length}/${config.maxOpenPositions}).`;
+  }
+
   // 7. Log the decision
   const decisionId = generateId('dec');
   await db.insert(agentDecisions).values({
@@ -599,7 +644,7 @@ export async function runAgentLoop(
     agentId,
     decision: decision.action,
     confidence: decision.confidence,
-    reasoning: decision.reasoning,
+    reasoning: executionNote ? `${decision.reasoning}\n\n—\n${executionNote}` : decision.reasoning,
     llmModel: decision.modelUsed,
     llmLatencyMs: decision.latencyMs,
     llmTokensUsed: decision.tokensUsed,
@@ -615,80 +660,7 @@ export async function runAgentLoop(
     `[agent-loop] ${agentId}: Decision=${decision.action} confidence=${decision.confidence.toFixed(2)}`
   );
 
-  // 7b. Handle self-modification suggestions
-  const selfMod = decision.selfModification;
-  if (selfMod && autonomyLevel !== 'strict') {
-    const parsed = SelfModificationSchema.safeParse(selfMod);
-    if (!parsed.success) {
-      console.warn(`[agent-loop] ${agentId}: selfModification failed validation:`, parsed.error);
-    } else {
-      const mod = parsed.data;
-      const modId = generateId('selfmod');
-
-      const meetsConfidence = decision.confidence >= 0.6;
-      const cyclesSinceLastMod: number = (config as any).cyclesSinceLastMod ?? 999;
-      const cooldownCycles = config.selfModCooldownCycles ?? 3;
-      const cooldownPassed = cyclesSinceLastMod >= cooldownCycles;
-
-      // Gate hard config changes for guided autonomy
-      const gatedChanges = { ...mod.changes };
-      if (autonomyLevel === 'guided') {
-        delete gatedChanges.config;
-      }
-
-      const canApply = meetsConfidence && cooldownPassed;
-      const shouldAutoApply = config.autoApplySelfModification === true;
-
-      if (!canApply) {
-        console.log(`[agent-loop] ${agentId}: selfMod skipped — confidence=${decision.confidence.toFixed(2)} cooldown=${cyclesSinceLastMod}/${cooldownCycles}`);
-      } else {
-        const status = shouldAutoApply ? 'applied' : 'pending';
-
-        await db.insert(agentSelfModifications).values({
-          id: modId,
-          agentId,
-          decisionId,
-          reason: mod.reason,
-          changes: JSON.stringify(mod.changes),
-          changesApplied: JSON.stringify(gatedChanges),
-          status,
-          appliedAt: status === 'applied' ? nowIso() : null,
-          createdAt: nowIso(),
-        });
-
-        if (status === 'applied') {
-          const agentUpdates: Partial<typeof agents.$inferInsert> = { updatedAt: nowIso() };
-          const configPatch: Record<string, unknown> = { cyclesSinceLastMod: 0 };
-
-          if (gatedChanges.personaMd) agentUpdates.personaMd = gatedChanges.personaMd;
-          if (gatedChanges.behavior) {
-            configPatch.behavior = { ...(config.behavior ?? {}), ...gatedChanges.behavior };
-          }
-          if (gatedChanges.config) {
-            const c = gatedChanges.config;
-            if (c.stopLossPct !== undefined)        configPatch.stopLossPct        = c.stopLossPct;
-            if (c.takeProfitPct !== undefined)      configPatch.takeProfitPct      = c.takeProfitPct;
-            if (c.maxPositionSizePct !== undefined) configPatch.maxPositionSizePct = c.maxPositionSizePct;
-          }
-
-          agentUpdates.config = JSON.stringify({ ...config, ...configPatch });
-          await db.update(agents).set(agentUpdates).where(eq(agents.id, agentId));
-          console.log(`[agent-loop] ${agentId}: Applied self-modification — ${mod.reason}`);
-        }
-      }
-
-      // Increment cooldown counter when not resetting it
-      if (!canApply || !shouldAutoApply) {
-        const newCycles = cyclesSinceLastMod === 999 ? 1 : cyclesSinceLastMod + 1;
-        await db.update(agents)
-          .set({ config: JSON.stringify({ ...config, cyclesSinceLastMod: newCycles }) })
-          .where(eq(agents.id, agentId));
-      }
-    }
-  }
-
   // 8. Execute trade if confidence is high enough
-  const minConfidence = 0.65;
   if (
     (decision.action === 'buy' || decision.action === 'sell') &&
     decision.confidence >= minConfidence &&

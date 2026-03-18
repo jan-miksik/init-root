@@ -6,7 +6,7 @@ const mockAgent: ManagedAgentSnapshot = {
   id: 'agent_001',
   name: 'Test Agent',
   status: 'running',
-  llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+  llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
   config: {
     pairs: ['WETH/USDC'],
     strategies: ['combined'],
@@ -34,7 +34,7 @@ const mockMemory: ManagerMemory = {
 };
 
 const mockManagerConfig = {
-  llmModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+  llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
   temperature: 0.7,
   decisionInterval: '1h' as const,
   riskParams: { maxTotalDrawdown: 0.2, maxAgents: 10, maxCorrelatedPositions: 3 },

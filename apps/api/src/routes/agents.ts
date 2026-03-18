@@ -6,9 +6,16 @@ import type { AuthVariables } from '../lib/auth.js';
 import { agents, trades, agentDecisions, performanceSnapshots, agentSelfModifications } from '../db/schema.js';
 import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../agents/prompts.js';
 import { buildJsonSchemaInstruction } from '../services/llm-router.js';
-import { CreateAgentRequestSchema, UpdateAgentRequestSchema, UpdatePersonaSchema, getAgentPersonaTemplate } from '@dex-agents/shared';
+import {
+  CreateAgentRequestSchema,
+  DEFAULT_AGENT_PROFILE_ID,
+  UpdateAgentRequestSchema,
+  UpdatePersonaSchema,
+  getAgentPersonaTemplate,
+  resolveAgentProfileId,
+} from '@dex-agents/shared';
 import { validateBody, ValidationError } from '../lib/validation.js';
-import { generateId, nowIso, autonomyLevelToInt, intToAutonomyLevel } from '../lib/utils.js';
+import { generateId, nowIso } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
 
 const agentsRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -16,7 +23,6 @@ const agentsRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 function formatAgent(r: typeof agents.$inferSelect) {
   return {
     ...r,
-    autonomyLevel: intToAutonomyLevel(r.autonomyLevel),
     config: JSON.parse(r.config),
   };
 }
@@ -41,9 +47,9 @@ agentsRoute.post('/', async (c) => {
 
   const id = generateId('agent');
   const now = nowIso();
-  const autonomyLevel = autonomyLevelToInt(body.autonomyLevel);
   const config = {
     ...body,
+    ...(typeof body.profileId === 'string' && { profileId: resolveAgentProfileId(body.profileId) }),
     pairs: normalizePairsForDex(body.pairs),
   };
 
@@ -51,7 +57,7 @@ agentsRoute.post('/', async (c) => {
     id,
     name: body.name,
     status: 'stopped',
-    autonomyLevel,
+    autonomyLevel: 2,
     config: JSON.stringify(config),
     llmModel: body.llmModel,
     ownerAddress: walletAddress,
@@ -110,6 +116,7 @@ agentsRoute.patch('/:id', async (c) => {
   const mergedConfig = {
     ...existingConfig,
     ...body,
+    ...(typeof body.profileId === 'string' && { profileId: resolveAgentProfileId(body.profileId) }),
     ...(body.pairs !== undefined && { pairs: normalizePairsForDex(body.pairs) }),
   };
 
@@ -119,9 +126,9 @@ agentsRoute.patch('/:id', async (c) => {
   };
   if (body.name) updates.name = body.name;
   // Always sync llm_model column from merged config so the agent loop uses the selected model
-  updates.llmModel = (mergedConfig.llmModel ?? existing.llmModel) || 'nvidia/nemotron-3-nano-30b-a3b:free';
-  if (body.autonomyLevel) updates.autonomyLevel = autonomyLevelToInt(body.autonomyLevel);
-  if (body.profileId !== undefined) updates.profileId = body.profileId ?? null;
+  updates.llmModel = (mergedConfig.llmModel ?? existing.llmModel) || 'nvidia/nemotron-3-super-120b-a12b:free';  if (body.profileId !== undefined) {
+    updates.profileId = typeof body.profileId === 'string' ? resolveAgentProfileId(body.profileId) : body.profileId ?? null;
+  }
   if (body.personaMd !== undefined) updates.personaMd = body.personaMd ?? null;
 
   await db.update(agents).set(updates).where(eq(agents.id, id));
@@ -303,6 +310,22 @@ agentsRoute.get('/:id/performance', async (c) => {
   return c.json({ snapshots });
 });
 
+/** POST /api/agents/:id/history/clear — delete all trading history for this agent */
+agentsRoute.post('/:id/history/clear', async (c) => {
+  const id = c.req.param('id');
+  const walletAddress = c.get('walletAddress');
+  const db = drizzle(c.env.DB);
+
+  const agent = await requireOwnership(db, id, walletAddress);
+  if (!agent) return c.json({ error: 'Agent not found' }, 404);
+
+  await db.delete(trades).where(eq(trades.agentId, id));
+  await db.delete(agentDecisions).where(eq(agentDecisions.agentId, id));
+  await db.delete(performanceSnapshots).where(eq(performanceSnapshots.agentId, id));
+
+  return c.json({ ok: true });
+});
+
 /** POST /api/agents/:id/analyze */
 agentsRoute.post('/:id/analyze', async (c) => {
   const id = c.req.param('id');
@@ -342,7 +365,9 @@ agentsRoute.post('/:id/analyze', async (c) => {
 
   if (!res.ok) {
     const body = await res.json<{ error?: string }>();
-    return c.json({ error: body.error ?? 'Analysis failed' }, 500);
+    // Preserve 409 (lock contention) — don't flatten all DO errors to 500
+    const status = res.status === 409 ? 409 : 500;
+    return c.json({ error: body.error ?? 'Analysis failed' }, status);
   }
   return c.json({ ok: true });
 });
@@ -398,7 +423,7 @@ agentsRoute.post('/:id/persona/reset', async (c) => {
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
   const config = JSON.parse(agent.config) as { profileId?: string };
-  const profileId = config.profileId ?? agent.profileId ?? 'the_bot';
+  const profileId = config.profileId ?? agent.profileId ?? DEFAULT_AGENT_PROFILE_ID;
   const personaMd = getAgentPersonaTemplate(profileId, agent.name);
   await db.update(agents).set({ personaMd, updatedAt: nowIso() }).where(eq(agents.id, id));
   return c.json({ ok: true, personaMd });
@@ -436,32 +461,53 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
     .orderBy(desc(agentDecisions.createdAt))
     .limit(10);
 
-  const openTrades = await db.select().from(trades).where(eq(trades.agentId, id));
-  const openPositions = openTrades
-    .filter((t) => t.status === 'open')
-    .map((t) => ({
+  const allTrades = await db.select().from(trades).where(eq(trades.agentId, id));
+  const openTrades = allTrades.filter((t) => t.status === 'open');
+  const closedTrades = allTrades.filter((t) => t.status !== 'open');
+
+  // Enrich open positions with current price + unrealized P&L using the latest market snapshot
+  const openPositions = openTrades.map((t) => {
+    const m = rawMarketData.find((entry) => entry.pair === t.pair);
+    const currentPrice = m?.priceUsd && m.priceUsd > 0 ? m.priceUsd : t.entryPrice;
+    const unrealizedPct =
+      m && m.priceUsd > 0
+        ? (t.side === 'buy'
+            ? ((currentPrice - t.entryPrice) / t.entryPrice) * 100
+            : ((t.entryPrice - currentPrice) / t.entryPrice) * 100)
+        : 0;
+
+    return {
       pair: t.pair,
       side: t.side as 'buy' | 'sell',
       entryPrice: t.entryPrice,
       amountUsd: t.amountUsd,
-      unrealizedPct: 0,
-      currentPrice: t.entryPrice,
+      unrealizedPct,
+      currentPrice,
       openedAt: t.openedAt,
       slPct: (config.stopLossPct as number) ?? 5,
       tpPct: (config.takeProfitPct as number) ?? 7,
-    }));
+    };
+  });
 
   const paperBalance = (config.paperBalance as number) ?? 10000;
-  const autonomyLevel = intToAutonomyLevel(agent.autonomyLevel) as 'full' | 'guided' | 'strict';
 
-  const systemPrompt = BASE_AGENT_PROMPT + buildJsonSchemaInstruction(autonomyLevel);
+  // Approximate portfolio P&L from trades + latest prices
+  const realizedPnlUsd = closedTrades.reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+  const unrealizedPnlUsd = openPositions.reduce(
+    (sum, p) => sum + ((p.unrealizedPct / 100) * p.amountUsd),
+    0
+  );
+  const totalPnlUsd = realizedPnlUsd + unrealizedPnlUsd;
+  const totalPnlPct = paperBalance > 0 ? (totalPnlUsd / paperBalance) * 100 : 0;
+
+  const systemPrompt = BASE_AGENT_PROMPT + buildJsonSchemaInstruction();
   const userPrompt = rawMarketData.length > 0
     ? buildAnalysisPrompt({
         portfolioState: {
-          balance: paperBalance,
+          balance: paperBalance + totalPnlUsd,
           openPositions: openPositions.length,
           dailyPnlPct: 0,
-          totalPnlPct: 0,
+          totalPnlPct,
         },
         openPositions,
         marketData: rawMarketData,
@@ -473,9 +519,9 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
           stopLossPct: (config.stopLossPct as number) ?? 5,
           takeProfitPct: (config.takeProfitPct as number) ?? 7,
         },
-        autonomyLevel,
         behavior: config.behavior as any,
         personaMd: agent.personaMd,
+        behaviorMd: (config.behaviorMd as string | undefined) ?? null,
       })
     : '(No market data yet — run the agent at least once to populate the preview)';
 
@@ -487,20 +533,30 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
   });
 });
 
+
+
 /** GET /api/agents/:id/self-modifications */
 agentsRoute.get('/:id/self-modifications', async (c) => {
   const id = c.req.param('id');
   const walletAddress = c.get('walletAddress');
   const db = drizzle(c.env.DB);
+
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
-  const mods = await db
+
+  const modifications = await db
     .select()
     .from(agentSelfModifications)
     .where(eq(agentSelfModifications.agentId, id))
-    .orderBy(desc(agentSelfModifications.createdAt))
-    .limit(20);
-  return c.json({ modifications: mods });
+    .orderBy(desc(agentSelfModifications.createdAt));
+
+  return c.json({
+    modifications: modifications.map((m) => ({
+      ...m,
+      changes: JSON.parse(m.changes),
+      changesApplied: m.changesApplied ? JSON.parse(m.changesApplied) : null,
+    })),
+  });
 });
 
 /** POST /api/agents/:id/self-modifications/:modId/approve */
@@ -509,38 +565,24 @@ agentsRoute.post('/:id/self-modifications/:modId/approve', async (c) => {
   const modId = c.req.param('modId');
   const walletAddress = c.get('walletAddress');
   const db = drizzle(c.env.DB);
+
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
 
-  const [mod] = await db.select().from(agentSelfModifications).where(eq(agentSelfModifications.id, modId));
-  if (!mod || mod.agentId !== id || mod.status !== 'pending') {
-    return c.json({ error: 'Modification not found or not pending' }, 404);
-  }
+  const [mod] = await db
+    .select()
+    .from(agentSelfModifications)
+    .where(eq(agentSelfModifications.id, modId));
+  if (!mod || mod.agentId !== id) return c.json({ error: 'Modification not found' }, 404);
 
-  const changes = JSON.parse(mod.changesApplied ?? mod.changes) as {
-    personaMd?: string;
-    behavior?: Record<string, unknown>;
-    config?: { stopLossPct?: number; takeProfitPct?: number; maxPositionSizePct?: number };
-  };
-
+  const changes = JSON.parse(mod.changes) as Record<string, unknown>;
   const existingConfig = JSON.parse(agent.config) as Record<string, unknown>;
-  const agentUpdates: Partial<typeof agents.$inferInsert> = { updatedAt: nowIso() };
-  const configPatch: Record<string, unknown> = {};
+  const mergedConfig = { ...existingConfig, ...changes };
 
-  if (changes.personaMd) agentUpdates.personaMd = changes.personaMd;
-  if (changes.behavior) configPatch.behavior = { ...(existingConfig.behavior as object ?? {}), ...changes.behavior };
-  if (changes.config) {
-    if (changes.config.stopLossPct !== undefined)        configPatch.stopLossPct        = changes.config.stopLossPct;
-    if (changes.config.takeProfitPct !== undefined)      configPatch.takeProfitPct      = changes.config.takeProfitPct;
-    if (changes.config.maxPositionSizePct !== undefined) configPatch.maxPositionSizePct = changes.config.maxPositionSizePct;
-  }
-  if (Object.keys(configPatch).length > 0) {
-    agentUpdates.config = JSON.stringify({ ...existingConfig, ...configPatch });
-  }
-
-  await db.update(agents).set(agentUpdates).where(eq(agents.id, id));
-  await db.update(agentSelfModifications)
-    .set({ status: 'applied', appliedAt: nowIso() })
+  await db.update(agents).set({ config: JSON.stringify(mergedConfig), updatedAt: nowIso() }).where(eq(agents.id, id));
+  await db
+    .update(agentSelfModifications)
+    .set({ status: 'applied', changesApplied: mod.changes, appliedAt: nowIso() })
     .where(eq(agentSelfModifications.id, modId));
 
   return c.json({ ok: true });
@@ -552,18 +594,32 @@ agentsRoute.post('/:id/self-modifications/:modId/reject', async (c) => {
   const modId = c.req.param('modId');
   const walletAddress = c.get('walletAddress');
   const db = drizzle(c.env.DB);
+
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
 
-  await db.update(agentSelfModifications)
+  const [mod] = await db
+    .select()
+    .from(agentSelfModifications)
+    .where(eq(agentSelfModifications.id, modId));
+  if (!mod || mod.agentId !== id) return c.json({ error: 'Modification not found' }, 404);
+
+  await db
+    .update(agentSelfModifications)
     .set({ status: 'rejected' })
     .where(eq(agentSelfModifications.id, modId));
+
   return c.json({ ok: true });
 });
 
 // Error handler
 agentsRoute.onError((err, c) => {
   if (err instanceof ValidationError) {
+    console.error('[agents route] ValidationError', {
+      path: c.req.path,
+      method: c.req.method,
+      fieldErrors: err.fieldErrors ?? null,
+    });
     return c.json({ error: err.message, fieldErrors: err.fieldErrors }, 400);
   }
   console.error('[agents route]', err);

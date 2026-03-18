@@ -1,6 +1,7 @@
 {
   "name": "dex-trading-agents",
   "private": true,
+  "packageManager": "pnpm@10.24.0",
   "workspaces": [
     "apps/*",
     "packages/*"
