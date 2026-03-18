@@ -15,4 +15,6 @@ export interface Env {
   BASE_RPC_URL?: string;
   /** 64-char hex (32 bytes). Used to AES-GCM encrypt user API keys at rest. If absent, keys stored plain (dev only). */
   KEY_ENCRYPTION_SECRET?: string;
+  /** Dev/test only. When set, enables POST /api/auth/dev-session for Playwright. Never set in production. */
+  PLAYWRIGHT_SECRET?: string;
 }

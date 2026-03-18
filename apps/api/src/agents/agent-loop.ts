@@ -19,7 +19,7 @@ import { generateId, nowIso } from '../lib/utils.js';
 import { decryptKey } from '../lib/crypto.js';
 import { normalizePairForDex } from '../lib/pairs.js';
 import type { AgentBehaviorConfig } from '@dex-agents/shared';
-import { AgentBehaviorConfigSchema, AgentConfigSchema } from '@dex-agents/shared';
+import { AgentBehaviorConfigSchema, AgentConfigSchema, getAgentPersonaTemplate, getDefaultAgentPersona } from '@dex-agents/shared';
 
 /** Build a search query from a pair name.
  *  "WETH/USDC" → "WETH USDC"
@@ -595,7 +595,8 @@ export async function runAgentLoop(
           takeProfitPct: config.takeProfitPct,
         },
         behavior: config.behavior,
-        personaMd: agentRow.personaMd,
+        personaMd: agentRow.personaMd
+          ?? (agentRow.profileId ? getAgentPersonaTemplate(agentRow.profileId, agentRow.name) : getDefaultAgentPersona(agentRow.name)),
         behaviorMd: (config as any).behaviorMd ?? null,
         roleMd: (config as any).roleMd ?? null,
       }

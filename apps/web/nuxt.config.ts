@@ -41,6 +41,8 @@ export default defineNuxtConfig({
     },
     // Server-only: upstream for API proxy when Service Binding is not present (e.g. local dev)
     apiUpstream: process.env.API_BASE_URL || 'http://localhost:8787',
+    // Dev/test only: enables GET /dev-login for Playwright. Never set in production.
+    playwrightSecret: process.env.PLAYWRIGHT_SECRET || '',
   },
 
   css: ['~/assets/css/main.css'],

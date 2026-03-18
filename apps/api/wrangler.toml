@@ -21,6 +21,10 @@ crons = [
   "0 0 * * *"      # 1d
 ]
 
+# Local-only vars — never set PLAYWRIGHT_SECRET in [env.production]
+[vars]
+PLAYWRIGHT_SECRET = "playwright-dev-secret"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "trading-agents"

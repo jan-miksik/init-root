@@ -10,3 +10,9 @@ dist/
 apps/*/node_modules/
 packages/*/node_modules/
 .worktrees/
+
+# Playwright
+e2e/.auth/user.json
+playwright-report/
+test-results/
+.playwright-mcp/

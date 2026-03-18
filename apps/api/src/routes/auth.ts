@@ -12,6 +12,7 @@ import type { Env } from '../types/env.js';
 import { users } from '../db/schema.js';
 import {
   verifySiweAndCreateSession,
+  createSession,
   getSession,
   deleteSession,
   parseCookieValue,
@@ -21,7 +22,7 @@ import {
 import { validateBody } from '../lib/validation.js';
 import { z } from 'zod';
 import { encryptKey } from '../lib/crypto.js';
-import { nowIso } from '../lib/utils.js';
+import { generateId, nowIso } from '../lib/utils.js';
 
 const authRoute = new Hono<{ Bindings: Env }>();
 
@@ -193,6 +194,44 @@ authRoute.delete('/openrouter/disconnect', async (c) => {
     .where(eq(users.id, session.userId));
 
   return c.json({ ok: true });
+});
+
+/**
+ * POST /api/auth/dev-session — create a session without SIWE (Playwright / local dev only).
+ * Requires X-Playwright-Secret header matching the PLAYWRIGHT_SECRET env var.
+ * This endpoint is a no-op (404) when PLAYWRIGHT_SECRET is not configured.
+ */
+authRoute.post('/dev-session', async (c) => {
+  const secret = c.env.PLAYWRIGHT_SECRET;
+  if (!secret) return c.json({ error: 'Not Found' }, 404);
+
+  const provided = c.req.header('x-playwright-secret');
+  if (!provided || provided !== secret) return c.json({ error: 'Forbidden' }, 403);
+
+  const PLAYWRIGHT_WALLET = '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+  const orm = drizzle(c.env.DB);
+
+  let [user] = await orm.select().from(users).where(eq(users.walletAddress, PLAYWRIGHT_WALLET));
+  if (!user) {
+    const userId = generateId('user');
+    await orm.insert(users).values({
+      id: userId,
+      walletAddress: PLAYWRIGHT_WALLET,
+      displayName: 'Playwright Test User',
+      authProvider: 'playwright',
+      email: null,
+      avatarUrl: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+    [user] = await orm.select().from(users).where(eq(users.walletAddress, PLAYWRIGHT_WALLET));
+  }
+
+  const sessionToken = await createSession(c.env.CACHE, user.id, PLAYWRIGHT_WALLET);
+  const isHttps = c.req.url.startsWith('https://');
+  c.header('Set-Cookie', buildSessionCookie(sessionToken, isHttps));
+
+  return c.json({ ok: true, userId: user.id, walletAddress: PLAYWRIGHT_WALLET, sessionToken });
 });
 
 authRoute.onError((err, c) => {

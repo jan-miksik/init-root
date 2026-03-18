@@ -209,7 +209,9 @@ function parseApiSections(systemFull: string, userFull: string) {
   }
 
   if (editableStart >= 0) {
-    apiFallbackEditableSetup.value = userFull.slice(editableStart).trim();
+    apiFallbackEditableSetup.value = userFull.slice(editableStart)
+      .replace(/\n\nBased on the above data, what is your trading decision\?$/, '')
+      .trim();
   }
 }
 

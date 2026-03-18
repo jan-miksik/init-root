@@ -32,8 +32,9 @@ export function buildBehaviorSection(behavior: Partial<AgentBehaviorConfig>): st
 - Analysis Depth: ${b.analysisDepth} | Decision Speed: ${b.decisionSpeed} | Confidence Threshold: ${b.confidenceThreshold}%
 - Trading Style: ${b.style} | Entry Preference: ${b.entryPreference} | Exit Strategy: ${b.exitStrategy}
 - Market Bias: ${b.defaultBias} | Contrarian: ${b.contrarian}/100 | Adaptability: ${b.adaptability}/100
-- Average Down on losses: ${b.averageDown ? 'Yes' : 'No'} | Overthinker: ${b.overthinker ? 'Yes' : 'No'}
+- Average Down on losses: ${b.averageDown ? 'Yes' : 'No'} | Overthinker: ${b.overthinker ? 'Yes' : 'No'} | Emotional Awareness: ${b.emotionalAwareness ? 'Yes' : 'No'}
 - Preferred Conditions: ${b.preferredConditions} | Memory Weight: ${b.memoryWeight}
+- Verbosity: ${b.verbosity} | Personality: ${b.personality}
 
 Precedence: behavior config (parameters above) > persona text > everything else.`;
 }

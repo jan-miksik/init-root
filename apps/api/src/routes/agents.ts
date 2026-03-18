@@ -12,6 +12,7 @@ import {
   UpdateAgentRequestSchema,
   UpdatePersonaSchema,
   getAgentPersonaTemplate,
+  getDefaultAgentPersona,
   resolveAgentProfileId,
 } from '@dex-agents/shared';
 import { validateBody, ValidationError } from '../lib/validation.js';
@@ -520,8 +521,10 @@ agentsRoute.get('/:id/prompt-preview', async (c) => {
           takeProfitPct: (config.takeProfitPct as number) ?? 7,
         },
         behavior: config.behavior as any,
-        personaMd: agent.personaMd,
+        personaMd: agent.personaMd
+          ?? (agent.profileId ? getAgentPersonaTemplate(agent.profileId, agent.name) : getDefaultAgentPersona(agent.name)),
         behaviorMd: (config.behaviorMd as string | undefined) ?? null,
+        roleMd: (config.roleMd as string | undefined) ?? null,
       })
     : '(No market data yet — run the agent at least once to populate the preview)';
 

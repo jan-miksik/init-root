@@ -39,6 +39,8 @@ let fetchMePromise: Promise<void> | null = null;
 
 export async function handleWalletDisconnect(): Promise<boolean> {
   if (!authUser.value) return false; // nothing to sign out of
+  // Dev/test sessions have no wagmi wallet connection — don't sign them out on disconnect
+  if (authUser.value.authProvider === 'playwright') return false;
   authUser.value = null;
   try {
     await $fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });

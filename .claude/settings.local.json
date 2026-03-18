@@ -57,7 +57,18 @@
       "Bash(grep -n \"<style\" /Users/janmiksik/Desktop/projects/own/+/heppy-market/apps/web/pages/agents/[id].vue)",
       "Bash(cd:*)",
       "Read(//Users/janmiksik/Desktop/projects/own/+/heppy-market/**)",
-      "Read(//Users/janmiksik/Desktop/projects/own/+/heppy-market/=== routes/**)"
+      "Read(//Users/janmiksik/Desktop/projects/own/+/heppy-market/=== routes/**)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "Bash(curl -s -X POST http://localhost:8787/api/auth/dev-session -H \"x-playwright-secret: playwright-dev-secret\" -D -)",
+      "Bash(npx playwright:*)",
+      "Bash(wait)",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "Bash(curl -s \"http://localhost:3000/dev-login?secret=playwright-dev-secret\")",
+      "Bash(curl -sv \"http://localhost:3000/dev-login?secret=playwright-dev-secret\")",
+      "mcp__plugin_playwright_playwright__browser_run_code",
+      "WebFetch(domain:sparrow.cloudflare.com)",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_wait_for"
     ]
   },
   "sandbox": {

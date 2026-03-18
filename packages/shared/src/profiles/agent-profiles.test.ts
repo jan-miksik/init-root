@@ -9,11 +9,13 @@ import {
 import { getAgentPersonaTemplate } from './templates.js';
 
 describe('agent persona reduction', () => {
-  it('exposes only the three retained agent presets', () => {
+  it('exposes the retained agent presets', () => {
     expect(AGENT_PROFILES.map((profile) => profile.id)).toEqual([
       'the_professor',
       'momentum_surfer',
       'contrarian_chad',
+      'joker',
+      'drunk_uncle',
     ]);
     expect(DEFAULT_AGENT_PROFILE_ID).toBe('the_professor');
   });
