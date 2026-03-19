@@ -1,26 +1,202 @@
 [
   {
-    "category": "database",
-    "description": "Create SQLite database with better-auth schema",
+    "category": "architecture",
+    "description": "Refactor agent architecture: Durable Object as source of truth",
     "steps": [
-      "Create data/ directory and app.db SQLite file",
-      "Create user table with id, name, email, emailVerified, image, timestamps",
-      "Create session table with userId foreign key and token",
-      "Create account table for credential provider",
-      "Create verification table",
-      "Verify all tables exist with correct structure"
+      "Move live agent state (balance, openPositions, cooldown, lastDecision) from D1 reads into Durable Object memory",
+      "Persist critical state snapshots into DO storage (state.storage)",
+      "Reduce D1 reads inside agent-loop to only initialization and history writes",
+      "Ensure DO recovers state correctly after restart from storage",
+      "Design a DO storage schema versioning strategy (migration helpers for storage shape changes)",
+      "Verify agent loop works without direct dependency on D1 for live state",
+      "Add tests for DO state recovery and migration edge cases"
     ],
     "passes": false
   },
   {
-    "category": "database",
-    "description": "Create notes table with indexes",
+    "category": "performance",
+    "description": "Optimize agent-loop to reduce latency and redundant operations",
     "steps": [
-      "Create notes table with id, user_id, title, content_json, is_public, public_slug, timestamps",
-      "Add FOREIGN KEY on user_id references user(id)",
-      "Add UNIQUE constraint on public_slug",
-      "Create indexes on user_id, public_slug, is_public",
-      "Verify table structure and indexes"
+      "Cache market data inside Durable Object for short TTL (e.g. 30–60 seconds)",
+      "Avoid duplicate OHLCV fetches within same tick window",
+      "Parallelize independent async operations (market data, indicators, etc.)",
+      "Ensure LLM calls are only triggered when needed (skip if no meaningful change)",
+      "Add timing instrumentation to measure before/after latency",
+      "Add unit tests for cache hit/miss and skip-decision logic"
+    ],
+    "passes": false
+  },
+  {
+    "category": "realtime",
+    "description": "Add WebSocket support for live agent updates",
+    "steps": [
+      "Create WebSocket endpoint in Worker for /api/agents/:id/ws",
+      "Use Durable Objects hibernatable WebSocket API (acceptWebSocket) for cost efficiency",
+      "Route WebSocket connections to the correct Durable Object instance",
+      "Authenticate the WebSocket upgrade request using existing SIWE session (validate session cookie/token before accepting)",
+      "Store active connections in Durable Object via getWebSockets()",
+      "Broadcast agent state updates (trades, decisions, status) to connected clients",
+      "Handle reconnects, cleanup of closed connections, and hibernation wake",
+      "Add frontend composable for WS connection with auto-reconnect",
+      "Test real-time updates end-to-end"
+    ],
+    "passes": false
+  },
+  {
+    "category": "queues",
+    "description": "Introduce async processing using Cloudflare Queues",
+    "steps": [
+      "Create queue binding and consumer in wrangler.toml",
+      "Refactor LLM decision step: DO enqueues job with agentId + prompt context, sets state to 'awaiting_llm'",
+      "Implement queue consumer Worker that calls LLM and returns result to DO via stub.fetch()",
+      "DO receives result, validates, persists decision, and continues the loop",
+      "Handle idempotency: if DO alarm fires again while awaiting_llm, skip re-enqueue",
+      "Add retry logic with exponential backoff in queue consumer",
+      "Add dead-letter queue handling for permanently failed jobs",
+      "Verify agent loop remains stable under load and concurrent alarm/queue-result races"
+    ],
+    "passes": false
+  },
+  {
+    "category": "rate-limiting",
+    "description": "Implement global rate limiting using Durable Objects",
+    "steps": [
+      "Create GlobalRateLimiterDO class",
+      "Map userId to limiter instance using idFromName",
+      "Track LLM usage per user (requests per minute/hour)",
+      "Integrate limiter into LLM router",
+      "Return proper error (429) when limit exceeded",
+      "Test concurrency safety and correctness"
+    ],
+    "passes": false
+  },
+  {
+    "category": "caching",
+    "description": "Improve caching strategy for external data and LLM",
+    "steps": [
+      "Add KV caching layer for market data (short TTL, keyed by pool+timeframe)",
+      "Cache LLM responses for identical prompts (optional short TTL)",
+      "Add cache invalidation strategy (TTL-based + manual purge endpoint)",
+      "Ensure fallback logic works correctly with cached vs stale data",
+      "Measure reduction in external API calls"
+    ],
+    "passes": false
+  },
+  {
+    "category": "orchestration",
+    "description": "Refactor AgentManagerDO for centralized scheduling",
+    "note": "AgentManagerDO binding and class export already exist in wrangler.toml and index.ts — this is a refactor of existing scaffolding, not a greenfield build",
+    "steps": [
+      "Audit existing AgentManagerDO class and bindings to understand current state",
+      "Refactor cron handler to delegate scheduling to AgentManagerDO instead of querying D1 directly",
+      "Move agent scheduling logic (interval matching, active agent tracking) into Manager DO",
+      "Maintain a cached list of running agents in DO storage to avoid full DB scans each cron tick",
+      "Add/remove agents from the Manager's tracking list on start/stop/delete API calls",
+      "Verify scheduling accuracy and performance vs current cron-based approach"
+    ],
+    "passes": false
+  },
+  {
+    "category": "stability",
+    "description": "Improve error handling and retry logic in agent loop",
+    "steps": [
+      "Wrap LLM calls with retry + exponential backoff",
+      "Handle external API failures gracefully (Gecko, DexScreener) with structured error types",
+      "Persist pending actions to DO storage for retry across alarm cycles",
+      "Add structured error logging with consistent format (error code, context, recoverable flag)",
+      "Ensure agent loop never crashes silently — always record failure reason in D1 decisions log",
+      "Add tests for each failure mode (LLM timeout, API 429, malformed response, network error)"
+    ],
+    "passes": false
+  },
+  {
+    "category": "observability",
+    "description": "Add logging, metrics, and debugging tools",
+    "steps": [
+      "Standardize structured logging format across all services",
+      "Log key events: decisions, trades, errors, retries, self-modifications",
+      "Add timing metrics for LLM calls, market data fetch, indicator computation",
+      "Expose debug endpoint for agent DO state (GET /api/agents/:id/debug, gated to admin/tester role)",
+      "Verify logs are readable and useful in wrangler tail and production"
+    ],
+    "passes": false
+  },
+  {
+    "category": "security",
+    "description": "Strengthen API and system-level protections",
+    "steps": [
+      "Add per-IP fallback rate limiting (Workers-level, before auth)",
+      "Validate all API inputs with shared schemas (audit for any unvalidated endpoints)",
+      "Harden internal endpoints — verify service binding enforcement, reject direct Worker URL access",
+      "Audit auth flow and session validation (SIWE nonce reuse, session expiry, cookie flags)",
+      "Test for common abuse scenarios (replay attacks, session fixation, malformed payloads)"
+    ],
+    "passes": false
+  },
+  {
+    "category": "testing",
+    "description": "Expand test coverage for critical paths",
+    "steps": [
+      "Add unit tests for agent-loop decision flow (mock LLM, mock market data, verify trade execution logic)",
+      "Add unit tests for self-modification validation and application logic",
+      "Add unit tests for persona resolution fallback chain",
+      "Add integration tests for prompt-preview parity (API output matches agent-loop prompt construction)",
+      "Expand Playwright e2e: agent lifecycle (create → configure → start → verify status → stop → delete)",
+      "Add vitest tests for shared package (schema validation edge cases, prompt builder output)",
+      "Set up CI coverage reporting"
+    ],
+    "passes": false
+  },
+  {
+    "category": "migration",
+    "description": "Structured schema versioning for DO storage and D1",
+    "steps": [
+      "Define a version field in DO storage root for storage schema versioning",
+      "Create migration runner that runs on DO initialization (similar to D1 Drizzle migrations)",
+      "Extract inline config migration/clamping logic from agent-loop into dedicated migration module",
+      "Document migration strategy for both D1 (Drizzle) and DO storage in a single place",
+      "Test forward migration and verify backward-incompatible changes are caught"
+    ],
+    "passes": false
+  },
+  {
+    "category": "meta:orchestrator",
+    "description": "Refactor Ralph loop into structured orchestrator (Node.js)",
+    "note": "Meta-task: this modifies the orchestrator that runs other tasks, not Heppy Market itself",
+    "steps": [
+      "Replace bash loop with Node.js orchestrator script",
+      "Split logic into planner, executor, verifier modules",
+      "Implement task selection logic separately from execution",
+      "Persist agent progress in structured JSON instead of plain text",
+      "Verify loop stability across multiple iterations"
+    ],
+    "passes": false
+  },
+  {
+    "category": "meta:orchestrator",
+    "description": "Implement structured AI coding agent workflow",
+    "note": "Meta-task: improvements to the Claude Code workflow, not Heppy Market application code",
+    "steps": [
+      "Separate prompts for planning and implementation",
+      "Add explicit state machine (planning, implementing, verifying, fixing)",
+      "Implement diff-based code generation instead of full file rewrites",
+      "Add automatic error feedback loop (retry on failure)",
+      "Limit context to only relevant files per task",
+      "Verify improved consistency of generated code"
+    ],
+    "passes": false
+  },
+  {
+    "category": "meta:experimental",
+    "description": "Prototype Coding Agent using Durable Objects",
+    "note": "Meta-task / experimental: exploring DO-based autonomous coding agents on edge",
+    "steps": [
+      "Create CodingAgentDO class",
+      "Store task progress and state inside DO",
+      "Trigger iterations using alarms",
+      "Integrate LLM calls into DO workflow",
+      "Persist results and logs",
+      "Evaluate feasibility of running autonomous coding agents on edge"
     ],
     "passes": false
   }

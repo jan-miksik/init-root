@@ -119,6 +119,11 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 - `apps/api/package.json`:
   - Uses `@cloudflare/workers-types` for strong typing against the Workers runtime.
   - Uses `@cloudflare/vitest-pool-workers` and `vitest` for Worker‑aware tests.
+- **Playwright e2e** (`e2e/`, `playwright.config.ts`):
+  - `global.setup.ts` authenticates via `GET /dev-login` (dev/test-only Pages Function that creates a server-side session without wallet signing).
+  - `smoke.spec.ts` — page-load and navigation smoke tests.
+  - `persona.spec.ts` — agent persona edit + prompt-preview integration tests.
+  - `apps/web/server/routes/dev-login.get.ts` — dev-only Nitro route; disabled in production.
 
 ---
 
@@ -132,8 +137,8 @@ Called by `TradingAgentDO.alarm()` on each scheduled tick. Full flow:
 2. Drain any `pendingTrade` from DO storage (durability: if D1 write failed last tick, retry now).
 3. Check daily loss limit and cooldown — pause agent or skip tick if triggered.
 4. Check open positions for stop-loss / take-profit using `price-resolver.ts`. Tracks consecutive price-miss counter; alerts after 3 misses.
-5. Fetch OHLCV market data: **GeckoTerminal** primary → **DexScreener** fallback → **well-known token address** last resort.
-6. Compute technical indicators (RSI, EMA9/21, MACD, Bollinger Bands) when ≥14 candles are available.
+5. Fetch OHLCV market data: **GeckoTerminal** primary → **DexScreener** fallback → **well-known token address** last resort. Fetches **hourly (48 candles) and daily (30 candles) in parallel**.
+6. Compute technical indicators: hourly RSI, EMA9/21, MACD, Bollinger Bands when ≥14 candles; daily RSI/EMA/Bollinger for trend context when daily data is available.
 7. Call LLM (`getTradeDecision`) via OpenRouter or Anthropic (only for tester-role users). Supports per-user OpenRouter key (stored encrypted in D1).
 8. Log decision to `agentDecisions` table (includes raw prompt + raw response for debugging).
 9. Handle self-modification suggestions (gated by autonomy level and confidence/cooldown checks).
@@ -145,7 +150,7 @@ Agents can suggest changes to themselves (persona, behavior, and — if `full` a
 - LLM returns optional `selfModification` field in the trade decision JSON.
 - Validated against `SelfModificationSchema` (shared package).
 - Gated by: confidence ≥ 0.6, cooldown cycles, and autonomy level.
-- `guided` autonomy: can modify `personaMd` and `behavior`, not hard config.
+- `guided` autonomy: can modify `personaMd`, `behavior`, and `roleMd`, not hard config.
 - `full` autonomy: can also modify `stopLossPct`, `takeProfitPct`, `maxPositionSizePct`.
 - `autoApplySelfModification: true` → applied immediately; otherwise status = `pending`, user must approve via API.
 - API endpoints for user review: `GET/POST /api/agents/:id/self-modifications`, `.../approve`, `.../reject`.
@@ -160,6 +165,7 @@ Full-featured two-panel edit UI:
   - **[MARKET DATA]** collapsible pill: API-fetched from `GET /api/agents/:id/prompt-preview`, refreshable.
   - **[EDITABLE SETUP]** always-visible block with live preview: behavior section (auto-generated or custom markdown), persona section, constraints section. Toggle to edit mode for inline textarea editing with auto-resize, Reset buttons, and Custom/auto-generated badges.
 - Optimistic version conflict: PATCH includes `_version` (agent's `updatedAt`); server returns 409 on conflict.
+- **Prompt-preview parity**: `GET /api/agents/:id/prompt-preview` builds the prompt identically to the agent-loop — includes `roleMd`, persona fallback chain (`personaMd` column → config blob → profile template → default), matching what the LLM actually receives.
 
 ### API Endpoints (agents)
 
@@ -197,20 +203,27 @@ Full-featured two-panel edit UI:
 ### Shared Package (`packages/shared`)
 
 Exports consumed by both API and frontend:
-- **Validation schemas**: `AgentConfigSchema`, `SelfModificationSchema`, `TradeDecisionSchema`, `CreateAgentRequestSchema`, `UpdateAgentRequestSchema`, `ManagerConfigSchema`, `CreateBehaviorProfileSchema`, `UpdatePersonaSchema`, persona template helpers.
+- **Validation schemas**: `AgentConfigSchema` (default `analysisInterval: '1h'`; optional `roleMd` field up to 4 000 chars), `SelfModificationSchema`, `TradeDecisionSchema`, `CreateAgentRequestSchema`, `UpdateAgentRequestSchema`, `ManagerConfigSchema`, `CreateBehaviorProfileSchema`, `UpdatePersonaSchema`, persona template helpers.
 - **Prompt builders**: `BASE_AGENT_PROMPT`, `buildJsonSchemaInstruction`, `buildBehaviorSection`, `buildConstraintsSection` — single source of truth for agent prompt construction.
+- **Persona helpers**: `getAgentPersonaTemplate`, `getDefaultAgentPersona` — used by both agent-loop and prompt-preview to apply the same fallback chain.
 
 ### Services
 
 | File | Purpose |
 |------|---------|
-| `gecko-terminal.ts` | Primary OHLCV source — pool search + price series (48 hourly candles) |
+| `gecko-terminal.ts` | Primary OHLCV source — pool search + price series (48 hourly + 30 daily candles) |
 | `dex-data.ts` | DexScreener fallback — pair search + token address lookup |
 | `price-resolver.ts` | Resolves current price for open position SL/TP checks |
 | `paper-engine.ts` | PaperEngine: open/close positions, P&L math, slippage simulation |
 | `indicators.ts` | Technical indicators wrapping `technicalindicators` npm package |
 | `snapshot.ts` | Periodic performance snapshot writes to D1 |
 | `llm-router.ts` | LLM call routing, JSON extraction, fallback handling |
+
+### Agent Utilities (`apps/api/src/agents/`)
+
+| File | Purpose |
+|------|---------|
+| `resolve-agent-persona.ts` | Centralises persona resolution — 4-source precedence: `agents.personaMd` column → `config.personaMd` blob → profile template → default persona |
 
 ### Lib Utilities
 
