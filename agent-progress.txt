@@ -119,4 +119,23 @@ Each entry should include:
 - `vi.mock('cloudflare:workers')` stubs the `DurableObject` base class so tests run in Vitest/Node without the CF runtime.
 - Pre-existing phase1 test failure and web lint errors are unrelated to this task.
 
-**Next recommended:** architecture (DO as source of truth) or testing (expand e2e agent lifecycle).
+**Next recommended:** architecture (DO as source of truth) or performance.
+
+---
+
+## 2026-03-19 — testing: Expand test coverage for critical paths
+
+**Completed:**
+- Added `apps/api/tests/agent-config.test.ts` with 34 tests covering `AgentConfigSchema` boundary values (name length, balance min/max, position size, intervals, temperature, pairs count), defaults, `AgentBehaviorConfigSchema` validation, nested behavior in AgentConfig, and `TradeDecisionSchema` (all actions, confidence bounds, nullable fields, required fields).
+- Updated `apps/api/vitest.config.ts` to add coverage configuration: v8 provider, includes `src/**/*.ts`, reporters `text` and `json-summary`.
+- Persona resolution fallback chain tests were already covered in `resolve-agent-persona.test.ts` (5 tests).
+- PaperEngine trade execution already covered in `phase3.test.ts` (15 tests) and `phase4.test.ts` (11 tests).
+- Technical indicator tests already covered in `phase2.test.ts`.
+- Rate-limiter decision logic and window math covered in `rate-limiting.test.ts`.
+
+**Notable decisions:**
+- Imported from `validation.ts` (source) not `validation.js` (compiled) — the compiled `.js` in `packages/shared/src/` is stale and still contains `autonomyLevel` which was removed from the source. Using `.ts` directly ensures test accuracy.
+- Skipped Playwright e2e expansion (deferred to realtime task) and CI coverage reporter integration (would require CI config changes outside the project source).
+- Pre-existing failures: `phase1.test.ts` `rejects invalid autonomy level` (stale compiled import), web lint `autonomyLevel` errors — both pre-existing and unrelated.
+
+**Next recommended:** architecture (DO as source of truth) or performance.

@@ -145,7 +145,7 @@
       "Add vitest tests for shared package (schema validation edge cases, prompt builder output)",
       "Set up CI coverage reporting"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "migration",
