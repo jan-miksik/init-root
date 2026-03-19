@@ -170,7 +170,7 @@
       "Persist agent progress in structured JSON instead of plain text",
       "Verify loop stability across multiple iterations"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "meta:orchestrator",
@@ -184,7 +184,7 @@
       "Limit context to only relevant files per task",
       "Verify improved consistency of generated code"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "meta:experimental",
@@ -198,6 +198,6 @@
       "Persist results and logs",
       "Evaluate feasibility of running autonomous coding agents on edge"
     ],
-    "passes": false
+    "passes": true
   }
 ]

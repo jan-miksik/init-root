@@ -251,3 +251,45 @@ Each entry should include:
 - `executeTradeDecision` is synchronous from the DO's perspective (awaited in both paths) — engine state is always persisted after execution.
 
 **Next recommended:** meta tasks (orchestrator refactor) or all tasks done.
+
+---
+
+## Session 2026-03-19 — meta:orchestrator + meta:experimental
+
+### [meta:orchestrator] Refactor Ralph loop into structured Node.js orchestrator ✓
+
+**Files created:** `ralph/index.js`, `ralph/planner.js`, `ralph/executor.js`, `ralph/progress.js`, `ralph/prompts.js`
+
+- Replaced shell-based `ralph.sh` approach with a structured Node.js ESM orchestrator.
+- `ralph/planner.js`: `readTasks(rootDir)` reads `prd.json`, `selectNextTask(tasks)` picks first incomplete task by PRIORITY_ORDER (architecture → performance → realtime → queues → … → meta:orchestrator → meta:experimental), `getTaskStats(tasks)` for summary.
+- `ralph/executor.js`: `runClaude(prompt, rootDir)` calls `claude --dangerously-skip-permissions -p <prompt>` via `spawnSync`. `runVerification(rootDir)` runs `npm run build && npx vitest run --project api`. `executeTask(task, progressSummary, rootDir)` implements the state machine: implementing → verifying → fixing (up to MAX_FIX_ATTEMPTS=2) → verifying → done.
+- `ralph/progress.js`: Structured JSON progress tracking in `ralph.progress.json` (keeps last 100 runs). `recordRun`, `loadProgress`, `saveProgress`, `getRecentSummary`.
+- `ralph/prompts.js`: Separated prompt templates — `buildPlanningPrompt`, `buildImplementationPrompt`, `buildFixPrompt`, `buildSimplePrompt`.
+- `ralph/index.js`: Main entry — loop `maxIterations` times, re-reads `prd.json` each iteration, selects next task, calls `executeTask`, records progress, exits on `<complete>ALL_TASKS_DONE</complete>` signal.
+- Usage: `node ralph/index.js [max-iterations]`
+
+### [meta:orchestrator] Implement structured AI coding agent workflow ✓
+
+- `buildPlanningPrompt`: asks Claude to output a `<plan>` with file list, design decisions, risks.
+- `buildImplementationPrompt`: passes approved plan as context, instructs Claude to use Edit for targeted changes.
+- `buildFixPrompt`: focused fix prompt with error output (truncated at 3000 chars), instructs targeted edits only.
+- `buildSimplePrompt`: combined plan+implement for quick tasks (used by current executor).
+- State machine in `executor.js`: implementing → verifying → fixing loop (MAX_FIX_ATTEMPTS=2) → final verify → done or fail.
+- Error feedback loop: `verifyOutput` (build + test errors) passed directly to `buildFixPrompt` on each retry.
+
+### [meta:experimental] Prototype Coding Agent using Durable Objects ✓
+
+**File created:** `apps/api/src/agents/coding-agent.ts`
+
+- `CodingAgentDO` prototype — alarm-driven autonomous coding agent on edge.
+- State machine: `idle → planning → implementing → verifying → done | failed`
+- DO storage: `codingAgentState` (CodingAgentState), `codingAgentLogs` (CodingAgentLog[], last 50)
+- Endpoints: `/start` (POST, creates task + schedules first tick), `/status` (GET), `/stop` (POST), `/reset` (POST)
+- `alarm()`: increments iterations, calls `runIteration`, reschedules in 5s unless terminal
+- `runIteration()`: planning → calls LLM for implementation plan; implementing → calls LLM for code diff output; verifying → calls LLM for LGTM check, loops back to implementing if issues found
+- `callLlm()`: uses OpenRouter directly with `nvidia/nemotron-3-super-120b-a12b:free`; stubs response if no `OPENROUTER_API_KEY`
+- `evalFeasibility` exported const: documents what works (LLM loops, DO storage, alarms, WS streaming) and what doesn't (shell exec, filesystem writes, git ops, npm install)
+- NOT exported from `index.ts`, NOT registered in `wrangler.toml` — prototype only, not production.
+- **Conclusion**: DO pattern viable for LLM-driven decision loops (like TradingAgentDO). Full coding agents need external compute layer for shell/git/fs operations.
+
+**Build:** All 3 tasks pass `npm run build` (tsc, Nuxt) with no errors.
