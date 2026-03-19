@@ -25,3 +25,22 @@ Each entry should include:
 - Pre-existing failures (phase1 test + web lint) are unrelated to this task.
 
 **Next recommended:** observability or testing (expand e2e agent lifecycle).
+
+---
+
+## 2026-03-19 — observability: Logging, metrics, and debug endpoint
+
+**Completed:**
+- Created `apps/api/src/lib/logger.ts` with `createLogger(service, agentId?)` that emits structured `key=value` log lines with level, timestamp, service, and optional agentId. Includes `log.time(event)` for automatic duration logging — returns elapsed ms.
+- Updated `apps/api/src/agents/agent-loop.ts`: added `tick_start`, `analysis_start`, `market_data_fetch` (timed), `price_resolution_failed` (warn), `indicator_compute` (timed per-pair), `llm_call` (timed), `decision` (with confidence/tokens/latency), `trade_open`, `trade_close`, and `tick_end` (total duration) structured log events.
+- Updated `apps/api/src/agents/trading-agent.ts`: added `/debug` endpoint that returns full DO state snapshot (agentId, status, analysisInterval, nextAlarmAt, tickCount, isLoopRunning, lastStopOutAt, pendingTrade, priceMiss counters, engine summary).
+- Updated `apps/api/src/routes/agents.ts`: added `GET /api/agents/:id/debug` route gated to tester role (403 for non-testers) — proxies to DO `/debug` endpoint.
+- Added `apps/api/tests/observability.test.ts` with 13 tests covering log format, field encoding, level routing, timestamp format, null field filtering, and timer accuracy.
+
+**Notable decisions:**
+- Log format is key=value (not JSON) for easy `wrangler tail` grep — strings are JSON-quoted, numbers are plain.
+- Timer returns elapsed ms so callers can use the value (e.g. llmDurationMs for the decision log).
+- Debug endpoint exposes DO internals only to tester-role users — prevents leaking engine state to regular users.
+- Pre-existing failures (phase1 test + web lint) are unrelated to this task.
+
+**Next recommended:** architecture (DO as source of truth) or testing (expand e2e agent lifecycle).

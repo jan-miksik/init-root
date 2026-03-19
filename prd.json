@@ -119,7 +119,7 @@
       "Expose debug endpoint for agent DO state (GET /api/agents/:id/debug, gated to admin/tester role)",
       "Verify logs are readable and useful in wrangler tail and production"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "security",

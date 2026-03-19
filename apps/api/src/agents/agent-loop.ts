@@ -19,6 +19,7 @@ import { generateId, nowIso } from '../lib/utils.js';
 import { decryptKey } from '../lib/crypto.js';
 import { normalizePairForDex } from '../lib/pairs.js';
 import { classifyApiError, logStructuredError } from '../lib/agent-errors.js';
+import { createLogger } from '../lib/logger.js';
 import type { AgentBehaviorConfig } from '@dex-agents/shared';
 import { AgentBehaviorConfigSchema, AgentConfigSchema } from '@dex-agents/shared';
 import { resolveAgentPersonaMd } from './resolve-agent-persona.js';
@@ -69,6 +70,9 @@ export async function runAgentLoop(
   ctx: DurableObjectState,
   options?: { forceRun?: boolean; bypassCache?: boolean }
 ): Promise<void> {
+  const log = createLogger('agent-loop', agentId);
+  const tickStart = Date.now();
+  log.info('tick_start', { forceRun: options?.forceRun ?? false, bypassCache: options?.bypassCache ?? false });
   const db = drizzle(env.DB);
   // Enable FK enforcement (session-level in SQLite, must be set per connection)
   try { await db.run(sql`PRAGMA foreign_keys = ON`); } catch { /* non-fatal */ }
@@ -241,6 +245,7 @@ export async function runAgentLoop(
 
   // Normalize pair names (e.g. ETH-USD → WETH/USDC) so GeckoTerminal/DexScreener can resolve them
   const pairsToFetch = config.pairs.slice(0, 5).map(normalizePairForDex);
+  log.info('analysis_start', { pairs: pairsToFetch.length, model: effectiveLlmModel });
   console.log(`[agent-loop] ${agentId}: Starting analysis (${pairsToFetch.length} pairs, model=${effectiveLlmModel})`);
 
   // 4. Fetch market data — GeckoTerminal primary (network-scoped + real OHLCV),
@@ -257,6 +262,7 @@ export async function runAgentLoop(
     dailyIndicatorText: string;
   }> = [];
 
+  const doneMarketFetch = log.time('market_data_fetch', { pairs: pairsToFetch.length });
   for (const pairName of pairsToFetch) {
     const query = pairToSearchQuery(pairName);
     let priceUsd = 0;
@@ -371,12 +377,17 @@ export async function runAgentLoop(
       }
     }
 
-    if (priceUsd === 0) continue; // all providers failed for this pair
+    if (priceUsd === 0) {
+      log.warn('price_resolution_failed', { pair: pairName });
+      continue; // all providers failed for this pair
+    }
 
     // ── Compute indicators (only when we have enough real OHLCV candles) ──────
     // RSI needs 14 + 1 points, MACD needs 26 + 9 + 1 = 36 points minimum.
     // If we don't have real data we skip indicators entirely rather than use fabricated prices.
+    const doneIndicators = log.time('indicator_compute', { pair: pairName, candles: prices.length });
     const indicators = prices.length >= 14 ? computeIndicators(prices) : null;
+    doneIndicators();
 
     /** Build a human-readable indicator summary string from a computed indicator set */
     function buildIndicatorText(
@@ -448,6 +459,8 @@ export async function runAgentLoop(
       dailyIndicatorText,
     });
   }
+
+  doneMarketFetch();
 
   if (marketData.length === 0) {
     console.warn(`[agent-loop] ${agentId}: No market data available — DexScreener returned no Base chain pairs for configured pairs: ${pairsToFetch.join(', ')}`);
@@ -581,6 +594,7 @@ export async function runAgentLoop(
   });
 
   let decision: Awaited<ReturnType<typeof getTradeDecision>>;
+  const doneLlm = log.time('llm_call', { model: effectiveLlmModel });
   try {
     decision = await getTradeDecision(
       {
@@ -621,6 +635,7 @@ export async function runAgentLoop(
       }
     );
   } catch (err) {
+    doneLlm();
     const { classifyLlmError } = await import('../lib/agent-errors.js');
     const classified = classifyLlmError(err, { model: effectiveLlmModel });
     logStructuredError('agent-loop', agentId, classified);
@@ -678,6 +693,16 @@ export async function runAgentLoop(
     createdAt: nowIso(),
   });
 
+  const llmDurationMs = doneLlm();
+  log.info('decision', {
+    action: decision.action,
+    confidence: decision.confidence,
+    model: decision.modelUsed,
+    llm_latency_ms: llmDurationMs,
+    tokens_in: decision.tokensIn,
+    tokens_out: decision.tokensOut,
+    execution_note: executionNote ?? undefined,
+  });
   console.log(
     `[agent-loop] ${agentId}: Decision=${decision.action} confidence=${decision.confidence.toFixed(2)}`
   );
@@ -721,6 +746,14 @@ export async function runAgentLoop(
 
       await persistTrade(db, position);
       await ctx.storage.delete('pendingTrade');
+      log.info('trade_open', {
+        pair: targetPairName,
+        side: decision.action,
+        amount_usd: amountUsd,
+        price_usd: pairData.priceUsd,
+        position_size_pct: positionSizePct,
+        confidence: decision.confidence,
+      });
       console.log(
         `[agent-loop] ${agentId}: Opened ${decision.action} ${targetPairName} $${amountUsd.toFixed(2)} @ $${pairData.priceUsd}`
       );
@@ -741,6 +774,14 @@ export async function runAgentLoop(
         await persistTrade(db, closed);
         await ctx.storage.delete('pendingTrade');
         await ctx.storage.delete(`priceMiss:${position.id}`);
+        log.info('trade_close', {
+          pair: position.pair,
+          side: position.side,
+          pnl_pct: closed.pnlPct,
+          pnl_usd: closed.pnlUsd,
+          price_usd: pairData.priceUsd,
+          reason: 'llm_close',
+        });
         console.log(
           `[agent-loop] ${agentId}: Closed ${position.pair} PnL=${closed.pnlPct?.toFixed(2)}%`
         );
@@ -749,6 +790,13 @@ export async function runAgentLoop(
       }
     }
   }
+
+  log.info('tick_end', {
+    duration_ms: Date.now() - tickStart,
+    pairs_fetched: marketData.length,
+    open_positions: engine.openPositions.length,
+    balance: engine.balance,
+  });
 }
 
 /** Upsert a trade record to D1 */

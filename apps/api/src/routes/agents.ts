@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import { eq, desc, or, isNull } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
 import type { AuthVariables } from '../lib/auth.js';
-import { agents, trades, agentDecisions, performanceSnapshots, agentSelfModifications } from '../db/schema.js';
+import { agents, trades, agentDecisions, performanceSnapshots, agentSelfModifications, users } from '../db/schema.js';
 import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../agents/prompts.js';
 import { buildJsonSchemaInstruction } from '../services/llm-router.js';
 import {
@@ -430,6 +430,34 @@ agentsRoute.post('/:id/analyze', async (c) => {
     return c.json({ error: body.error ?? 'Analysis failed' }, status);
   }
   return c.json({ ok: true });
+});
+
+/** GET /api/agents/:id/debug — returns DO internal state (tester/admin only) */
+agentsRoute.get('/:id/debug', async (c) => {
+  const id = c.req.param('id');
+  const walletAddress = c.get('walletAddress');
+  const db = drizzle(c.env.DB);
+
+  const agent = await requireOwnership(db, id, walletAddress);
+  if (!agent) return c.json({ error: 'Agent not found' }, 404);
+
+  // Gate to tester role
+  const [ownerUser] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.walletAddress, walletAddress));
+  if (ownerUser?.role !== 'tester') {
+    return c.json({ error: 'Forbidden: debug endpoint requires tester role' }, 403);
+  }
+
+  const doId = c.env.TRADING_AGENT.idFromName(id);
+  const stub = c.env.TRADING_AGENT.get(doId);
+  const res = await stub.fetch(new Request('http://do/debug'));
+  if (!res.ok) {
+    return c.json({ error: 'Failed to fetch debug state from agent' }, 502);
+  }
+  const debugState = await res.json();
+  return c.json(debugState);
 });
 
 /** GET /api/agents/:id/status */

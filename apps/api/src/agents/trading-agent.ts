@@ -304,6 +304,46 @@ export class TradingAgentDO extends DurableObject<Env> {
       return Response.json(engineState ?? null);
     }
 
+    if (url.pathname === '/debug') {
+      const agentId = (await this.ctx.storage.get<string>('agentId')) ?? null;
+      const status = (await this.ctx.storage.get<string>('status')) ?? 'stopped';
+      const analysisInterval = (await this.ctx.storage.get<string>('analysisInterval')) ?? null;
+      const nextAlarmAt = (await this.ctx.storage.get<number>('nextAlarmAt')) ?? null;
+      const tickCount = (await this.ctx.storage.get<number>('tickCount')) ?? 0;
+      const isLoopRunning = (await this.ctx.storage.get<number>('isLoopRunning')) ?? null;
+      const lastStopOutAt = (await this.ctx.storage.get<number>('lastStopOutAt')) ?? null;
+      const pendingTrade = (await this.ctx.storage.get<unknown>('pendingTrade')) ?? null;
+      const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
+
+      // Collect all priceMiss keys
+      const priceMissMap: Record<string, number> = {};
+      const priceMissKeys = await this.ctx.storage.list<number>({ prefix: 'priceMiss:' });
+      for (const [key, val] of priceMissKeys) {
+        priceMissMap[key] = val;
+      }
+
+      return Response.json({
+        agentId,
+        status,
+        analysisInterval,
+        nextAlarmAt,
+        tickCount,
+        isLoopRunning,
+        lastStopOutAt,
+        pendingTrade,
+        priceMisses: priceMissMap,
+        engine: engineState
+          ? {
+              balance: engineState.balance,
+              initialBalance: engineState.initialBalance,
+              openPositions: engineState.positions.length,
+              closedPositions: engineState.closedPositions?.length ?? 0,
+            }
+          : null,
+        generatedAt: new Date().toISOString(),
+      });
+    }
+
     return new Response('Not Found', { status: 404 });
   }
 
