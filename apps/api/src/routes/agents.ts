@@ -22,6 +22,31 @@ import { resolveAgentPersonaMd } from '../agents/resolve-agent-persona.js';
 
 const agentsRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
+/** Best-effort: register or unregister an agent with the global scheduler DO.
+ *  Uses idFromName('scheduler') — one global instance shared across all cron ticks.
+ *  Failures are logged but never bubble up to the caller. */
+async function notifyScheduler(
+  env: Env,
+  action: 'register' | 'unregister',
+  agentId: string,
+  interval?: string
+): Promise<void> {
+  try {
+    const stub = env.AGENT_MANAGER.get(env.AGENT_MANAGER.idFromName('scheduler'));
+    const path = `/scheduler/${action}`;
+    const body = action === 'register' ? { agentId, interval } : { agentId };
+    await stub.fetch(
+      new Request(`http://do${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    );
+  } catch (err) {
+    console.warn(`[agents route] scheduler ${action} failed for ${agentId}:`, err);
+  }
+}
+
 function formatAgent(r: typeof agents.$inferSelect) {
   return {
     ...r,
@@ -162,6 +187,8 @@ agentsRoute.patch('/:id', async (c) => {
     } catch (err) {
       console.warn(`[agents route] Failed to sync analysisInterval to TRADING_AGENT DO for ${id}:`, err);
     }
+    // Also update the scheduler registry with the new interval
+    await notifyScheduler(c.env, 'register', id, nextInterval);
   }
 
   const [updated] = await db.select().from(agents).where(eq(agents.id, id));
@@ -190,6 +217,8 @@ agentsRoute.delete('/:id', async (c) => {
     }
     await db.update(agents).set({ status: 'stopped', updatedAt: nowIso() }).where(eq(agents.id, id));
   }
+
+  await notifyScheduler(c.env, 'unregister', id);
 
   await db.delete(trades).where(eq(trades.agentId, id));
   await db.delete(agentDecisions).where(eq(agentDecisions.agentId, id));
@@ -231,6 +260,10 @@ agentsRoute.post('/:id/start', async (c) => {
   );
 
   await db.update(agents).set({ status: 'running', updatedAt: nowIso() }).where(eq(agents.id, id));
+
+  // Register with global scheduler so cron handler doesn't need to scan D1
+  await notifyScheduler(c.env, 'register', id, agentConfig.analysisInterval ?? '1h');
+
   return c.json({ ok: true, status: 'running' });
 });
 
@@ -271,6 +304,9 @@ agentsRoute.post('/:id/stop', async (c) => {
   const stub = c.env.TRADING_AGENT.get(doId);
   await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
   await db.update(agents).set({ status: 'stopped', updatedAt: nowIso() }).where(eq(agents.id, id));
+
+  await notifyScheduler(c.env, 'unregister', id);
+
   return c.json({ ok: true, status: 'stopped' });
 });
 
@@ -287,6 +323,9 @@ agentsRoute.post('/:id/pause', async (c) => {
   const stub = c.env.TRADING_AGENT.get(doId);
   await stub.fetch(new Request('http://do/pause', { method: 'POST' }));
   await db.update(agents).set({ status: 'paused', updatedAt: nowIso() }).where(eq(agents.id, id));
+
+  await notifyScheduler(c.env, 'unregister', id);
+
   return c.json({ ok: true, status: 'paused' });
 });
 

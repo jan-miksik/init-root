@@ -44,3 +44,21 @@ Each entry should include:
 - Pre-existing failures (phase1 test + web lint) are unrelated to this task.
 
 **Next recommended:** architecture (DO as source of truth) or testing (expand e2e agent lifecycle).
+
+---
+
+## 2026-03-19 — orchestration: AgentManagerDO centralized scheduling
+
+**Completed:**
+- Extended `apps/api/src/agents/agent-manager.ts`: added scheduler endpoints (`/scheduler/register`, `/scheduler/unregister`, `/scheduler/agents?interval=X`, `/scheduler/list`, `/scheduler/sync`) to `AgentManagerDO`. Uses `idFromName('scheduler')` for a single global instance. Registry stored as JSON object (`schedulerAgents` key) in DO storage.
+- Updated `apps/api/src/routes/agents.ts`: added `notifyScheduler()` helper (best-effort, non-fatal). Calls `register` on start/patch-interval, `unregister` on stop/pause/reset/delete.
+- Refactored `apps/api/src/index.ts` cron handler: added `getScheduledAgentIds()` that calls scheduler DO first. Falls back to full D1 scan if DO is unavailable. Snapshot-only cron (`0 * * * *`) no longer returns early — now also triggers 1h agents.
+- Added `apps/api/tests/orchestration.test.ts` with 14 tests covering registry CRUD, interval matching, legacy interval normalization, sync rebuild, and endpoint input validation.
+
+**Notable decisions:**
+- Used `AGENT_MANAGER.idFromName('scheduler')` — reuses existing binding without new wrangler.toml changes.
+- Scheduler notifications are best-effort (never block the HTTP response) — D1 fallback ensures correctness if scheduler state is stale.
+- Registry is a simple `Record<agentId, interval>` JSON object — cheap to read/write, trivially iterable by interval.
+- Pre-existing phase1 test failure and web lint errors are unrelated to this task.
+
+**Next recommended:** architecture (DO as source of truth) or security (API hardening).

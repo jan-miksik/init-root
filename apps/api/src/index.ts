@@ -217,6 +217,22 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal Server Error' }, 500);
 });
 
+/** Get agentIds for a given interval from the global scheduler DO.
+ *  Returns null if the scheduler is unavailable (triggers D1 fallback). */
+async function getScheduledAgentIds(env: Env, interval: string): Promise<string[] | null> {
+  try {
+    const stub = env.AGENT_MANAGER.get(env.AGENT_MANAGER.idFromName('scheduler'));
+    const res = await stub.fetch(
+      new Request(`http://do/scheduler/agents?interval=${encodeURIComponent(interval)}`)
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as { agentIds: string[] };
+    return data.agentIds;
+  } catch {
+    return null;
+  }
+}
+
 // Cron trigger handler
 const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) => {
   const cron = event.cron;
@@ -228,14 +244,8 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
 
   if (cron === '0 * * * *') {
     ctx.waitUntil(snapshotAllAgents(env));
-    return;
+    // Also run 1h agents (snapshot cron shares the same trigger)
   }
-
-  const db = (await import('drizzle-orm/d1')).drizzle(env.DB);
-  const { agents } = await import('./db/schema.js');
-  const { eq } = await import('drizzle-orm');
-
-  const runningAgents = await db.select().from(agents).where(eq(agents.status, 'running'));
 
   const cronToInterval: Record<string, string> = {
     '*/15 * * * *': '15m',
@@ -246,20 +256,36 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
   const targetInterval = cronToInterval[cron];
   if (!targetInterval) return;
 
-  for (const agent of runningAgents) {
-    const config = JSON.parse(agent.config) as {
-      analysisInterval: string;
-      paperBalance: number;
-      slippageSimulation: number;
-    };
-    // Legacy agents with 1m or 5m are treated as 15m (minimum interval)
-    const effectiveInterval =
-      config.analysisInterval === '1m' || config.analysisInterval === '5m'
-        ? '15m'
-        : config.analysisInterval;
-    if (effectiveInterval !== targetInterval) continue;
+  // Try scheduler DO first (avoids full D1 scan)
+  const scheduledIds = await getScheduledAgentIds(env, targetInterval);
 
-    const doId = env.TRADING_AGENT.idFromName(agent.id);
+  let agentIds: string[];
+  if (scheduledIds !== null) {
+    agentIds = scheduledIds;
+    console.log(`[cron] Scheduler DO returned ${agentIds.length} agents for interval=${targetInterval}`);
+  } else {
+    // Fallback: full D1 scan (ensures correctness even if scheduler state is stale)
+    console.warn(`[cron] Scheduler DO unavailable — falling back to D1 scan for interval=${targetInterval}`);
+    const db = (await import('drizzle-orm/d1')).drizzle(env.DB);
+    const { agents } = await import('./db/schema.js');
+    const { eq } = await import('drizzle-orm');
+    const runningAgents = await db.select({ id: agents.id, config: agents.config })
+      .from(agents)
+      .where(eq(agents.status, 'running'));
+    agentIds = runningAgents
+      .filter((agent) => {
+        const config = JSON.parse(agent.config) as { analysisInterval?: string };
+        const effectiveInterval =
+          config.analysisInterval === '1m' || config.analysisInterval === '5m'
+            ? '15m'
+            : (config.analysisInterval ?? '1h');
+        return effectiveInterval === targetInterval;
+      })
+      .map((a) => a.id);
+  }
+
+  for (const agentId of agentIds) {
+    const doId = env.TRADING_AGENT.idFromName(agentId);
     const stub = env.TRADING_AGENT.get(doId);
 
     ctx.waitUntil(
@@ -268,14 +294,10 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
           new Request('http://do/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agentId: agent.id,
-              paperBalance: config.paperBalance,
-              slippageSimulation: config.slippageSimulation,
-            }),
+            body: JSON.stringify({ agentId }),
           })
         )
-        .catch((e) => console.warn(`[cron] Failed to trigger analysis for agent ${agent.id}:`, e))
+        .catch((e) => console.warn(`[cron] Failed to trigger analysis for agent ${agentId}:`, e))
     );
   }
 };

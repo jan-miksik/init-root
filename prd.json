@@ -94,7 +94,7 @@
       "Add/remove agents from the Manager's tracking list on start/stop/delete API calls",
       "Verify scheduling accuracy and performance vs current cron-based approach"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "stability",

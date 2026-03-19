@@ -11,6 +11,17 @@ function intervalToMs(interval: string): number {
   }
 }
 
+/** Storage key for scheduler agent registry (map of agentId → interval) */
+const SCHEDULER_KEY = 'schedulerAgents';
+
+/** Load the scheduler agent registry from DO storage */
+async function loadSchedulerAgents(
+  storage: DurableObjectStorage
+): Promise<Record<string, string>> {
+  const stored = await storage.get<Record<string, string>>(SCHEDULER_KEY);
+  return stored ?? {};
+}
+
 export class AgentManagerDO extends DurableObject<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -85,6 +96,61 @@ export class AgentManagerDO extends DurableObject<Env> {
       await this.ctx.storage.put('nextAlarmAt', nextAlarmAt);
       await this.ctx.storage.setAlarm(nextAlarmAt);
       return Response.json({ ok: true });
+    }
+
+    // ── Scheduler endpoints (used by cron handler + agent lifecycle routes) ──
+
+    if (url.pathname === '/scheduler/register' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { agentId?: string; interval?: string };
+      if (!body.agentId || !body.interval) {
+        return Response.json({ error: 'agentId and interval are required' }, { status: 400 });
+      }
+      const registry = await loadSchedulerAgents(this.ctx.storage);
+      registry[body.agentId] = body.interval;
+      await this.ctx.storage.put(SCHEDULER_KEY, registry);
+      return Response.json({ ok: true, tracked: Object.keys(registry).length });
+    }
+
+    if (url.pathname === '/scheduler/unregister' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { agentId?: string };
+      if (!body.agentId) {
+        return Response.json({ error: 'agentId is required' }, { status: 400 });
+      }
+      const registry = await loadSchedulerAgents(this.ctx.storage);
+      delete registry[body.agentId];
+      await this.ctx.storage.put(SCHEDULER_KEY, registry);
+      return Response.json({ ok: true, tracked: Object.keys(registry).length });
+    }
+
+    if (url.pathname === '/scheduler/agents') {
+      const interval = url.searchParams.get('interval');
+      const registry = await loadSchedulerAgents(this.ctx.storage);
+      if (interval) {
+        const filtered = Object.entries(registry)
+          .filter(([, iv]) => iv === interval)
+          .map(([id]) => id);
+        return Response.json({ agentIds: filtered, total: filtered.length });
+      }
+      return Response.json({ registry, total: Object.keys(registry).length });
+    }
+
+    if (url.pathname === '/scheduler/list') {
+      const registry = await loadSchedulerAgents(this.ctx.storage);
+      return Response.json({ registry, total: Object.keys(registry).length });
+    }
+
+    if (url.pathname === '/scheduler/sync' && request.method === 'POST') {
+      // Accepts an array of { agentId, interval } to rebuild the registry from D1
+      const body = (await request.json().catch(() => ({}))) as { agents?: Array<{ agentId: string; interval: string }> };
+      if (!Array.isArray(body.agents)) {
+        return Response.json({ error: 'agents array is required' }, { status: 400 });
+      }
+      const registry: Record<string, string> = {};
+      for (const { agentId, interval } of body.agents) {
+        if (agentId && interval) registry[agentId] = interval;
+      }
+      await this.ctx.storage.put(SCHEDULER_KEY, registry);
+      return Response.json({ ok: true, tracked: Object.keys(registry).length });
     }
 
     return new Response('Not Found', { status: 404 });
