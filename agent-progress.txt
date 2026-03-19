@@ -202,3 +202,23 @@ Each entry should include:
 - Pre-existing phase1 test failure and web lint errors are unrelated to this task.
 
 **Next recommended:** realtime (WebSocket with Hibernatable API) or queues (async LLM processing).
+
+---
+
+## 2026-03-19 — realtime: WebSocket support for live agent updates
+
+**Completed:**
+- Updated `TradingAgentDO`: added `/ws` path handling in `fetch()` — detects `Upgrade: websocket`, creates `WebSocketPair`, calls `this.ctx.acceptWebSocket(server, ['agent:id'])` (hibernatable API), sends initial snapshot, returns 101. Added `webSocketMessage`, `webSocketClose`, `webSocketError` hibernatable handlers. Added private `broadcast(message)` method using `this.ctx.getWebSockets()`.
+- Added `broadcastAgentEvent(ctx, event)` function to `agent-loop.ts`: iterates `ctx.getWebSockets()`, sends JSON event to each client, swallows errors for closed clients. Called after: (1) decision logged to D1 — broadcasts `{type:'decision', action, confidence, balance, ...}`, (2) trade opened — broadcasts `{type:'trade', event:'open', ...}`, (3) trade closed — broadcasts `{type:'trade', event:'close', pnlPct, pnlUsd, ...}`.
+- Updated `apps/api/src/index.ts`: changed default export to a full `fetch` handler that intercepts `Upgrade: websocket` requests matching `/api/agents/:id/ws` before Hono. Auth validation: extracts session token from cookie → `getSession(env.CACHE, token)` → ownership check via D1. Proxies upgrade to `TRADING_AGENT.get(doId).fetch(doRequest)`.
+- Created `apps/web/composables/useAgentSocket.ts`: Nuxt 4 composable with typed events (`AgentWsDecision`, `AgentWsTrade`, `AgentWsSnapshot`), auto-reconnect with exponential backoff (1s base, 2× factor, 30s max), reactive refs for `latestDecision`, `latestTrade`, `balance`, `openPositions`, `agentStatus`, `connected`. Cleans up on `onUnmounted`. Reactively re-connects when `agentId` changes.
+- Added `apps/api/tests/realtime.test.ts` with 19 tests covering: broadcast delivery (single, multi, empty list, error isolation), event shapes (decision, trade-open, trade-close), snapshot event, auth guard (cookie extraction, WS header check), reconnect backoff math (base, doubling, cap, never exceeds max).
+
+**Notable decisions:**
+- Hibernatable WebSocket API (`ctx.acceptWebSocket`) used instead of regular WS — DOs can hibernate without disconnecting clients, avoiding per-tick billing.
+- WS upgrade intercepted before Hono in `index.ts` — Hono doesn't support WS upgrades natively in CF Workers.
+- Session cookie is sent automatically by browsers for same-origin WS connections — no custom header needed.
+- `broadcastAgentEvent` is non-fatal (swallows errors) — WS broadcast failures must never crash the trading loop.
+- Pre-existing phase1 test failure and web lint errors are unrelated to this task.
+
+**Next recommended:** queues (async LLM processing) or meta tasks.

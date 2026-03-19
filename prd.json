@@ -40,7 +40,7 @@
       "Add frontend composable for WS connection with auto-reconnect",
       "Test real-time updates end-to-end"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "queues",

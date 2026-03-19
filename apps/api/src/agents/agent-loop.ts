@@ -757,15 +757,28 @@ export async function runAgentLoop(
   const llmDurationMs = doneLlm();
 
   // Update the DO recent-decisions cache so subsequent ticks skip the D1 query.
+  const decisionCreatedAt = nowIso();
   try {
     const newCachedDecision: RecentDecision = {
       decision: decision.action,
       confidence: decision.confidence,
-      createdAt: nowIso(),
+      createdAt: decisionCreatedAt,
     };
     const updatedDecisions = [newCachedDecision, ...recentDecisions].slice(0, 10);
     await ctx.storage.put('recentDecisions', updatedDecisions);
   } catch { /* non-fatal — cache will be rebuilt on next miss */ }
+
+  // Broadcast decision event to connected WebSocket clients
+  broadcastAgentEvent(ctx, {
+    type: 'decision',
+    agentId,
+    decision: decision.action,
+    confidence: decision.confidence,
+    reasoning: decision.reasoning,
+    balance: engine.balance,
+    openPositions: engine.openPositions.length,
+    createdAt: decisionCreatedAt,
+  });
 
   log.info('decision', {
     action: decision.action,
@@ -827,6 +840,17 @@ export async function runAgentLoop(
         position_size_pct: positionSizePct,
         confidence: decision.confidence,
       });
+      broadcastAgentEvent(ctx, {
+        type: 'trade',
+        event: 'open',
+        agentId,
+        pair: targetPairName,
+        side: decision.action,
+        amountUsd,
+        priceUsd: pairData.priceUsd,
+        balance: engine.balance,
+        openPositions: engine.openPositions.length,
+      });
       console.log(
         `[agent-loop] ${agentId}: Opened ${decision.action} ${targetPairName} $${amountUsd.toFixed(2)} @ $${pairData.priceUsd}`
       );
@@ -855,6 +879,18 @@ export async function runAgentLoop(
           price_usd: pairData.priceUsd,
           reason: 'llm_close',
         });
+        broadcastAgentEvent(ctx, {
+          type: 'trade',
+          event: 'close',
+          agentId,
+          pair: position.pair,
+          side: position.side,
+          pnlPct: closed.pnlPct,
+          pnlUsd: closed.pnlUsd,
+          priceUsd: pairData.priceUsd,
+          balance: engine.balance,
+          openPositions: engine.openPositions.length,
+        });
         console.log(
           `[agent-loop] ${agentId}: Closed ${position.pair} PnL=${closed.pnlPct?.toFixed(2)}%`
         );
@@ -870,6 +906,21 @@ export async function runAgentLoop(
     open_positions: engine.openPositions.length,
     balance: engine.balance,
   });
+}
+
+/**
+ * Broadcast a JSON event to all WebSocket clients connected to this DO.
+ * Non-fatal — WS errors are swallowed so they never crash the agent loop.
+ */
+function broadcastAgentEvent(ctx: DurableObjectState, event: Record<string, unknown>): void {
+  const json = JSON.stringify(event);
+  for (const ws of ctx.getWebSockets()) {
+    try {
+      ws.send(json);
+    } catch {
+      // Client is gone — CF runtime will clean up on next poll
+    }
+  }
 }
 
 /** Upsert a trade record to D1 */

@@ -391,7 +391,57 @@ export class TradingAgentDO extends DurableObject<Env> {
       return Response.json({ ok: true });
     }
 
+    // ── WebSocket upgrade ────────────────────────────────────────────────────
+    // Incoming request has already been authenticated by the Worker.
+    if (url.pathname === '/ws' && request.headers.get('Upgrade') === 'websocket') {
+      const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+      // acceptWebSocket registers the server-side WS for hibernation.
+      // Tag with the agentId so broadcasts can filter by agent.
+      const agentId = (await this.ctx.storage.get<string>('agentId')) ?? 'unknown';
+      this.ctx.acceptWebSocket(server, [`agent:${agentId}`]);
+      // Send initial state snapshot
+      const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
+      const status = (await this.ctx.storage.get<string>('status')) ?? 'stopped';
+      server.send(JSON.stringify({
+        type: 'snapshot',
+        agentId,
+        status,
+        balance: engineState?.balance ?? null,
+        openPositions: engineState?.positions?.length ?? 0,
+      }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
     return new Response('Not Found', { status: 404 });
+  }
+
+  /** Broadcast a JSON message to all connected WebSocket clients. */
+  private broadcast(message: object): void {
+    const json = JSON.stringify(message);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(json);
+      } catch {
+        // Client WS is closed or errored — CF runtime will clean it up on next poll
+      }
+    }
+  }
+
+  // ── Hibernatable WebSocket handlers ───────────────────────────────────────
+
+  async webSocketMessage(_ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    // Currently no client → server protocol; ignore messages.
+    // Could add subscribe/ping support here in future.
+    const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+    if (text === 'ping') (_ws as WebSocket).send('pong');
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    ws.close(code, 'Connection closed');
+  }
+
+  async webSocketError(_ws: WebSocket, _error: unknown): Promise<void> {
+    // CF runtime removes errored WS from getWebSockets() automatically
   }
 
   async alarm(): Promise<void> {

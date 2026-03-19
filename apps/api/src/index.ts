@@ -12,6 +12,7 @@ import tradesRoute from './routes/trades.js';
 import authRoute from './routes/auth.js';
 import { snapshotAllAgents } from './services/snapshot.js';
 import { listFreeModels } from './services/llm-router.js';
+import { getSession, parseCookieValue } from './lib/auth.js';
 import comparisonRoute from './routes/comparison.js';
 import managersRoute from './routes/managers.js';
 import profilesRoute from './routes/profiles.js';
@@ -313,7 +314,69 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
   }
 };
 
+/**
+ * Handle WebSocket upgrade requests for /api/agents/:id/ws.
+ * These bypass Hono (which doesn't handle WS upgrades) and go straight to the DO.
+ *
+ * Auth flow: validate session cookie → verify agent ownership → proxy to DO.
+ * The DO calls ctx.acceptWebSocket() (hibernatable) and returns a 101.
+ */
+async function handleAgentWebSocket(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const match = url.pathname.match(/^\/api\/agents\/([^/]+)\/ws$/);
+  const agentId = match?.[1];
+  if (!agentId) return new Response('Not Found', { status: 404 });
+
+  // Validate session — session cookie sent automatically by browsers for same-origin WS
+  const cookieHeader = request.headers.get('cookie') ?? '';
+  const token = parseCookieValue(cookieHeader, 'session');
+  if (!token) return new Response('Unauthorized', { status: 401 });
+  const session = await getSession(env.CACHE, token).catch(() => null);
+  if (!session) return new Response('Unauthorized', { status: 401 });
+
+  // Verify agent ownership before proxying to DO
+  try {
+    const { drizzle } = await import('drizzle-orm/d1');
+    const { agents } = await import('./db/schema.js');
+    const { eq, or, isNull } = await import('drizzle-orm');
+    const db = drizzle(env.DB);
+    const [agent] = await db
+      .select({ ownerAddress: agents.ownerAddress })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    if (!agent) return new Response('Agent Not Found', { status: 404 });
+    if (agent.ownerAddress && agent.ownerAddress.toLowerCase() !== session.walletAddress.toLowerCase()) {
+      return new Response('Forbidden', { status: 403 });
+    }
+  } catch (err) {
+    console.error('[ws] ownership check failed:', err);
+    return new Response('Internal Error', { status: 500 });
+  }
+
+  // Proxy the WebSocket upgrade to the TradingAgentDO — it accepts the WS
+  const doId = env.TRADING_AGENT.idFromName(agentId);
+  const stub = env.TRADING_AGENT.get(doId);
+  // Rewrite the path to /ws so the DO's fetch handler recognises it
+  const doRequest = new Request(
+    `http://do/ws`,
+    {
+      method: request.method,
+      headers: request.headers,
+    }
+  );
+  return stub.fetch(doRequest);
+}
+
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // WebSocket upgrades bypass Hono — handle before the router
+    if (
+      request.headers.get('Upgrade') === 'websocket' &&
+      new URL(request.url).pathname.match(/^\/api\/agents\/[^/]+\/ws$/)
+    ) {
+      return handleAgentWebSocket(request, env);
+    }
+    return app.fetch(request, env, ctx);
+  },
   scheduled,
 };
