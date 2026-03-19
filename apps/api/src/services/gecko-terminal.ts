@@ -94,9 +94,13 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
       const hit = await cache.get(cacheKey, 'text');
       if (hit) {
         const parsed = schema.safeParse(JSON.parse(hit));
-        if (parsed.success) return parsed.data;
+        if (parsed.success) {
+          console.log(`cache_hit service=gecko-terminal key=${cacheKey}`);
+          return parsed.data;
+        }
       }
     }
+    console.log(`cache_miss service=gecko-terminal key=${cacheKey} bypass=${bypassCache}`);
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
     let resp: Response;
@@ -110,7 +114,6 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
     }
     if (!resp.ok) throw new Error(`GeckoTerminal ${resp.status} ${resp.statusText} — ${url}`);
     const json = await resp.json();
-    console.log(`[gecko-terminal] raw response keys:`, Object.keys(json as object));
     const parsed = schema.safeParse(json);
     if (!parsed.success) {
       throw new Error(`GeckoTerminal schema mismatch: ${parsed.error.message.slice(0, 300)}`);

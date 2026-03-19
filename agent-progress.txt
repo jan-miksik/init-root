@@ -80,3 +80,22 @@ Each entry should include:
 - Pre-existing phase1 test failure and web lint errors are unrelated to this task.
 
 **Next recommended:** architecture (DO as source of truth) or testing (expand e2e).
+
+---
+
+## 2026-03-19 — caching: KV caching strategy + purge endpoint
+
+**Completed:**
+- KV caching was already implemented in `gecko-terminal.ts` (15-min TTL) and `dex-data.ts` (15-min TTL, 5-min for top pairs) — confirmed no gaps.
+- Added cache hit/miss logging to both services: `cache_hit service=gecko-terminal key=…` and `cache_miss service=dex-data key=… bypass=…` — enables measuring external API call reduction via `wrangler tail`.
+- Added `POST /api/health/cache/purge?prefix=gecko|dex|cron|rl` endpoint in `routes/health.ts`, gated to tester role. Lists KV keys by prefix (paginated) and deletes each — provides manual invalidation beyond TTL.
+- Exported `CACHE_PREFIXES` constant for use in tests.
+- Added `apps/api/tests/caching.test.ts` with 22 tests covering cache key generation (gecko + dex), TTL values, prefix registry, purge filtering logic, and bypassCache semantics.
+- LLM response caching was intentionally skipped (marked optional; prompts include dynamic values like balance/prices that change every tick, making cache keys non-deterministic).
+
+**Notable decisions:**
+- Purge endpoint paginates with KV list cursor (handles >1000 keys) and defaults to purging only gecko+dex to avoid accidentally clearing rate-limit or cron state.
+- Cache key format (lowercase, spaces→dashes) ensures idempotent lookups regardless of caller casing.
+- Pre-existing phase1 test failure and web lint errors are unrelated to this task.
+
+**Next recommended:** architecture (DO as source of truth) or testing (expand e2e agent lifecycle).

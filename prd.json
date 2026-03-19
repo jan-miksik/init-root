@@ -80,7 +80,7 @@
       "Ensure fallback logic works correctly with cached vs stale data",
       "Measure reduction in external API calls"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "orchestration",

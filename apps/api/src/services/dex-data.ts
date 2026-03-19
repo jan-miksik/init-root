@@ -101,9 +101,13 @@ export function createDexDataService(cache: KVNamespace, { bypassCache = false }
       const cached = await cache.get(cacheKey, 'text');
       if (cached !== null) {
         const parsed = schema.safeParse(JSON.parse(cached));
-        if (parsed.success) return parsed.data;
+        if (parsed.success) {
+          console.log(`cache_hit service=dex-data key=${cacheKey}`);
+          return parsed.data;
+        }
       }
     }
+    console.log(`cache_miss service=dex-data key=${cacheKey} bypass=${bypassCache}`);
 
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 8_000);
