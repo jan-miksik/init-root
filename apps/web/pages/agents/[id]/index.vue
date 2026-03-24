@@ -1074,8 +1074,8 @@ function formatLatency(ms: number): string {
                   <td class="mono" :class="pnlClass(trade.pnlPct)">{{ formatPnl(trade.pnlPct) }}</td>
                   <td style="color: var(--text-muted); font-size: 12px;">{{ trade.strategyUsed }}</td>
                   <td>
-                    <span class="badge" :class="trade.status === 'open' ? 'badge-running' : trade.status === 'stopped_out' ? 'badge-paused' : 'badge-stopped'">
-                      {{ trade.status }}
+                    <span class="badge" :class="trade.status === 'open' ? 'badge-running' : 'badge-stopped'">
+                      {{ trade.status === 'closed' ? 'closed' : trade.status }}<span v-if="trade.closeReason" style="font-size: 10px; opacity: 0.7; margin-left: 4px;">({{ trade.closeReason.replace('_', ' ') }})</span>
                     </span>
                   </td>
                   <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>

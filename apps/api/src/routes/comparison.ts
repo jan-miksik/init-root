@@ -57,7 +57,7 @@ comparison.get('/', async (c) => {
         .where(eq(trades.agentId, agent.id));
 
       const closed = agentTrades.filter(
-        (t) => t.status === 'closed' || t.status === 'stopped_out'
+        (t) => t.status === 'closed'
       );
       const open = agentTrades.filter((t) => t.status === 'open');
 

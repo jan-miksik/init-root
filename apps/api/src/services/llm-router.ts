@@ -147,12 +147,12 @@ export async function getTradeDecision(
   // Emergency free models tried last when allowFallback is enabled.
   // Verified working as of 2026-02-24.
   const EMERGENCY_FREE_MODELS = [
+    'qwen/qwen3-coder:free',
+    'minimax/minimax-m2.5:free',
     'arcee-ai/trinity-large-preview:free',
     'google/gemma-3-27b-it:free',
     'google/gemma-3-12b-it:free',
     'google/gemma-3-4b-it:free',
-    'google/gemma-3n-e4b-it:free',
-    'google/gemma-3n-e2b-it:free',
   ];
 
   const primaryModels: string[] = [config.model];

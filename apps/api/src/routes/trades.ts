@@ -26,7 +26,7 @@ tradesRoute.get('/', async (c) => {
   const query = validateQuery(
     c,
     z.object({
-      status: z.enum(['open', 'closed', 'stopped_out']).optional(),
+      status: z.enum(['open', 'closed']).optional(),
       pair: z.string().optional(),
       limit: z.coerce.number().min(1).max(500).default(100),
     })
@@ -49,8 +49,30 @@ tradesRoute.get('/', async (c) => {
   const agentIds = ownedAgents.map((a) => a.id);
 
   let baseQuery = db
-    .select()
+    .select({
+      id: trades.id,
+      agentId: trades.agentId,
+      pair: trades.pair,
+      dex: trades.dex,
+      side: trades.side,
+      entryPrice: trades.entryPrice,
+      exitPrice: trades.exitPrice,
+      amountUsd: trades.amountUsd,
+      pnlPct: trades.pnlPct,
+      pnlUsd: trades.pnlUsd,
+      confidenceBefore: trades.confidenceBefore,
+      confidenceAfter: trades.confidenceAfter,
+      reasoning: trades.reasoning,
+      strategyUsed: trades.strategyUsed,
+      slippageSimulated: trades.slippageSimulated,
+      status: trades.status,
+      closeReason: trades.closeReason,
+      openedAt: trades.openedAt,
+      closedAt: trades.closedAt,
+      agentName: agents.name,
+    })
     .from(trades)
+    .innerJoin(agents, eq(trades.agentId, agents.id))
     .where(inArray(trades.agentId, agentIds))
     .$dynamic();
 
@@ -119,10 +141,10 @@ tradesRoute.get('/stats', async (c) => {
     .select({
       totalTrades: sql<number>`count(*)`,
       openTrades: sql<number>`sum(case when status = 'open' then 1 else 0 end)`,
-      closedTrades: sql<number>`sum(case when status in ('closed', 'stopped_out') then 1 else 0 end)`,
-      winningTrades: sql<number>`sum(case when status in ('closed', 'stopped_out') and pnl_pct > 0 then 1 else 0 end)`,
-      totalPnlUsd: sql<number>`sum(case when status in ('closed', 'stopped_out') then coalesce(pnl_usd, 0) else 0 end)`,
-      avgPnlPct: sql<number>`avg(case when status in ('closed', 'stopped_out') then pnl_pct else null end)`,
+      closedTrades: sql<number>`sum(case when status = 'closed' then 1 else 0 end)`,
+      winningTrades: sql<number>`sum(case when status = 'closed' and pnl_pct > 0 then 1 else 0 end)`,
+      totalPnlUsd: sql<number>`sum(case when status = 'closed' then coalesce(pnl_usd, 0) else 0 end)`,
+      avgPnlPct: sql<number>`avg(case when status = 'closed' then pnl_pct else null end)`,
     })
     .from(trades)
     .where(inArray(trades.agentId, agentIds));

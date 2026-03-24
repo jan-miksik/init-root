@@ -157,18 +157,16 @@ app.get('/api/models', async (c) => {
       models: [
         { id: 'nvidia/nemotron-3-super-120b-a12b:free', name: 'Nvidia Nemotron 120B Super (free)', context: 131072 },
         { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nvidia Nemotron Nano 30B (free)', context: 131072 },
-        { id: 'openrouter/hunter-alpha', name: 'OpenRouter Hunter Alpha (free)', context: 1048576 },
+        { id: 'qwen/qwen3-coder:free', name: 'Qwen3 Coder 480B (free)', context: 262000 },
         { id: 'stepfun/step-3.5-flash:free', name: 'Step 3.5 Flash (free)', context: 256000 },
-        { id: 'arcee-ai/trinity-large-preview:free', name: 'Trinity Large Preview (free)', context: 65536 },
-        { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'LFM 2.5 1.2B Thinking (free)', context: 65536 },
-        { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'LFM 2.5 1.2B Instruct (free)', context: 65536 },
-        { id: 'arcee-ai/trinity-mini:free', name: 'Trinity Mini (free)', context: 65536 },
+        { id: 'minimax/minimax-m2.5:free', name: 'MiniMax M2.5 (free)', context: 196608 },
+        { id: 'arcee-ai/trinity-large-preview:free', name: 'Trinity Large Preview (free)', context: 131072 },
+        { id: 'arcee-ai/trinity-mini:free', name: 'Trinity Mini (free)', context: 131072 },
         { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Hermes 3 Llama 405B (free)', context: 131072 },
         { id: 'qwen/qwen3-235b-a22b-thinking-2507:free', name: 'Qwen3 235B Thinking (free)', context: 131072 },
         { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (free)', context: 131072 },
         { id: 'deepseek/deepseek-r1-0528:free', name: 'DeepSeek R1 (free)', context: 131072 },
         { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (free)', context: 131072 },
-        { id: 'qwen/qwen3-coder:free', name: 'Qwen3 Coder (free)', context: 131072 },
       ],
     });
   }

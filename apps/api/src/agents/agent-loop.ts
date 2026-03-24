@@ -273,6 +273,7 @@ export async function runAgentLoop(
         const closed = engine.closePosition(position.id, {
           price: currentPrice,
           reason: 'Take profit triggered',
+          closeReason: 'take_profit',
         });
         await ctx.storage.put('pendingTrade', closed);
         await persistTrade(db, closed);
@@ -1016,6 +1017,7 @@ export async function executeTradeDecision(
         const closed = engine.closePosition(position.id, {
           price: pairData.priceUsd,
           confidence: decision.confidence,
+          closeReason: 'llm_decision',
         });
         await ctx.storage.put('pendingTrade', closed);
         await persistTrade(db, closed);
@@ -1099,6 +1101,7 @@ async function persistTrade(
       strategyUsed: position.strategyUsed,
       slippageSimulated: position.slippageSimulated,
       status: position.status,
+      closeReason: position.closeReason ?? null,
       openedAt: position.openedAt,
       closedAt: position.closedAt ?? null,
     })
@@ -1110,6 +1113,7 @@ async function persistTrade(
         pnlUsd: position.pnlUsd ?? null,
         confidenceAfter: position.confidenceAfter ?? null,
         status: position.status,
+        closeReason: position.closeReason ?? null,
         closedAt: position.closedAt ?? null,
       },
     });

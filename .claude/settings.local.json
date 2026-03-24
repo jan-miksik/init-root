@@ -68,7 +68,16 @@
       "mcp__plugin_playwright_playwright__browser_run_code",
       "WebFetch(domain:sparrow.cloudflare.com)",
       "mcp__plugin_playwright_playwright__browser_snapshot",
-      "mcp__plugin_playwright_playwright__browser_wait_for"
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "Bash(bash /Users/janmiksik/.claude/statusline-command.sh)",
+      "Bash(cp /Users/janmiksik/.claude/statusline-command.sh /Users/janmiksik/.claude/statusline-command.sh.bak)",
+      "Bash(__NEW_LINE_43b35dbf34325c91__ cat:*)",
+      "Bash(/Users/janmiksik/.claude/statusline-command.sh:*)",
+      "Bash(chmod +x /Users/janmiksik/.claude/statusline-command.sh)",
+      "Bash(cp /Users/janmiksik/.claude/statusline-command.sh.bak /Users/janmiksik/.claude/statusline-command.sh)",
+      "Bash(__NEW_LINE_0f3ba639ced28da2__ cat:*)",
+      "Skill(code-review)",
+      "WebFetch(domain:telemetry.vercel.com)"
     ]
   },
   "sandbox": {

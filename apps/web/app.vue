@@ -22,14 +22,13 @@ function truncate(addr: string): string {
 <template>
   <div>
     <nav class="navbar">
-      <NuxtLink to="/" class="navbar-brand">
+      <NuxtLink to="/agents" class="navbar-brand">
         <span class="dot" />
         Heppy Market
         <span v-if="IS_BETA" class="beta-badge">Beta</span>
       </NuxtLink>
       <div class="navbar-nav">
         <template v-if="isAuthenticated">
-          <NuxtLink to="/">Dashboard</NuxtLink>
           <NuxtLink to="/agents">Agents</NuxtLink>
           <NuxtLink to="/managers">Managers</NuxtLink>
           <NuxtLink to="/trades">Trades</NuxtLink>

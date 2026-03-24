@@ -62,7 +62,6 @@ watch([statusFilter, limitFilter], load);
             <option value="">All</option>
             <option value="open">Open</option>
             <option value="closed">Closed</option>
-            <option value="stopped_out">Stopped Out</option>
           </select>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">

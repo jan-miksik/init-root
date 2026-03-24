@@ -3,15 +3,16 @@ import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
 
 definePageMeta({ ssr: false });
 const { agents, loading, error, fetchAgents, createAgent, startAgent, stopAgent, deleteAgent, updateAgent } = useAgents();
+const { stats, error: tradesError, fetchStats } = useTrades();
 const { request } = useApi();
 const router = useRouter();
+const refreshing = ref(false);
+
+const overviewError = computed(() => tradesError.value);
+const runningCount = computed(() => agents.value.filter((a) => a.status === 'running').length);
 
 const userAgents = computed(() => agents.value.filter((a) => !a.managerId));
 const managedAgents = computed(() => agents.value.filter((a) => !!a.managerId));
-
-const showCreateModal = ref(false);
-const creating = ref(false);
-const createError = ref('');
 
 const editingAgent = ref<(typeof agents.value)[0] | null>(null);
 const showEditModal = ref(false);
@@ -109,6 +110,17 @@ function sortedList(list: typeof agents.value) {
 
 const sortedAgents = computed(() => sortedList(agents.value));
 
+// Aggregated P&L from per-agent performance snapshots (realized + unrealized)
+const totalPnlFromAgents = computed(() => {
+  const entries = Object.values(agentPnl.value);
+  if (entries.length === 0) return null;
+  return entries.reduce((sum, e) => sum + e.totalPnlUsd, 0);
+});
+const realizedPnl = computed(() => stats.value?.totalPnlUsd ?? 0);
+const unrealizedPnl = computed(() =>
+  totalPnlFromAgents.value !== null ? totalPnlFromAgents.value - realizedPnl.value : null
+);
+
 // Per-agent P&L (from performance snapshots)
 interface PerformanceSnapshot {
   id: string;
@@ -175,7 +187,7 @@ function handleGlobalClick(e: MouseEvent) {
 }
 
 onMounted(() => {
-  fetchAgents();
+  refreshOverview();
   document.addEventListener('click', handleGlobalClick);
 });
 
@@ -183,24 +195,15 @@ onUnmounted(() => {
   document.removeEventListener('click', handleGlobalClick);
 });
 
-async function handleCreate(payload: Parameters<typeof createAgent>[0]) {
-  creating.value = true;
-  createError.value = '';
+async function refreshOverview() {
+  refreshing.value = true;
   try {
-    const agent = await createAgent(payload);
-    try {
-      await startAgent(agent.id);
-    } catch {
-      console.warn('Agent created but failed to auto-start');
-    }
-    showCreateModal.value = false;
-    router.push(`/agents/${agent.id}`);
-  } catch (e) {
-    createError.value = extractApiError(e);
+    await Promise.all([fetchAgents(), fetchStats()]);
   } finally {
-    creating.value = false;
+    refreshing.value = false;
   }
 }
+
 
 async function handleDelete(id: string) {
   if (!confirm('Delete this agent? This cannot be undone.')) return;
@@ -238,10 +241,17 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   <main class="page">
     <div class="page-header">
       <div>
-        <h1 class="page-title">Trading Agents</h1>
-        <p class="page-subtitle">{{ agents.length }} agents · {{ agents.filter(a => a.status === 'running').length }} running<span v-if="managedAgents.length"> · {{ managedAgents.length }} managed</span></p>
+        <h1 class="page-title">Agents</h1>
+        <p class="page-subtitle">
+          {{ agents.length }} agents · {{ runningCount }} running<span v-if="managedAgents.length"> · {{ managedAgents.length }} managed</span>
+        </p>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn btn-ghost btn-sm" :disabled="refreshing" @click="refreshOverview">
+          <span v-if="refreshing" class="spinner" />
+          <span v-else>↻</span>
+          Refresh
+        </button>
         <!-- Column visibility menu -->
         <div style="position: relative;" ref="columnMenuButtonRef">
           <button
@@ -299,9 +309,43 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
           <button :class="['toggle-btn', { active: viewMode === 'table' }]" title="Table view" @click="viewMode = 'table'">☰</button>
           <button :class="['toggle-btn', { active: viewMode === 'grid' }]" title="Grid view" @click="viewMode = 'grid'">⊞</button>
         </div>
-        <button class="btn btn-primary" @click="showCreateModal = true">
+        <button class="btn btn-primary" @click="$router.push('/agents/create')">
           + New Agent
         </button>
+      </div>
+    </div>
+
+    <div v-if="overviewError" class="alert alert-error" style="margin-bottom: 12px;">{{ overviewError }}</div>
+
+    <div class="stats-grid" style="margin-bottom: 16px;">
+      <div class="stat-card">
+        <div class="stat-label">Total Agents</div>
+        <div class="stat-value">{{ agents.length }}</div>
+        <div class="stat-change">{{ runningCount }} running</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Trades</div>
+        <div class="stat-value">{{ stats?.totalTrades ?? '—' }}</div>
+        <div class="stat-change">{{ stats?.openTrades ?? 0 }} open</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value" :class="(stats?.winRate ?? 0) >= 50 ? 'positive' : 'negative'">
+          {{ stats?.winRate !== null && stats?.winRate !== undefined ? stats.winRate.toFixed(1) + '%' : '—' }}
+        </div>
+        <div class="stat-change">across closed trades</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total P&amp;L</div>
+        <div class="stat-value" :class="(totalPnlFromAgents ?? 0) >= 0 ? 'positive' : 'negative'">
+          {{ totalPnlFromAgents !== null ? (totalPnlFromAgents >= 0 ? '+' : '') + '$' + totalPnlFromAgents.toFixed(0) : '—' }}
+        </div>
+        <div class="stat-pnl-breakdown" v-if="totalPnlFromAgents !== null">
+          <span :class="realizedPnl >= 0 ? 'positive' : 'negative'">{{ realizedPnl >= 0 ? '+' : '' }}${{ realizedPnl.toFixed(0) }} realized</span>
+          <span class="pnl-sep">·</span>
+          <span v-if="unrealizedPnl !== null" :class="unrealizedPnl >= 0 ? 'positive' : 'negative'">{{ unrealizedPnl >= 0 ? '+' : '' }}${{ unrealizedPnl.toFixed(0) }} open</span>
+        </div>
+        <div v-else class="stat-change">paper USDC</div>
       </div>
     </div>
 
@@ -315,7 +359,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       <div class="empty-icon">🤖</div>
       <div class="empty-title">No agents yet</div>
       <p>Create your first AI trading agent to get started.</p>
-      <button class="btn btn-primary" style="margin-top: 16px;" @click="showCreateModal = true">
+      <button class="btn btn-primary" style="margin-top: 16px;" @click="$router.push('/agents/create')">
         Create Agent
       </button>
     </div>
@@ -392,7 +436,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
               </td>
               <td v-if="visibleColumns.autonomyLevel" style="color: var(--text-muted); font-size: 12px;">
-                {{ agent.autonomyLevel }}
+                —
               </td>
               <td v-if="visibleColumns.pairs" class="mono" style="font-size: 12px;">
                 {{ agent.config.pairs.join(', ') }}
@@ -512,25 +556,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       </div>
     </div>
 
-    <!-- Create Modal -->
-    <Teleport to="body">
-      <div v-if="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false">
-        <div class="modal">
-          <div class="modal-header">
-            <span class="modal-title">Create Trading Agent</span>
-            <button class="btn btn-ghost btn-sm" @click="showCreateModal = false">✕</button>
-          </div>
-          <div class="modal-body">
-            <div v-if="createError" class="alert alert-error">{{ createError }}</div>
-            <AgentConfigForm
-              @submit="handleCreate"
-              @cancel="showCreateModal = false"
-            />
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
     <!-- Edit Modal -->
     <Teleport to="body">
       <div v-if="showEditModal && editingAgent" class="modal-overlay" @click.self="showEditModal = false">
@@ -544,7 +569,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
             <AgentConfigForm
               :initialValues="{
                 name: editingAgent.name,
-                autonomyLevel: editingAgent.autonomyLevel,
                 llmModel: editingAgent.llmModel,
                 pairs: editingAgent.config.pairs,
                 paperBalance: editingAgent.config.paperBalance,
@@ -698,4 +722,16 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 .menu-item--danger {
   color: var(--danger, #f87171);
 }
+.stat-pnl-breakdown {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-pnl-breakdown .positive { color: var(--success, #4ade80); }
+.stat-pnl-breakdown .negative { color: var(--danger, #f87171); }
+.pnl-sep { color: var(--text-dim); }
 </style>

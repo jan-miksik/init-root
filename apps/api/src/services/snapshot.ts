@@ -84,7 +84,7 @@ export async function snapshotAllAgents(env: Env): Promise<void> {
           .where(eq(trades.agentId, agent.id));
 
         const closed = agentTrades.filter(
-          (t) => t.status === 'closed' || t.status === 'stopped_out'
+          (t) => t.status === 'closed'
         );
         const openPnl = agentTrades
           .filter((t) => t.status === 'open')

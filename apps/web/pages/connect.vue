@@ -7,7 +7,7 @@ const error = ref<string | null>(null);
 
 const router = useRouter();
 watch(isAuthenticated, (val) => {
-  if (val) router.push('/');
+  if (val) router.push('/agents');
 }, { immediate: true });
 
 const { initConnect } = useOpenRouter();
@@ -87,7 +87,7 @@ function truncate(addr: string): string {
           <p class="connect-hint">
             Signed in as <code>{{ truncate(user.walletAddress) }}</code>
           </p>
-          <NuxtLink to="/" class="btn btn-primary btn-wide">Go to Dashboard</NuxtLink>
+          <NuxtLink to="/agents" class="btn btn-primary btn-wide">Go to Agents</NuxtLink>
         </div>
     </div>
 
@@ -103,14 +103,14 @@ function truncate(addr: string): string {
       <div class="step-actions">
         <template v-if="user?.openRouterKeySet">
           <span class="or-connected-badge">✓ OpenRouter connected</span>
-          <NuxtLink to="/" class="btn btn-primary btn-sm">Continue →</NuxtLink>
+          <NuxtLink to="/agents" class="btn btn-primary btn-sm">Continue →</NuxtLink>
         </template>
         <template v-else>
           <button class="btn btn-primary" :disabled="connectingOR" @click="handleConnectOR">
             {{ connectingOR ? 'Redirecting…' : 'Connect OpenRouter →' }}
           </button>
           <p v-if="connectORError" class="connect-or-error">{{ connectORError }}</p>
-          <NuxtLink to="/" class="skip-link">Skip for now</NuxtLink>
+          <NuxtLink to="/agents" class="skip-link">Skip for now</NuxtLink>
         </template>
       </div>
     </div>

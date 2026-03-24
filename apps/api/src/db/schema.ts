@@ -58,6 +58,7 @@ export const trades = sqliteTable('trades', {
   strategyUsed: text('strategy_used').notNull(),
   slippageSimulated: real('slippage_simulated').notNull().default(0.003),
   status: text('status').notNull().default('open'),
+  closeReason: text('close_reason'),
   openedAt: text('opened_at').notNull(),
   closedAt: text('closed_at'),
 });

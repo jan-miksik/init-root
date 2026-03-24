@@ -312,6 +312,7 @@ export class TradingAgentDO extends DurableObject<Env> {
       const closed = engine.closePosition(positionId, {
         price: priceUsd,
         reason: body.reason ?? 'Closed manually by user',
+        closeReason: 'manual',
       });
 
       try {
@@ -699,6 +700,7 @@ export class TradingAgentDO extends DurableObject<Env> {
         strategyUsed: position.strategyUsed,
         slippageSimulated: position.slippageSimulated,
         status: position.status,
+        closeReason: position.closeReason ?? null,
         openedAt: position.openedAt,
         closedAt: position.closedAt ?? null,
       })
@@ -710,6 +712,7 @@ export class TradingAgentDO extends DurableObject<Env> {
           pnlUsd: position.pnlUsd ?? null,
           confidenceAfter: position.confidenceAfter ?? null,
           status: position.status,
+          closeReason: position.closeReason ?? null,
           closedAt: position.closedAt ?? null,
         },
       });

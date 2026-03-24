@@ -105,11 +105,12 @@ describe('Phase 3: Paper Trading Engine', () => {
     expect(engine.getWinRate()).toBeCloseTo(0.5);
   });
 
-  it('stop out marks position as stopped_out', () => {
+  it('stop out marks position as closed with stop_loss reason', () => {
     const engine = new PaperEngine({ balance: 10000, slippage: 0.3 });
     const trade = engine.openPosition(defaultParams);
     const stopped = engine.stopOutPosition(trade.id, 2350);
-    expect(stopped.status).toBe('stopped_out');
+    expect(stopped.status).toBe('closed');
+    expect(stopped.closeReason).toBe('stop_loss');
   });
 
   it('calculates total P&L percentage', () => {

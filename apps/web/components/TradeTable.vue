@@ -89,6 +89,7 @@ function formatPnlUsd(usd?: number) {
       <thead>
         <tr>
           <th></th>
+          <th v-if="showAgent">Agent</th>
           <th class="sortable" @click="toggleSort('pair')">Pair <span class="sort-icon">{{ sortIcon('pair') }}</span></th>
           <th>Side</th>
           <th>Entry</th>
@@ -105,7 +106,7 @@ function formatPnlUsd(usd?: number) {
       </thead>
       <tbody>
         <tr v-if="sortedTrades.length === 0">
-          <td colspan="13" style="text-align: center; padding: 32px; color: var(--text-muted);">
+          <td :colspan="showAgent ? 14 : 13" style="text-align: center; padding: 32px; color: var(--text-muted);">
             No trades yet
           </td>
         </tr>
@@ -113,6 +114,15 @@ function formatPnlUsd(usd?: number) {
           <tr style="cursor: pointer;" @click="toggleRow(trade.id)">
             <td style="color: var(--text-muted); font-size: 11px; width: 16px;">
               {{ expandedRows.has(trade.id) ? '▼' : '▶' }}
+            </td>
+            <td v-if="showAgent">
+              <NuxtLink
+                :to="`/agents/${trade.agentId}`"
+                class="agent-link mono"
+                @click.stop
+              >
+                {{ trade.agentName ?? trade.agentId }}
+              </NuxtLink>
             </td>
             <td class="mono">{{ trade.pair }}</td>
             <td>
@@ -136,8 +146,13 @@ function formatPnlUsd(usd?: number) {
             <td>
               <span
                 class="badge"
-                :class="trade.status === 'open' ? 'badge-running' : trade.status === 'stopped_out' ? 'badge-paused' : 'badge-stopped'"
-              >{{ trade.status }}</span>
+                :class="trade.status === 'open' ? 'badge-running' : 'badge-stopped'"
+              >
+                <span :class="{ 'close-status': trade.status === 'closed' }">
+                  {{ trade.status === 'closed' ? 'CLOSED' : trade.status }}
+                </span>
+                <span v-if="trade.status === 'closed' && trade.closeReason" class="close-reason">({{ trade.closeReason.replace(/_/g, ' ') }})</span>
+              </span>
             </td>
             <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>
             <td style="text-align: right;">
@@ -154,7 +169,7 @@ function formatPnlUsd(usd?: number) {
             </td>
           </tr>
           <tr v-if="expandedRows.has(trade.id)">
-            <td colspan="13" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
+            <td :colspan="showAgent ? 14 : 13" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
               <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;">
                 <strong style="color: var(--text-primary);">Reasoning:</strong> {{ trade.reasoning }}
               </div>
@@ -179,5 +194,22 @@ function formatPnlUsd(usd?: number) {
   font-size: 10px;
   color: var(--text-muted);
   margin-left: 2px;
+}
+.agent-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.agent-link:hover {
+  text-decoration: underline;
+}
+.close-reason {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 3px;
+}
+.close-status {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 </style>

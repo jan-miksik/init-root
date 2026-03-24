@@ -12,6 +12,7 @@ function tradesKey(params?: { status?: string; limit?: number }): string {
 export interface Trade {
   id: string;
   agentId: string;
+  agentName?: string;
   pair: string;
   dex: string;
   side: 'buy' | 'sell';
@@ -23,7 +24,8 @@ export interface Trade {
   confidenceBefore: number;
   reasoning: string;
   strategyUsed: string;
-  status: 'open' | 'closed' | 'stopped_out';
+  status: 'open' | 'closed';
+  closeReason?: 'stop_loss' | 'take_profit' | 'manual' | 'llm_decision';
   openedAt: string;
   closedAt?: string;
 }

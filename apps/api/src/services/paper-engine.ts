@@ -14,7 +14,8 @@ export interface Position {
   reasoning: string;
   strategyUsed: string;
   slippageSimulated: number;
-  status: 'open' | 'closed' | 'stopped_out';
+  status: 'open' | 'closed';
+  closeReason?: 'stop_loss' | 'take_profit' | 'manual' | 'llm_decision';
   openedAt: string;
   closedAt?: string;
   exitPrice?: number;
@@ -43,6 +44,7 @@ export interface ClosePositionParams {
   price: number;
   confidence?: number;
   reason?: string;
+  closeReason?: 'stop_loss' | 'take_profit' | 'manual' | 'llm_decision';
 }
 
 export interface PaperEngineState {
@@ -183,6 +185,7 @@ export class PaperEngine {
     const closed: Position = {
       ...position,
       status: 'closed',
+      closeReason: params.closeReason,
       exitPrice: params.price,
       effectiveExitPrice,
       pnlPct,
@@ -199,16 +202,9 @@ export class PaperEngine {
     return closed;
   }
 
-  /** Stop out a position (same as close but marks as stopped_out) */
+  /** Stop out a position (closes with stop_loss reason) */
   stopOutPosition(positionId: string, price: number): Position {
-    const closed = this.closePosition(positionId, { price });
-    const stoppedOut = { ...closed, status: 'stopped_out' as const };
-    // Replace in closedPositions
-    const idx = this.state.closedPositions.findIndex(
-      (p) => p.id === positionId
-    );
-    if (idx >= 0) this.state.closedPositions[idx] = stoppedOut;
-    return stoppedOut;
+    return this.closePosition(positionId, { price, closeReason: 'stop_loss' });
   }
 
   /** Effective (slippage-adjusted) exit price if we closed now at `marketPrice`. */

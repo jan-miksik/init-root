@@ -11,7 +11,10 @@ export type Strategy = 'ema_crossover' | 'rsi_oversold' | 'macd_signal' | 'bolli
 /** Trade side */
 export type TradeSide = 'buy' | 'sell';
 /** Trade status */
-export type TradeStatus = 'open' | 'closed' | 'stopped_out';
+export type TradeStatus = 'open' | 'closed';
+
+/** Why a trade was closed */
+export type CloseReason = 'stop_loss' | 'take_profit' | 'manual' | 'llm_decision';
 /** Agent status */
 export type AgentStatus = 'running' | 'stopped' | 'paused';
 /** Trade decision from LLM */
@@ -56,6 +59,7 @@ export interface Trade {
     strategyUsed: string;
     slippageSimulated: number;
     status: TradeStatus;
+    closeReason?: CloseReason;
     openedAt: string;
     closedAt?: string;
 }

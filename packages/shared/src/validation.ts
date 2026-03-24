@@ -180,10 +180,11 @@ export const ManagerRiskParamsSchema = z.object({
 const FREE_MANAGER_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nvidia/nemotron-3-nano-30b-a3b:free',
+  'qwen/qwen3-coder:free',
   'stepfun/step-3.5-flash:free',
+  'minimax/minimax-m2.5:free',
   'nvidia/nemotron-nano-9b-v2:free',
   'arcee-ai/trinity-large-preview:free',
-  'xiaomi/mimo-v2-flash:free',
 ] as const;
 
 export const ManagerConfigSchema = z.object({

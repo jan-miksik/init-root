@@ -66,10 +66,10 @@ describe('Phase 1: Agent Config Validation', async () => {
     }
   });
 
-  it('rejects invalid autonomy level', () => {
+  it('rejects invalid analysis interval', () => {
     const result = AgentConfigSchema.safeParse({
       name: 'Test',
-      autonomyLevel: 'yolo',
+      analysisInterval: 'yolo',
     });
     expect(result.success).toBe(false);
   });
