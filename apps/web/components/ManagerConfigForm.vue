@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { getManagerPersonaTemplate } from '@dex-agents/shared';
+import { AGENT_PROFILES, ENTITY_NAME_MAX_CHARS, SUPPORTED_BASE_PAIRS, getManagerPersonaTemplate } from '@dex-agents/shared';
+import { parse as markedParse } from 'marked';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
+import { splitManagerPromptSections } from '~/lib/manager-prompt';
 
 const props = defineProps<{
   initial?: {
@@ -15,7 +17,9 @@ const props = defineProps<{
     personaMd?: string;
   };
   isEdit?: boolean;
+  managerId?: string;
   onCancel?: () => void;
+  hideFooter?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -144,11 +148,15 @@ watch(customModel, (val) => {
 });
 
 // Accordions — all collapsed by default
-const configOpen = ref(false);
 const finetuneOpen = ref(false);
 const personaMdOpen = ref(false);
+const managerConfigOpen = ref(false);
 
-const syncName = ref(!props.isEdit);
+const autoNamePrefKey = computed(() =>
+  props.isEdit ? 'manager-config:auto-name-enabled:edit' : 'manager-config:auto-name-enabled:create'
+);
+const syncName = ref(true);
+const hasHydratedAutoNamePref = ref(false);
 
 // Profile & persona state
 const selectedProfileId = ref<string | null>(props.initial?.profileId ?? null);
@@ -167,6 +175,34 @@ const behavior = ref<Record<string, unknown>>(props.initial?.behavior ?? {
 
 const personaMd = ref(props.initial?.personaMd ?? '');
 const isPersonaCustomized = ref(!!props.initial?.personaMd);
+const showMdPreview = ref(false);
+const systemExpanded = ref(false);
+const contextExpanded = ref(false);
+const editingSetup = ref(false);
+
+const previewLoading = ref(false);
+const previewError = ref('');
+const lastPromptText = ref('');
+const lastPromptAt = ref<string | null>(null);
+
+async function loadPromptPreview() {
+  if (!props.managerId) return;
+  previewLoading.value = true;
+  previewError.value = '';
+  try {
+    const data = await $fetch<{ promptText: string | null; promptAt: string | null }>(`/api/managers/${props.managerId}/prompt-preview`, {
+      credentials: 'include',
+    });
+    lastPromptText.value = data.promptText ?? '';
+    lastPromptAt.value = data.promptAt ?? null;
+  } catch {
+    previewError.value = 'Prompt preview unavailable — run the manager once';
+    lastPromptText.value = '';
+    lastPromptAt.value = null;
+  } finally {
+    previewLoading.value = false;
+  }
+}
 
 // ─── Behavior → Persona sync helpers ──────────────────────────────────────
 
@@ -269,8 +305,28 @@ watch(() => form.name, (name) => {
 });
 
 onMounted(() => {
-  if (!props.isEdit) {
+  try {
+    const saved = localStorage.getItem(autoNamePrefKey.value);
+    if (saved === 'true') syncName.value = true;
+    else if (saved === 'false') syncName.value = false;
+    else syncName.value = true; // default ON (including edit mode)
+  } catch {
+    syncName.value = true;
+  } finally {
+    hasHydratedAutoNamePref.value = true;
+  }
+
+  if (syncName.value && (!props.isEdit || !form.name.trim())) {
     form.name = generateName();
+  }
+});
+
+watch(syncName, (enabled) => {
+  if (!hasHydratedAutoNamePref.value) return;
+  try {
+    localStorage.setItem(autoNamePrefKey.value, enabled ? 'true' : 'false');
+  } catch {
+    // ignore storage failures
   }
 });
 
@@ -278,6 +334,10 @@ function handleSubmit() {
   validationError.value = '';
   if (!form.name.trim()) {
     validationError.value = 'Manager name is required';
+    return;
+  }
+  if (form.name.length > ENTITY_NAME_MAX_CHARS) {
+    validationError.value = `Manager name must be at most ${ENTITY_NAME_MAX_CHARS} characters`;
     return;
   }
   submitting.value = true;
@@ -293,10 +353,128 @@ function handleSubmit() {
     submitting.value = false;
   }
 }
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+function renderMarkdown(text: string): string {
+  try {
+    return markedParse(text, { async: false }) as string;
+  } catch {
+    return escapeHtml(text);
+  }
+}
+
+const DEFAULT_FREE_AGENT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+const FREE_AGENT_MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'nvidia/nemotron-3-nano-30b-a3b:free',
+  'qwen/qwen3-coder:free',
+  'stepfun/step-3.5-flash:free',
+  'minimax/minimax-m2.5:free',
+  'nvidia/nemotron-nano-9b-v2:free',
+  'arcee-ai/trinity-large-preview:free',
+] as const;
+const PAID_CHEAP_AGENT_MODELS = [
+  'google/gemini-3.1-flash-lite-preview',
+  'deepseek/deepseek-v3.2',
+  'minimax/minimax-m2.5',
+  'mistralai/mistral-small-2603',
+] as const;
+
+const availableAgentModels = computed(() => hasOwnKey.value
+  ? [...FREE_AGENT_MODELS, ...PAID_CHEAP_AGENT_MODELS]
+  : [...FREE_AGENT_MODELS]
+);
+
+const liveSystemPrompt = computed(() => {
+  const pairsAllowlist = SUPPORTED_BASE_PAIRS.map((p) => `- "${p}"`).join('\n');
+  const modelAllowlist = availableAgentModels.value.map((m) => `- "${m}"`).join('\n');
+  const profileAllowlist = AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`).join('\n');
+
+  return `You are an Agent Manager overseeing a portfolio of paper trading agents on Base chain DEXes.
+
+## Allowed Trading Pairs
+When creating or modifying agents, you MUST choose pairs only from this allowlist:
+${pairsAllowlist}
+
+## Available LLM Models For Agents
+Use only these llmModel IDs when creating or modifying agents:
+${modelAllowlist}
+
+${hasOwnKey.value
+  ? 'The user has OpenRouter connected, so you may use free models and low-cost paid models (up to $3 per 1M tokens).'
+  : 'The user has no connected OpenRouter key, so you must use free models only.'}
+If unsure, default to "${DEFAULT_FREE_AGENT_MODEL}".
+
+## Available Agent Profiles
+When creating agents, pick a profileId that naturally fits your management style and risk tolerance — or combine several across your fleet for diversity. You can also write a fully custom personaMd instead.
+${profileAllowlist}
+
+## Instructions
+Evaluate each agent's performance and decide what actions to take this cycle.
+
+Valid actions:
+- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
+- "start_agent": start a stopped or paused agent (provide agentId)
+- "pause_agent": pause an underperforming agent (provide agentId)
+- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
+- "terminate_agent": permanently stop an agent (provide agentId)
+- "hold": no action needed (provide agentId, or omit for portfolio-level hold)
+
+IMPORTANT: Respond with ONLY a valid JSON array — no markdown, no explanation.
+Each element: { "action": "<action>", "agentId": "<id or omit>", "params": {<optional>}, "reasoning": "<why>" }
+
+Example:
+[
+  { "action": "hold", "agentId": "agent_001", "reasoning": "Strong performance, no changes needed" },
+  { "action": "pause_agent", "agentId": "agent_002", "reasoning": "Drawdown exceeds 15%" }
+]`;
+});
+
+const liveEditableSetup = computed(() => {
+  const parts: string[] = [];
+  if (personaMd.value.trim()) {
+    parts.push(`## Your Persona\n${personaMd.value.trim()}`);
+  }
+
+  const riskSummary = `MaxDrawdown: ${(form.riskParams.maxTotalDrawdown * 100).toFixed(0)}%, MaxAgents: ${form.riskParams.maxAgents}, MaxCorrelated: ${form.riskParams.maxCorrelatedPositions}`;
+  parts.push(`## Risk Limits\n${riskSummary}`);
+
+  const b = behavior.value;
+  if (b && typeof b === 'object') {
+    parts.push(`## Your Management Style
+- Risk Tolerance: ${(b as any).riskTolerance} | Management Style: ${(b as any).managementStyle}
+- Creation Aggressiveness: ${(b as any).creationAggressiveness}/100 | Performance Patience: ${(b as any).performancePatience}/100
+- Diversification: ${(b as any).diversificationPreference} | Rebalance Frequency: ${(b as any).rebalanceFrequency}
+- Philosophy: ${(b as any).philosophyBias}`);
+  }
+
+  return parts.filter(Boolean).join('\n\n').trim();
+});
+
+const apiContext = computed(() => splitManagerPromptSections(lastPromptText.value).context);
+const contextNote = computed(() => {
+  if (previewLoading.value) return 'loading…';
+  if (!props.isEdit) return '— available after first run';
+  if (!lastPromptText.value) return '— run manager to populate';
+  return lastPromptAt.value ? `— last run ${new Date(lastPromptAt.value).toLocaleString()}` : '— last run';
+});
+
+onMounted(() => {
+  if (props.isEdit && props.managerId) {
+    loadPromptPreview();
+  }
+});
 </script>
 
 <template>
-  <form class="mcf" @submit.prevent="handleSubmit">
+  <form id="manager-config-form" class="mcf" @submit.prevent="handleSubmit">
     <div v-if="validationError" class="alert alert-error">{{ validationError }}</div>
 
     <!-- Name -->
@@ -305,14 +483,101 @@ function handleSubmit() {
         v-model="form.name"
         class="mcf__name-input"
         placeholder="Manager name…"
-        maxlength="50"
+        :maxlength="ENTITY_NAME_MAX_CHARS"
         required
         @input="syncName = false"
       />
+      <div class="mcf__name-count">{{ form.name.length }}/{{ ENTITY_NAME_MAX_CHARS }}</div>
       <label class="mcf__sync-check">
         <input v-model="syncName" type="checkbox" />
         <span>auto-name</span>
       </label>
+    </div>
+
+    <div class="mcf__section">
+      <div class="mcf__section-label">LLM model</div>
+      <div class="form-group">
+        <div ref="modelPickerRef" class="model-picker">
+          <button
+            type="button"
+            class="model-picker__btn form-select"
+            :aria-expanded="modelPickerOpen ? 'true' : 'false'"
+            aria-haspopup="dialog"
+            @click="modelPickerOpen = !modelPickerOpen"
+          >
+            <span class="model-picker__btn-left">
+              <span class="model-picker__btn-label">{{ selectedModelMeta?.label ?? (customModel.trim() || dropdownModel) }}</span>
+              <span class="model-picker__btn-sub">
+                <span class="model-picker__mono">{{ customModel.trim() || dropdownModel }}</span>
+                <span v-if="selectedModelMeta" class="model-picker__meta">
+                  · {{ selectedModelMeta.ctx }} · {{ selectedModelMeta.price }}
+                </span>
+              </span>
+            </span>
+            <span class="model-picker__chev" :class="{ open: modelPickerOpen }">›</span>
+          </button>
+
+          <div v-if="modelPickerOpen" class="model-picker__panel" role="dialog" aria-label="Select model">
+            <div class="model-picker__panel-top">
+              <input
+                v-model="modelQuery"
+                class="model-picker__search"
+                placeholder="Search models..."
+                autocomplete="off"
+              />
+              <div class="model-picker__hint">Pick a row · Esc to close</div>
+            </div>
+
+            <div class="model-picker__table">
+              <div class="model-picker__thead">
+                <div>Model</div>
+                <div>Context</div>
+                <div>Price (in/out)</div>
+                <div>Tier</div>
+              </div>
+              <button
+                v-for="m in filteredModels"
+                :key="m.id"
+                type="button"
+                class="model-picker__row"
+                :class="{ active: (customModel.trim() || dropdownModel) === m.id }"
+                @click="selectModel(m.id)"
+              >
+                <div class="model-picker__cell model-picker__model">
+                  <div class="model-picker__model-label">{{ m.label }}</div>
+                  <div class="model-picker__model-id">{{ m.id }}</div>
+                  <div v-if="m.desc" class="model-picker__model-desc">{{ m.desc }}</div>
+                </div>
+                <div class="model-picker__cell model-picker__mono">{{ m.ctx }}</div>
+                <div class="model-picker__cell model-picker__mono">{{ m.price }}</div>
+                <div class="model-picker__cell">
+                  <span class="model-picker__pill" :data-tier="m.tier">{{ m.tier }}</span>
+                </div>
+              </button>
+              <div v-if="filteredModels.length === 0" class="model-picker__empty">
+                No matches.
+              </div>
+            </div>
+          </div>
+        </div>
+        <template v-if="hasOwnKey">
+          <input
+            v-model="customModel"
+            class="form-input"
+            style="margin-top: 8px"
+            placeholder="Or type any model ID..."
+          />
+          <a
+            href="https://openrouter.ai/models"
+            target="_blank"
+            rel="noopener"
+            class="model-browse-link"
+          >Browse all models at openrouter.ai/models ↗</a>
+        </template>
+        <p v-else class="model-nudge">
+          <NuxtLink to="/settings">Connect your OpenRouter key</NuxtLink> to unlock paid models.
+        </p>
+      </div>
     </div>
 
     <!-- Persona style -->
@@ -346,122 +611,14 @@ function handleSubmit() {
       </div>
     </div>
 
-    <!-- Persona MD accordion -->
     <div class="mcf__accordion">
-      <button type="button" class="mcf__accordion-btn" @click="personaMdOpen = !personaMdOpen">
-        <span class="mcf__acc-left">
-          Persona MD
-          <span v-if="isPersonaCustomized" class="mcf__custom-badge">Custom</span>
-        </span>
-        <span class="mcf__acc-right">
-          <span class="mcf__hint-chip">injected into system prompt</span>
-          <span class="mcf__chevron" :class="{ open: personaMdOpen }">›</span>
-        </span>
+      <button type="button" class="mcf__accordion-btn" @click="managerConfigOpen = !managerConfigOpen">
+        <span>Manager config</span>
+        <span class="mcf__chevron" :class="{ open: managerConfigOpen }">›</span>
       </button>
-      <div class="mcf__accordion-body" :class="{ open: personaMdOpen }">
-        <div class="mcf__persona-wrap">
-          <PersonaEditor v-model="personaMd" :show-actions="false" @edited="onPersonaEdited" />
-          <div v-if="isPersonaCustomized" class="mcf__restore-row">
-            <button type="button" class="btn btn-ghost btn-sm" @click="restorePersona">
-              ↺ Restore auto-persona
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Manager Config accordion -->
-    <div class="mcf__accordion">
-      <button type="button" class="mcf__accordion-btn" @click="configOpen = !configOpen">
-        <span>Manager Config</span>
-        <span class="mcf__chevron" :class="{ open: configOpen }">›</span>
-      </button>
-      <div class="mcf__accordion-body" :class="{ open: configOpen }">
+      <div class="mcf__accordion-body" :class="{ open: managerConfigOpen }">
         <div class="mcf__config">
           <div class="grid-2">
-            <div class="form-group">
-              <label class="form-label">LLM Model</label>
-              <div ref="modelPickerRef" class="model-picker">
-                <button
-                  type="button"
-                  class="model-picker__btn form-select"
-                  :aria-expanded="modelPickerOpen ? 'true' : 'false'"
-                  aria-haspopup="dialog"
-                  @click="modelPickerOpen = !modelPickerOpen"
-                >
-                  <span class="model-picker__btn-left">
-                    <span class="model-picker__btn-label">{{ selectedModelMeta?.label ?? (customModel.trim() || dropdownModel) }}</span>
-                    <span class="model-picker__btn-sub">
-                      <span class="model-picker__mono">{{ customModel.trim() || dropdownModel }}</span>
-                      <span v-if="selectedModelMeta" class="model-picker__meta">
-                        · {{ selectedModelMeta.ctx }} · {{ selectedModelMeta.price }}
-                      </span>
-                    </span>
-                  </span>
-                  <span class="model-picker__chev" :class="{ open: modelPickerOpen }">›</span>
-                </button>
-
-                <div v-if="modelPickerOpen" class="model-picker__panel" role="dialog" aria-label="Select model">
-                  <div class="model-picker__panel-top">
-                    <input
-                      v-model="modelQuery"
-                      class="model-picker__search"
-                      placeholder="Search models…"
-                      autocomplete="off"
-                    />
-                    <div class="model-picker__hint">Pick a row · Esc to close</div>
-                  </div>
-
-                  <div class="model-picker__table">
-                    <div class="model-picker__thead">
-                      <div>Model</div>
-                      <div>Context</div>
-                      <div>Price (in/out)</div>
-                      <div>Tier</div>
-                    </div>
-                    <button
-                      v-for="m in filteredModels"
-                      :key="m.id"
-                      type="button"
-                      class="model-picker__row"
-                      :class="{ active: (customModel.trim() || dropdownModel) === m.id }"
-                      @click="selectModel(m.id)"
-                    >
-                      <div class="model-picker__cell model-picker__model">
-                        <div class="model-picker__model-label">{{ m.label }}</div>
-                        <div class="model-picker__model-id">{{ m.id }}</div>
-                        <div v-if="m.desc" class="model-picker__model-desc">{{ m.desc }}</div>
-                      </div>
-                      <div class="model-picker__cell model-picker__mono">{{ m.ctx }}</div>
-                      <div class="model-picker__cell model-picker__mono">{{ m.price }}</div>
-                      <div class="model-picker__cell">
-                        <span class="model-picker__pill" :data-tier="m.tier">{{ m.tier }}</span>
-                      </div>
-                    </button>
-                    <div v-if="filteredModels.length === 0" class="model-picker__empty">
-                      No matches.
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <template v-if="hasOwnKey">
-                <input
-                  v-model="customModel"
-                  class="form-input"
-                  style="margin-top: 8px"
-                  placeholder="Or type any model ID…"
-                />
-                <a
-                  href="https://openrouter.ai/models"
-                  target="_blank"
-                  rel="noopener"
-                  class="model-browse-link"
-                >Browse all models at openrouter.ai/models ↗</a>
-              </template>
-              <p v-else class="model-nudge">
-                <NuxtLink to="/settings">Connect your OpenRouter key</NuxtLink> to unlock paid models.
-              </p>
-            </div>
             <div class="form-group">
               <label class="form-label">Decision Interval</label>
               <select v-model="form.decisionInterval" class="form-select">
@@ -469,6 +626,18 @@ function handleSubmit() {
                 <option value="4h">Every 4 hours</option>
                 <option value="1d">Every 24 hours</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Temperature</label>
+              <input
+                v-model.number="form.temperature"
+                class="form-range"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+              />
+              <div class="mcf__range-inline">{{ form.temperature.toFixed(2) }}</div>
             </div>
           </div>
 
@@ -502,8 +671,89 @@ function handleSubmit() {
       </div>
     </div>
 
+    <!-- Prompt preview (last section, same format as agent pages) -->
+    <div class="mcf__prompt-preview">
+      <div class="mcf__prompt-header">
+        <span class="mcf__prompt-title">Prompt Preview</span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          style="font-size: 11px;"
+          @click.prevent.stop="showMdPreview = !showMdPreview"
+        >
+          {{ showMdPreview ? 'MD ●' : 'MD ○' }}
+        </button>
+      </div>
+
+      <div v-if="previewError" class="mcf__prompt-error">{{ previewError }}</div>
+
+      <div class="mcf__prompt-pills">
+        <button type="button" class="mcf__prompt-pill mcf__prompt-pill--system" @click="systemExpanded = !systemExpanded">
+          <span>[SYSTEM]</span>
+          <span class="mcf__pill-chevron">{{ systemExpanded ? '▾' : '▸' }}</span>
+        </button>
+        <div v-if="systemExpanded" class="mcf__pill-content">
+          <pre v-if="!showMdPreview" class="mcf__code-block">{{ liveSystemPrompt }}</pre>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div v-else class="mcf__code-block mcf__code-block--md" v-html="renderMarkdown(liveSystemPrompt)" />
+        </div>
+
+        <button
+          type="button"
+          class="mcf__prompt-pill mcf__prompt-pill--market"
+          :disabled="!managerId"
+          @click="contextExpanded = !contextExpanded"
+        >
+          <span>[PORTFOLIO CONTEXT]</span>
+          <span class="mcf__prompt-pill-meta">
+            <span class="mcf__prompt-pill-note">{{ contextNote }}</span>
+            <span v-if="managerId" class="mcf__pill-chevron">{{ contextExpanded ? '▾' : '▸' }}</span>
+          </span>
+        </button>
+        <div v-if="contextExpanded" class="mcf__pill-content">
+          <pre v-if="!showMdPreview" class="mcf__code-block">{{ apiContext || '(No runtime context yet — run the manager at least once to populate the preview)' }}</pre>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div
+            v-else
+            class="mcf__code-block mcf__code-block--md"
+            v-html="renderMarkdown(apiContext || '(No runtime context yet — run the manager at least once to populate the preview)')"
+          />
+        </div>
+      </div>
+
+      <div class="mcf__editable-setup">
+        <div class="mcf__editable-setup-row">
+          <span class="mcf__editable-label">[EDITABLE SETUP]</span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            style="font-size: 11px;"
+            @click="editingSetup = !editingSetup"
+          >
+            {{ editingSetup ? 'Done' : 'Edit' }}
+          </button>
+        </div>
+
+        <template v-if="editingSetup">
+          <div class="mcf__persona-wrap">
+            <PersonaEditor v-model="personaMd" :show-actions="false" @edited="onPersonaEdited" />
+            <div v-if="isPersonaCustomized" class="mcf__restore-row">
+              <button type="button" class="btn btn-ghost btn-sm" @click="restorePersona">
+                ↺ Restore auto-persona
+              </button>
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <pre v-if="!showMdPreview" class="mcf__code-block">{{ liveEditableSetup }}</pre>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div v-else class="mcf__code-block mcf__code-block--md" v-html="renderMarkdown(liveEditableSetup)" />
+        </template>
+      </div>
+    </div>
+
     <!-- Footer -->
-    <div class="mcf__footer">
+    <div v-if="!hideFooter" class="mcf__footer">
       <button v-if="onCancel" type="button" class="btn btn-ghost" @click="onCancel">Cancel</button>
       <button type="submit" class="btn btn-primary" :disabled="submitting">
         <span v-if="submitting" class="spinner" style="width:14px;height:14px;" />
@@ -538,6 +788,12 @@ function handleSubmit() {
   transition: border-color 0.15s;
 }
 .mcf__name-input:focus { border-color: var(--accent, #7c6af7); }
+.mcf__name-count {
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .mcf__sync-check {
   display: flex;
   align-items: center;
@@ -552,6 +808,11 @@ function handleSubmit() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.mcf__section--compact {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 10px;
+  padding: 14px 16px;
 }
 .mcf__section-label {
   font-size: 11px;
@@ -676,6 +937,115 @@ function handleSubmit() {
   justify-content: flex-end;
 }
 
+.mcf__prompt-preview {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface, #141414) 94%, black);
+}
+.mcf__prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: color-mix(in srgb, var(--border, #2a2a2a) 22%, transparent);
+}
+.mcf__prompt-error {
+  padding: 10px 14px;
+  background: color-mix(in srgb, #e55 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #e55 30%, transparent);
+  font-size: 12px;
+  color: #e55;
+}
+.mcf__prompt-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text, #e0e0e0);
+}
+.mcf__prompt-pills {
+  padding: 10px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcf__prompt-pill {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted, #888);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: var(--font-mono, monospace);
+  padding: 4px 2px;
+  text-align: left;
+  cursor: pointer;
+}
+.mcf__prompt-pill--system { color: var(--text-muted, #888); }
+.mcf__prompt-pill--market { color: #f59e0b; }
+.mcf__prompt-pill:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.mcf__prompt-pill-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mcf__pill-chevron {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.mcf__prompt-pill-note {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.mcf__pill-content {
+  padding: 0 0 4px 10px;
+}
+.mcf__editable-setup {
+  border-top: 1px solid var(--border, #2a2a2a);
+  margin-top: 8px;
+}
+.mcf__editable-setup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+}
+.mcf__editable-label {
+  color: #60a5fa;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: var(--font-mono, monospace);
+}
+.mcf__code-block {
+  margin: 0;
+  padding: 8px 12px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text, #e0e0e0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono, monospace);
+}
+.mcf__code-block--md :deep(p) { margin: 0 0 6px; }
+.mcf__code-block--md :deep(ul) { margin: 4px 0; padding-left: 16px; }
+.mcf__code-block--md :deep(li) { margin-bottom: 2px; }
+.mcf__code-block--md :deep(h1),
+.mcf__code-block--md :deep(h2),
+.mcf__code-block--md :deep(h3) { margin: 6px 0 2px; font-size: 12px; font-weight: 700; }
+
 .mcf__config {
   padding: 16px;
   display: flex;
@@ -700,6 +1070,12 @@ function handleSubmit() {
   color: var(--text-muted, #555);
   font-weight: 400;
   margin-left: 4px;
+}
+.mcf__range-inline {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .form-range {

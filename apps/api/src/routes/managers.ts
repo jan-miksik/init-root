@@ -53,6 +53,8 @@ managersRoute.post('/', async (c) => {
     temperature: body.temperature,
     decisionInterval: body.decisionInterval,
     riskParams: body.riskParams ?? { maxTotalDrawdown: 0.2, maxAgents: 10, maxCorrelatedPositions: 3 },
+    ...(body.behavior ? { behavior: body.behavior } : {}),
+    ...(body.profileId ? { profileId: body.profileId } : {}),
   };
 
   await db.insert(agentManagers).values({
@@ -60,6 +62,8 @@ managersRoute.post('/', async (c) => {
     name: body.name,
     ownerAddress: walletAddress,
     config: JSON.stringify(config),
+    personaMd: (body as any).personaMd ?? null,
+    profileId: body.profileId ?? null,
     status: 'stopped',
     createdAt: now,
     updatedAt: now,
@@ -114,14 +118,19 @@ managersRoute.patch('/:id', async (c) => {
   const existing = await requireManagerOwnership(db, id, walletAddress);
   if (!existing) return c.json({ error: 'Manager not found' }, 404);
 
+  const { personaMd, ...configPatch } = body as any;
   const existingConfig = JSON.parse(existing.config);
-  const mergedConfig = { ...existingConfig, ...body };
+  const mergedConfig = { ...existingConfig, ...configPatch };
 
-  await db.update(agentManagers).set({
+  const updates: Partial<typeof agentManagers.$inferInsert> = {
     name: body.name ?? existing.name,
     config: JSON.stringify(mergedConfig),
     updatedAt: nowIso(),
-  }).where(eq(agentManagers.id, id));
+  };
+  if (personaMd !== undefined) updates.personaMd = personaMd;
+  if (body.profileId !== undefined) updates.profileId = body.profileId ?? null;
+
+  await db.update(agentManagers).set(updates).where(eq(agentManagers.id, id));
 
   const [updated] = await db.select().from(agentManagers).where(eq(agentManagers.id, id));
   return c.json(formatManager(updated));
@@ -274,6 +283,38 @@ managersRoute.get('/:id/logs', async (c) => {
     logs: logs.map((l) => ({ ...l, result: JSON.parse(l.result) })),
     page,
     limit,
+  });
+});
+
+/** GET /api/managers/:id/prompt-preview — returns the full prompt from the last decision cycle (if any) */
+managersRoute.get('/:id/prompt-preview', async (c) => {
+  const id = c.req.param('id');
+  const walletAddress = c.get('walletAddress');
+  const db = drizzle(c.env.DB);
+
+  const manager = await requireManagerOwnership(db, id, walletAddress);
+  if (!manager) return c.json({ error: 'Manager not found' }, 404);
+
+  const [log] = await db
+    .select()
+    .from(agentManagerLogs)
+    .where(eq(agentManagerLogs.managerId, id))
+    .orderBy(desc(agentManagerLogs.createdAt))
+    .limit(1);
+
+  let promptText: string | null = null;
+  if (log?.result) {
+    try {
+      const parsed = JSON.parse(log.result) as Record<string, unknown>;
+      promptText = typeof parsed.llmPromptText === 'string' ? parsed.llmPromptText : null;
+    } catch {
+      promptText = null;
+    }
+  }
+
+  return c.json({
+    promptText,
+    promptAt: log?.createdAt ?? null,
   });
 });
 

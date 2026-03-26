@@ -9,7 +9,7 @@ const route = useRoute();
 const id = computed(() => route.params.id as string);
 const { getAgent, startAgent, stopAgent, pauseAgent, deleteAgent, clearAgentHistory } = useAgents();
 const { modifications, pendingModifications, modDecisionIds, fetchModifications, approve, reject } = useSelfModifications();
-const { fetchAgentTrades, closeTrade, formatPnl, pnlClass } = useTrades();
+const { fetchAgentTrades, closeTrade, pnlClass } = useTrades();
 const { request } = useApi();
 const { getAgentPersona, updateAgentPersona, resetAgentPersona } = useProfiles();
 const router = useRouter();
@@ -280,7 +280,15 @@ const totalPnlPct = computed(() => {
   if (!initial) return 0;
   return (totalPnlUsd.value / initial) * 100;
 });
-const latestSnapshot = computed(() => snapshots.value[0] ?? null);
+const inPositionsUsd = computed(() =>
+  openTrades.value.reduce((sum, t) => sum + (t.amountUsd ?? 0), 0)
+);
+const displayedBalance = computed(() => {
+  const initial = agent.value?.config.paperBalance ?? 0;
+  if (!initial) return 0;
+  // Available balance excludes open positions and reflects only realized P&L.
+  return initial + realizedPnlUsd.value;
+});
 
 const totalTokensUsed = computed(
   () => decisions.value.reduce((sum, d) => sum + (d.llmTokensUsed ?? 0), 0),
@@ -478,6 +486,14 @@ async function handleClearHistory() {
     trades.value = [];
     decisions.value = [];
     snapshots.value = [];
+    // Keep UI in sync with cleared DO state immediately.
+    doStatus.value = {
+      agentId: id.value,
+      status: agent.value.status,
+      balance: agent.value.config.paperBalance,
+      nextAlarmAt: doStatus.value?.nextAlarmAt ?? null,
+    };
+    await refreshDoStatus();
   } finally {
     clearingHistory.value = false;
   }
@@ -572,6 +588,28 @@ function decisionColor(d: string) {
   if (d === 'buy') return 'positive';
   if (d === 'sell') return 'negative';
   return 'neutral';
+}
+function winRateClass(rate: number): 'positive' | 'negative' | 'neutral' {
+  if (rate === 0) return 'neutral';
+  return rate >= 50 ? 'positive' : 'negative';
+}
+function formatUsdNoNegativeZero(value: number, digits = 0): string {
+  const abs = Math.abs(value);
+  const effectiveDigits = digits === 0 && abs < 1 ? 2 : digits;
+  const roundingUnit = 10 ** (-effectiveDigits);
+  const roundsToZero = abs < 0.5 * roundingUnit;
+  const normalized = Object.is(value, -0) || roundsToZero ? 0 : value;
+  if (normalized < 0) return `$-${Math.abs(normalized).toFixed(effectiveDigits)}`;
+  return `$${normalized.toFixed(effectiveDigits)}`;
+}
+function formatPnlInline(usd?: number | null, pct?: number | null): string {
+  if (usd === undefined || usd === null || pct === undefined || pct === null) return '—';
+  const normalizedPct = Object.is(pct, -0) || Math.abs(pct) < 0.05 ? 0 : pct;
+  return `${formatUsdNoNegativeZero(usd, 0)} (${normalizedPct.toFixed(1)}%)`;
+}
+
+function formatAmountUsd(amountUsd: number): string {
+  return amountUsd.toLocaleString('en', { maximumFractionDigits: 2 });
 }
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -673,24 +711,27 @@ function formatLatency(ms: number): string {
       <div class="stats-grid" style="margin-bottom: 8px;">
         <div class="stat-card">
           <div class="stat-label">Balance</div>
-          <div class="stat-value">${{ (latestSnapshot?.balance ?? agent.config.paperBalance).toLocaleString('en', { maximumFractionDigits: 0 }) }}</div>
-          <div class="stat-change">started at ${{ agent.config.paperBalance.toLocaleString() }}</div>
+          <div class="stat-value">${{ displayedBalance.toLocaleString('en', { maximumFractionDigits: 0 }) }}</div>
+          <div class="stat-change">
+            started at ${{ agent.config.paperBalance.toLocaleString() }}
+            · in positions {{ formatUsdNoNegativeZero(inPositionsUsd, 0) }}
+          </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Total P&amp;L</div>
-          <div class="stat-value" :class="totalPnlUsd >= 0 ? 'positive' : 'negative'">
-            {{ totalPnlUsd >= 0 ? '+' : '' }}${{ totalPnlUsd.toFixed(0) }}
+          <div class="stat-value" :class="totalPnlUsd > 0 ? 'positive' : totalPnlUsd < 0 ? 'negative' : 'neutral'">
+            {{ formatUsdNoNegativeZero(totalPnlUsd, 0) }}
           </div>
           <div class="stat-change">
-            {{ (totalPnlPct >= 0 ? '+' : '') + totalPnlPct.toFixed(2) + '%' }}
+            {{ (Object.is(totalPnlPct, -0) || Math.abs(totalPnlPct) < 0.005 ? 0 : totalPnlPct).toFixed(1) + '%' }}
             <template v-if="openTrades.length > 0">
-              · <span :class="realizedPnlUsd >= 0 ? 'positive' : 'negative'">{{ realizedPnlUsd >= 0 ? '+' : '' }}${{ realizedPnlUsd.toFixed(0) }} realized</span>
+              · <span :class="realizedPnlUsd > 0 ? 'positive' : realizedPnlUsd < 0 ? 'negative' : 'neutral'">{{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }} realized</span>
             </template>
           </div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Win Rate</div>
-          <div class="stat-value" :class="winRate >= 50 ? 'positive' : 'negative'">
+          <div class="stat-value" :class="winRateClass(winRate)">
             {{ winRate.toFixed(1) }}%
           </div>
           <div class="stat-change">{{ closedTrades.length }} closed trades</div>
@@ -947,7 +988,7 @@ function formatLatency(ms: number): string {
                   </div>
                   <div>
                     <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Size</div>
-                    <div class="mono" style="font-size: 13px;">${{ trade.amountUsd.toLocaleString() }}</div>
+                    <div class="mono" style="font-size: 13px;">${{ formatAmountUsd(trade.amountUsd) }}</div>
                   </div>
                   <div>
                     <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Opened</div>
@@ -971,17 +1012,17 @@ function formatLatency(ms: number): string {
                   </div>
                   <div>
                     <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">P&amp;L</div>
-                    <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-summary-pnl'">
-                      <div
-                        v-if="pnl"
-                        class="mono"
-                        style="font-size: 13px; font-weight: 600;"
-                        :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
-                      >
-                        {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
-                        /
-                        {{ pnl.pnlPct >= 0 ? '+' : '' }}${{ ((pnl.pnlPct / 100) * trade.amountUsd).toFixed(2) }}
-                      </div>
+	                    <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-summary-pnl'">
+	                      <div
+	                        v-if="pnl"
+	                        class="mono"
+	                        style="font-size: 13px; font-weight: 600;"
+	                        :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
+	                      >
+	                        {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
+	                        /
+	                        {{ pnl.pnlPct >= 0 ? '+' : '' }}${{ ((pnl.pnlPct / 100) * trade.amountUsd).toFixed(2) }}
+	                      </div>
                       <div v-else class="mono" style="font-size: 13px; color: var(--text-muted);">
                         —
                       </div>
@@ -991,15 +1032,15 @@ function formatLatency(ms: number): string {
 
                 <!-- Unrealized P&L -->
                 <div style="text-align: right; min-width: 90px;">
-                  <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-pnl'">
-                    <template v-if="pnl">
-                      <div
-                        class="mono"
-                        style="font-size: 18px; font-weight: 700;"
-                        :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
-                      >
-                        {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
-                      </div>
+	                  <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-pnl'">
+	                    <template v-if="pnl">
+	                      <div
+	                        class="mono"
+	                        style="font-size: 18px; font-weight: 700;"
+	                        :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
+	                      >
+	                        {{ pnl.pnlPct >= 0 ? '+' : '' }}{{ pnl.pnlPct.toFixed(2) }}%
+	                      </div>
                       <!-- <div style="font-size: 11px; color: var(--text-muted);">
                         now ${{ formatPrice(pnl.currentPrice) }}
                       </div> -->
@@ -1076,18 +1117,30 @@ function formatLatency(ms: number): string {
                   <td class="mono">{{ trade.pair }}</td>
                   <td>
                     <span class="badge" :class="`badge-${trade.side}`">{{ trade.side }}</span>
-                  </td>
-                  <td class="mono">${{ formatPrice(trade.entryPrice) }}</td>
-                  <td class="mono">{{ trade.exitPrice ? '$' + formatPrice(trade.exitPrice) : '—' }}</td>
-                  <td class="mono">${{ trade.amountUsd.toLocaleString() }}</td>
-                  <td class="mono" :class="trade.confidenceBefore >= 0.7 ? 'positive' : 'neutral'" style="font-size: 12px;">
-                    {{ (trade.confidenceBefore * 100).toFixed(0) }}%
-                  </td>
-                  <td class="mono" :class="pnlClass(trade.pnlPct)">{{ formatPnl(trade.pnlPct) }}</td>
-                  <td style="color: var(--text-muted); font-size: 12px;">{{ trade.strategyUsed }}</td>
-                  <td>
-                    <span class="badge" :class="trade.status === 'open' ? 'badge-running' : 'badge-stopped'">
-                      {{ trade.status === 'closed' ? 'closed' : trade.status }}<span v-if="trade.closeReason" style="font-size: 10px; opacity: 0.7; margin-left: 4px;">({{ trade.closeReason.replace('_', ' ') }})</span>
+	                  </td>
+	                  <td class="mono">${{ formatPrice(trade.entryPrice) }}</td>
+	                  <td class="mono" :style="trade.status === 'open' ? { color: 'var(--text-muted)' } : undefined">
+	                    {{ trade.exitPrice ? '$' + formatPrice(trade.exitPrice) : '—' }}
+	                  </td>
+	                  <td class="mono">${{ formatAmountUsd(trade.amountUsd) }}</td>
+	                  <td class="mono" :class="trade.confidenceBefore >= 0.7 ? 'positive' : 'neutral'" style="font-size: 12px;">
+	                    {{ (trade.confidenceBefore * 100).toFixed(0) }}%
+	                  </td>
+	                  <td class="mono">
+	                    <template v-if="trade.status === 'open'">
+	                      <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-trades-pnl'">
+	                        <span v-if="pnl" class="pnl-dimmed" :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'">
+	                          {{ formatPnlInline((pnl.pnlPct / 100) * trade.amountUsd, pnl.pnlPct) }}
+	                        </span>
+	                        <span v-else class="neutral">—</span>
+	                      </template>
+	                    </template>
+	                    <span v-else :class="pnlClass(trade.pnlPct)">{{ formatPnlInline(trade.pnlUsd, trade.pnlPct) }}</span>
+	                  </td>
+	                  <td style="color: var(--text-muted); font-size: 12px;">{{ trade.strategyUsed }}</td>
+	                  <td>
+	                    <span class="badge" :class="trade.status === 'open' ? 'badge-running' : 'badge-stopped'">
+	                      {{ trade.status === 'closed' ? 'closed' : trade.status }}<span v-if="trade.closeReason" style="font-size: 10px; opacity: 0.7; margin-left: 4px;">({{ trade.closeReason.replace('_', ' ') }})</span>
                     </span>
                   </td>
                   <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>
@@ -1379,6 +1432,8 @@ span.prompt-pill:hover {
   display: flex;
   gap: 8px;
 }
+
+.pnl-dimmed { opacity: 0.65; }
 
 /* ── DexScreener link ──────────────────────────────────────────── */
 

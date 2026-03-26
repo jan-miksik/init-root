@@ -6,15 +6,71 @@ const props = defineProps<{
   showAgent?: boolean;
 }>();
 
-const { formatPnl, pnlClass, closeTrade } = useTrades();
+const { request } = useApi();
+const { pnlClass, closeTrade } = useTrades();
 const expandedRows = ref<Set<string>>(new Set());
 const closing = ref<Set<string>>(new Set());
+const livePrices = ref<Record<string, number>>({});
 
 type SortKey = 'pair' | 'amountUsd' | 'confidenceBefore' | 'pnlPct' | 'pnlUsd' | 'openedAt';
 type SortDir = 'asc' | 'desc';
 
 const sortKey = ref<SortKey | null>(null);
 const sortDir = ref<SortDir>('desc');
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+let pricesReqId = 0;
+const openPairsKey = computed(() =>
+  Array.from(new Set(props.trades.filter((t) => t.status === 'open').map((t) => t.pair)))
+    .filter(Boolean)
+    .sort()
+    .join('|')
+);
+
+watch(
+  openPairsKey,
+  async () => {
+    const pairs = openPairsKey.value ? openPairsKey.value.split('|') : [];
+    const reqId = ++pricesReqId;
+    if (pairs.length === 0) {
+      livePrices.value = {};
+      return;
+    }
+
+    try {
+      const merged: Record<string, number> = {};
+      for (const batch of chunk(pairs, 50)) {
+        const res = await request<{ prices: Record<string, number> }>(`/api/pairs/prices`, {
+          method: 'POST',
+          body: { pairs: batch },
+          timeout: 30_000,
+        });
+        Object.assign(merged, res.prices ?? {});
+      }
+      if (reqId !== pricesReqId) return;
+      livePrices.value = merged;
+    } catch {
+      if (reqId !== pricesReqId) return;
+      livePrices.value = {};
+    }
+  },
+  { immediate: true }
+);
+
+function getUnrealizedPnl(trade: Trade): { pnlPct: number; pnlUsd: number } | null {
+  const live = livePrices.value[trade.pair];
+  if (!live || live <= 0) return null;
+  const pnlPct =
+    trade.side === 'buy'
+      ? ((live - trade.entryPrice) / trade.entryPrice) * 100
+      : ((trade.entryPrice - live) / trade.entryPrice) * 100;
+  return { pnlPct, pnlUsd: (pnlPct / 100) * trade.amountUsd };
+}
 
 function toggleSort(key: SortKey) {
   if (sortKey.value === key) {
@@ -76,10 +132,24 @@ function formatDate(iso: string) {
   });
 }
 
-function formatPnlUsd(usd?: number) {
-  if (usd === undefined || usd === null) return '—';
-  const sign = usd >= 0 ? '+' : '';
-  return `${sign}$${Math.abs(usd).toFixed(2)}`;
+function formatUsdNoNegativeZero(value: number, digits = 0): string {
+  const abs = Math.abs(value);
+  const effectiveDigits = digits === 0 && abs < 1 ? 2 : digits;
+  const roundingUnit = 10 ** (-effectiveDigits);
+  const roundsToZero = abs < 0.5 * roundingUnit;
+  const normalized = Object.is(value, -0) || roundsToZero ? 0 : value;
+  if (normalized < 0) return `$-${Math.abs(normalized).toFixed(effectiveDigits)}`;
+  return `$${normalized.toFixed(effectiveDigits)}`;
+}
+
+function formatPnlInline(pnlUsd?: number, pnlPct?: number): string {
+  if (pnlUsd === undefined || pnlUsd === null || pnlPct === undefined || pnlPct === null) return '—';
+  const normalizedPct = Object.is(pnlPct, -0) || Math.abs(pnlPct) < 0.05 ? 0 : pnlPct;
+  return `${formatUsdNoNegativeZero(pnlUsd, 0)} (${normalizedPct.toFixed(1)}%)`;
+}
+
+function formatAmountUsd(amountUsd: number): string {
+  return amountUsd.toLocaleString('en', { maximumFractionDigits: 2 });
 }
 </script>
 
@@ -96,8 +166,7 @@ function formatPnlUsd(usd?: number) {
           <th>Exit</th>
           <th class="sortable" @click="toggleSort('amountUsd')">Amt <span class="sort-icon">{{ sortIcon('amountUsd') }}</span></th>
           <th class="sortable" @click="toggleSort('confidenceBefore')">Conf <span class="sort-icon">{{ sortIcon('confidenceBefore') }}</span></th>
-          <th class="sortable" @click="toggleSort('pnlPct')">P&amp;L % <span class="sort-icon">{{ sortIcon('pnlPct') }}</span></th>
-          <th class="sortable" @click="toggleSort('pnlUsd')">P&amp;L $ <span class="sort-icon">{{ sortIcon('pnlUsd') }}</span></th>
+          <th class="sortable" @click="toggleSort('pnlUsd')">P&amp;L <span class="sort-icon">{{ sortIcon('pnlUsd') }}</span></th>
           <th>Status</th>
           <th class="sortable" @click="toggleSort('openedAt')">Opened <span class="sort-icon">{{ sortIcon('openedAt') }}</span></th>
           <th class="tt-col-actions">Actions</th>
@@ -105,7 +174,7 @@ function formatPnlUsd(usd?: number) {
       </thead>
       <tbody>
         <tr v-if="sortedTrades.length === 0">
-          <td :colspan="showAgent ? 13 : 12" style="text-align: center; padding: 32px; color: var(--text-muted);">
+          <td :colspan="showAgent ? 12 : 11" style="text-align: center; padding: 32px; color: var(--text-muted);">
             No trades yet
           </td>
         </tr>
@@ -129,18 +198,23 @@ function formatPnlUsd(usd?: number) {
               <span class="badge" :class="`badge-${trade.side}`">{{ trade.side }}</span>
             </td>
             <td class="mono">${{ formatPrice(trade.entryPrice) }}</td>
-            <td class="mono">
+            <td class="mono" :class="trade.status === 'open' ? 'tt-open-exit' : ''">
               {{ trade.exitPrice ? '$' + formatPrice(trade.exitPrice) : '—' }}
             </td>
-            <td class="mono">${{ trade.amountUsd.toLocaleString() }}</td>
+            <td class="mono">${{ formatAmountUsd(trade.amountUsd) }}</td>
             <td class="mono" :class="trade.confidenceBefore >= 0.7 ? 'positive' : 'neutral'" style="font-size: 12px;">
               {{ (trade.confidenceBefore * 100).toFixed(0) }}%
             </td>
-            <td class="mono" :class="pnlClass(trade.pnlPct)">
-              {{ formatPnl(trade.pnlPct) }}
-            </td>
-            <td class="mono" :class="pnlClass(trade.pnlUsd)">
-              {{ formatPnlUsd(trade.pnlUsd) }}
+            <td class="mono">
+              <template v-if="trade.status === 'open'">
+                <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-pnl'">
+                  <span v-if="pnl" class="tt-open-pnl" :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'">
+                    {{ formatPnlInline(pnl.pnlUsd, pnl.pnlPct) }}
+                  </span>
+                  <span v-else class="tt-open-pnl" style="color: var(--text-muted);">—</span>
+                </template>
+              </template>
+              <span v-else :class="pnlClass(trade.pnlPct)">{{ formatPnlInline(trade.pnlUsd, trade.pnlPct) }}</span>
             </td>
             <td>
               <span
@@ -165,7 +239,7 @@ function formatPnlUsd(usd?: number) {
             </td>
           </tr>
           <tr v-if="expandedRows.has(trade.id)" class="tt-detail-row">
-            <td :colspan="showAgent ? 13 : 12">
+            <td :colspan="showAgent ? 12 : 11">
               <div class="tt-detail">
                 <div class="tt-detail-meta">
                   <span v-if="trade.strategyUsed" class="tt-meta-tag">{{ trade.strategyUsed }}</span>
@@ -222,6 +296,9 @@ function formatPnlUsd(usd?: number) {
 }
 
 .tt-cell-actions { text-align: right; }
+
+.tt-open-exit { color: var(--text-muted); }
+.tt-open-pnl { opacity: 0.65; }
 
 /* ── Sorting ─────────────────────────────────────────── */
 .sortable {

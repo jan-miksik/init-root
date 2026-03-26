@@ -47,9 +47,16 @@ export const ManagerBehaviorConfigSchema = z.object({
 
 export type ManagerBehaviorConfig = z.infer<typeof ManagerBehaviorConfigSchema>;
 
+export const ENTITY_NAME_MAX_CHARS = 256;
+
+const EntityNameSchema = z
+  .string()
+  .min(1, 'Name is required')
+  .max(ENTITY_NAME_MAX_CHARS, `Name must be at most ${ENTITY_NAME_MAX_CHARS} characters`);
+
 export const AgentConfigSchema = z.object({
   // Identity
-  name: z.string().min(1).max(50),
+  name: EntityNameSchema,
   description: z.string().max(500).optional(),
 
   // LLM
@@ -120,7 +127,7 @@ export const TradeDecisionSchema = z.object({
 });
 
 export const CreateAgentRequestSchema = z.object({
-  name: z.string().min(1).max(50),
+  name: EntityNameSchema,
   description: z.string().max(500).optional(),
   llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
@@ -201,7 +208,7 @@ export const ManagerConfigSchema = z.object({
 export type ManagerConfig = z.infer<typeof ManagerConfigSchema>;
 
 export const CreateManagerRequestSchema = z.object({
-  name: z.string().min(1).max(50),
+  name: EntityNameSchema,
   description: z.string().max(500).optional(),
   llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
   temperature: z.number().min(0).max(2).default(0.7),
@@ -211,12 +218,13 @@ export const CreateManagerRequestSchema = z.object({
   // Behavior (optional — falls back to defaults / profile)
   behavior: ManagerBehaviorConfigSchema.optional(),
   profileId: z.string().optional(),
+  personaMd: z.string().max(4000).optional(),
 });
 
 export const UpdateManagerRequestSchema = CreateManagerRequestSchema.partial();
 
 export const CreateBehaviorProfileSchema = z.object({
-  name: z.string().min(1).max(50),
+  name: EntityNameSchema,
   emoji: z.string().default('🤖'),
   description: z.string().max(500).optional(),
   type: z.enum(['agent', 'manager']),

@@ -78,6 +78,29 @@ describe('parseManagerDecisions', () => {
     const decisions = parseManagerDecisions(raw);
     expect(decisions).toHaveLength(1);
   });
+
+  it('repairs truncated JSON arrays by dropping the last incomplete field', () => {
+    const raw = `[
+      {
+        "action": "create_agent",
+        "params": {
+          "name": "Professor_WETH_USDC",
+          "pairs": ["WETH/USDC"],
+          "llmModel": "nvidia/nemotron-3-super-120b-a12b:free",
+          "temperature": 0.5,
+          "analysisInterval": 30,
+          "paperBalance": 500,
+          "stopLossPct": 4,
+          "takeProfitPct": 8,
+          "maxPositionSizePct": 15,
+          "maxOpenPositions": 1,
+          "maxDaily`;
+
+    const decisions = parseManagerDecisions(raw);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].action).toBe('create_agent');
+    expect(decisions[0].params?.name).toBe('Professor_WETH_USDC');
+  });
 });
 
 describe('buildManagerPrompt', () => {

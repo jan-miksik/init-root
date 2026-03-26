@@ -83,19 +83,39 @@ export interface ManagedAgentSnapshot {
 
 const VALID_ACTIONS: ManagerAction[] = ['create_agent', 'start_agent', 'pause_agent', 'modify_agent', 'terminate_agent', 'hold'];
 
-// Restrict manager-created agents to free OpenRouter models only, to avoid accidental paid usage.
-const FREE_AGENT_MODELS = new Set<string>([
+const DEFAULT_FREE_AGENT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+
+const FREE_AGENT_MODELS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
   'nvidia/nemotron-3-nano-30b-a3b:free',
+  'qwen/qwen3-coder:free',
   'stepfun/step-3.5-flash:free',
+  'minimax/minimax-m2.5:free',
   'nvidia/nemotron-nano-9b-v2:free',
   'arcee-ai/trinity-large-preview:free',
-]);
+];
 
-function normaliseAgentModel(requested: unknown): string {
-  const fallback = 'nvidia/nemotron-3-super-120b-a12b:free';
+// Keep manager-paid options intentionally narrow: low-cost models only.
+// For now, cap to models with <= $3 / 1M input and output tokens.
+const PAID_CHEAP_AGENT_MODELS = [
+  'google/gemini-3.1-flash-lite-preview',
+  'deepseek/deepseek-v3.2',
+  'minimax/minimax-m2.5',
+  'mistralai/mistral-small-2603',
+];
+
+function buildAllowedAgentModels(hasUserOpenRouterKey: boolean): Set<string> {
+  const allowed = new Set(FREE_AGENT_MODELS);
+  if (hasUserOpenRouterKey) {
+    for (const modelId of PAID_CHEAP_AGENT_MODELS) allowed.add(modelId);
+  }
+  return allowed;
+}
+
+function normaliseAgentModel(requested: unknown, allowedModels: Set<string>): string {
+  const fallback = DEFAULT_FREE_AGENT_MODEL;
   if (typeof requested !== 'string') return fallback;
-  return FREE_AGENT_MODELS.has(requested) ? requested : fallback;
+  return allowedModels.has(requested) ? requested : fallback;
 }
 
 /** Find the index of the bracket/brace that closes the one opened at `openIdx`. */
@@ -128,6 +148,80 @@ function normaliseParsed(items: unknown[]): ManagerDecision[] {
     }));
 }
 
+function computeAutoClosings(prefix: string): string | null {
+  const stack: Array<'[' | '{'> = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < prefix.length; i++) {
+    const ch = prefix[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if (ch === '[' || ch === '{') stack.push(ch);
+    if (ch === ']' || ch === '}') {
+      const expected: '[' | '{' = ch === ']' ? '[' : '{';
+      if (stack.length === 0 || stack[stack.length - 1] !== expected) return null;
+      stack.pop();
+    }
+  }
+
+  // If we ended inside a string, any truncation repair would be guesswork.
+  if (inString) return null;
+
+  let closings = '';
+  for (let i = stack.length - 1; i >= 0; i--) {
+    closings += stack[i] === '[' ? ']' : '}';
+  }
+  return closings;
+}
+
+function tryRepairTruncatedJsonArray(arraySlice: string): unknown[] | null {
+  const slice = arraySlice.trimEnd();
+  if (!slice.trimStart().startsWith('[')) return null;
+
+  // Collect cut points outside of strings. We'll try trimming at these points and
+  // auto-closing any unbalanced braces/brackets to form valid JSON.
+  const cutPoints: number[] = [];
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < slice.length; i++) {
+    const ch = slice[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === ',' || ch === '}' || ch === ']') cutPoints.push(i);
+  }
+
+  const candidates = cutPoints.slice(-80).reverse();
+  for (const idx of candidates) {
+    const ch = slice[idx];
+    let prefix = ch === ',' ? slice.slice(0, idx) : slice.slice(0, idx + 1);
+    prefix = prefix.trimEnd();
+    if (!prefix) continue;
+
+    const closings = computeAutoClosings(prefix);
+    if (!closings) continue;
+    try {
+      const parsed = JSON.parse(prefix + closings);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* keep trying */ }
+  }
+
+  // Last resort: try auto-closing without trimming (helps when only the final `]` is missing).
+  const closings = computeAutoClosings(slice);
+  if (!closings) return null;
+  try {
+    const parsed = JSON.parse(slice + closings);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Strip reasoning tags and extract JSON array (or single object) from LLM response */
 export function parseManagerDecisions(raw: string): ManagerDecision[] {
   // Strip reasoning tags (DeepSeek, Qwen thinking, etc.)
@@ -148,7 +242,23 @@ export function parseManagerDecisions(raw: string): ManagerDecision[] {
           const decisions = normaliseParsed(parsed);
           if (decisions.length > 0) return decisions;
         }
-      } catch { /* fall through */ }
+      } catch {
+        // Try a best-effort repair even when a closing `]` exists, since models sometimes
+        // emit trailing commas or get cut mid-token but still produce a stray `]`.
+        const repaired = tryRepairTruncatedJsonArray(cleaned.slice(arrStart, arrEnd + 1));
+        if (repaired) {
+          const decisions = normaliseParsed(repaired);
+          if (decisions.length > 0) return decisions;
+        }
+        /* fall through */
+      }
+    } else {
+      // Repair common truncation mode: output cut mid-field (e.g., token limit), leaving the JSON array unclosed.
+      const repaired = tryRepairTruncatedJsonArray(cleaned.slice(arrStart));
+      if (repaired) {
+        const decisions = normaliseParsed(repaired);
+        if (decisions.length > 0) return decisions;
+      }
     }
   }
 
@@ -174,8 +284,13 @@ export function buildManagerPrompt(ctx: {
   memory: ManagerMemory;
   managerConfig: ManagerConfig;
   managerPersonaMd?: string | null;
+  hasUserOpenRouterKey?: boolean;
 }): string {
   const { agents: managedAgents, marketData, memory, managerConfig, managerPersonaMd } = ctx;
+  const hasUserOpenRouterKey = !!ctx.hasUserOpenRouterKey;
+  const availableModels = hasUserOpenRouterKey
+    ? [...FREE_AGENT_MODELS, ...PAID_CHEAP_AGENT_MODELS]
+    : FREE_AGENT_MODELS;
 
   const agentSummaries = managedAgents.map((a) =>
     `Agent: ${a.name} (id: ${a.id})\n` +
@@ -223,15 +338,14 @@ ${behaviorSection ? '\n' + behaviorSection : ''}
 When creating or modifying agents, you MUST choose pairs only from this allowlist:
 ${SUPPORTED_BASE_PAIRS.map((p: string) => `- "${p}"`).join('\n')}
 
-## Model Cost Constraints
-You must use only the following free OpenRouter models when creating or modifying agents:
-- "nvidia/nemotron-3-super-120b-a12b:free"
-- "nvidia/nemotron-3-nano-30b-a3b:free"
-- "stepfun/step-3.5-flash:free"
-- "nvidia/nemotron-nano-9b-v2:free"
-- "arcee-ai/trinity-large-preview:free"
+## Available LLM Models For Agents
+Use only these llmModel IDs when creating or modifying agents:
+${availableModels.map((m) => `- "${m}"`).join('\n')}
 
-Never propose or use any paid or other model IDs (no OpenAI, GPT-4, GPT-3.5, etc). If unsure, default to "nvidia/nemotron-3-super-120b-a12b:free".
+${hasUserOpenRouterKey
+  ? 'The user has OpenRouter connected, so you may use free models and low-cost paid models (up to $3 per 1M tokens).'
+  : 'The user has no connected OpenRouter key, so you must use free models only.'}
+If unsure, default to "${DEFAULT_FREE_AGENT_MODEL}".
 
 ## Available Agent Profiles
 When creating agents, pick a profileId that naturally fits your management style and risk tolerance — or combine several across your fleet for diversity. You can also write a fully custom personaMd instead.
@@ -250,6 +364,10 @@ Valid actions:
 
 IMPORTANT: Respond with ONLY a valid JSON array — no markdown, no explanation.
 Each element: { "action": "<action>", "agentId": "<id or omit>", "params": {<optional>}, "reasoning": "<why>" }
+Output constraints:
+- Keep each "reasoning" under 160 characters.
+- Prefer "profileId" over "personaMd" to keep output short; only include "personaMd" if absolutely necessary, and keep it under 400 characters.
+- Omit params that you want to keep at defaults.
 
 Example:
 [
@@ -264,9 +382,11 @@ export async function executeManagerAction(
   db: ReturnType<typeof drizzle>,
   env: Env,
   managerId: string,
-  ownerAddress: string
+  ownerAddress: string,
+  hasUserOpenRouterKey = false
 ): Promise<{ success: boolean; detail?: string; error?: string }> {
   const { action, agentId, params } = decision;
+  const allowedModels = buildAllowedAgentModels(hasUserOpenRouterKey);
 
   switch (action) {
     case 'hold':
@@ -327,7 +447,7 @@ export async function executeManagerAction(
       const { personaMd: paramsPersona, ...restParams } = params as Record<string, unknown> & { personaMd?: string };
       const patch: Record<string, unknown> = { ...restParams };
       if (typeof patch.llmModel === 'string') {
-        patch.llmModel = normaliseAgentModel(patch.llmModel);
+        patch.llmModel = normaliseAgentModel(patch.llmModel, allowedModels);
       }
       if (patch.pairs != null && Array.isArray(patch.pairs)) {
         const normalized = normalizePairsForDex(patch.pairs as string[]);
@@ -343,7 +463,7 @@ export async function executeManagerAction(
       const mergedConfig = { ...existingConfig, ...patch };
       const updates: Partial<typeof agents.$inferInsert> = {
         config: JSON.stringify(mergedConfig),
-        llmModel: (mergedConfig.llmModel ?? agent.llmModel) || 'nvidia/nemotron-3-super-120b-a12b:free',
+        llmModel: (mergedConfig.llmModel ?? agent.llmModel) || DEFAULT_FREE_AGENT_MODEL,
         updatedAt: nowIso(),
       };
       if (paramsPersona !== undefined) {
@@ -359,7 +479,7 @@ export async function executeManagerAction(
       const paperBalance = Number(params.paperBalance ?? 10000);
       const slippageSimulation = 0.3;
       const analysisInterval = String(params.analysisInterval ?? '1h');
-      const llmModel = normaliseAgentModel(params.llmModel);
+      const llmModel = normaliseAgentModel(params.llmModel, allowedModels);
       // Use the LLM-chosen profileId if it's a valid agent profile, otherwise no profile.
       const validAgentProfileIds = new Set(AGENT_PROFILES.map((p) => p.id));
       const llmProfileId = typeof params.profileId === 'string' ? params.profileId : null;
@@ -391,7 +511,7 @@ export async function executeManagerAction(
         dexes: ['aerodrome', 'uniswap-v3'],
         maxLlmCallsPerHour: 12,
         allowFallback: false,
-        llmFallback: 'nvidia/nemotron-3-super-120b-a12b:free',
+        llmFallback: DEFAULT_FREE_AGENT_MODEL,
       };
       const id = generateId('agent');
       const now = nowIso();
@@ -563,7 +683,23 @@ export async function runManagerLoop(
   };
 
   // 7. Build prompt and call LLM
-  const prompt = buildManagerPrompt({ agents: agentSnapshots, marketData, memory, managerConfig: config, managerPersonaMd: managerRow.personaMd });
+  const ownerAddr = managerRow.ownerAddress?.toLowerCase();
+  const [ownerUser] = ownerAddr
+    ? await db
+      .select({ openRouterKey: users.openRouterKey })
+      .from(users)
+      .where(eq(users.walletAddress, ownerAddr))
+    : [];
+  const hasUserOpenRouterKey = !!ownerUser?.openRouterKey;
+
+  const prompt = buildManagerPrompt({
+    agents: agentSnapshots,
+    marketData,
+    memory,
+    managerConfig: config,
+    managerPersonaMd: managerRow.personaMd,
+    hasUserOpenRouterKey,
+  });
 
   console.log('[manager-loop] === FULL PROMPT SENT TO MANAGER LLM ===');
   console.log('[manager-loop] Manager ID:', managerId);
@@ -582,12 +718,7 @@ export async function runManagerLoop(
   } else {
     try {
       let orApiKey = env.OPENROUTER_API_KEY;
-      const ownerAddr = managerRow.ownerAddress?.toLowerCase();
       if (ownerAddr) {
-        const [ownerUser] = await db
-          .select({ openRouterKey: users.openRouterKey })
-          .from(users)
-          .where(eq(users.walletAddress, ownerAddr));
         if (ownerUser?.openRouterKey) {
           try {
             orApiKey = await decryptKey(ownerUser.openRouterKey, env.KEY_ENCRYPTION_SECRET);
@@ -637,7 +768,19 @@ export async function runManagerLoop(
 
   // 9. Execute and log each decision
   for (const decision of decisions) {
-    const result = await executeManagerAction(decision, db, env, managerId, managerRow.ownerAddress);
+    const actionResult = await executeManagerAction(
+      decision,
+      db,
+      env,
+      managerId,
+      managerRow.ownerAddress,
+      hasUserOpenRouterKey
+    );
+    const result = {
+      ...actionResult,
+      llmPromptText: prompt,
+      llmRawResponse: rawResponse,
+    };
     await db.insert(agentManagerLogs).values({
       id: generateId('mlog'),
       managerId,

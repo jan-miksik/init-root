@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getAgentPersonaTemplate, resolveAgentProfileId } from '@dex-agents/shared';
+import { ENTITY_NAME_MAX_CHARS, getAgentPersonaTemplate, resolveAgentProfileId } from '@dex-agents/shared';
 import type { CreateAgentPayload } from '~/composables/useAgents';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
@@ -339,6 +339,7 @@ function buildSubmitPayload(): CreateAgentPayload {
 
 async function handleSubmit() {
   if (!form.name.trim()) { validationError.value = 'Agent name is required'; return; }
+  if (form.name.length > ENTITY_NAME_MAX_CHARS) { validationError.value = `Agent name must be at most ${ENTITY_NAME_MAX_CHARS} characters`; return; }
   if (!form.pairs.length) { validationError.value = 'Select at least one pair'; return; }
   validationError.value = '';
   submitting.value = true;
@@ -384,7 +385,8 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
 
     <!-- Name -->
     <div class="acf__name-row">
-      <input v-model="form.name" class="acf__name-input" placeholder="Agent name…" maxlength="50" required />
+      <input v-model="form.name" class="acf__name-input" placeholder="Agent name…" :maxlength="ENTITY_NAME_MAX_CHARS" required />
+      <div class="acf__name-count">{{ form.name.length }}/{{ ENTITY_NAME_MAX_CHARS }}</div>
       <label class="acf__sync-check">
         <input v-model="syncNameWithModel" type="checkbox" />
         <span>auto-name</span>
@@ -640,6 +642,12 @@ defineExpose({ personaMd, isPersonaCustomized, behavior, form, restorePersona, g
   transition: border-color 0.15s;
 }
 .acf__name-input:focus { border-color: var(--accent, #7c6af7); }
+.acf__name-count {
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .acf__sync-check {
   display: flex;
   align-items: center;

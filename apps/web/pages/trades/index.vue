@@ -5,6 +5,11 @@ const { trades, stats, loading, error, fetchTrades, fetchStats } = useTrades();
 const statusFilter = ref('');
 const limitFilter = ref(100);
 
+function winRateClass(rate: number): 'positive' | 'negative' | 'neutral' {
+  if (rate === 0) return 'neutral';
+  return rate >= 50 ? 'positive' : 'negative';
+}
+
 async function load() {
   await Promise.all([
     fetchTrades({ status: statusFilter.value || undefined, limit: limitFilter.value }),
@@ -34,7 +39,7 @@ watch([statusFilter, limitFilter], load);
       </div>
       <div class="stat-card">
         <div class="stat-label">Win Rate</div>
-        <div class="stat-value" :class="stats.winRate >= 50 ? 'positive' : 'negative'">
+        <div class="stat-value" :class="winRateClass(stats.winRate)">
           {{ stats.winRate.toFixed(1) }}%
         </div>
       </div>

@@ -4,7 +4,12 @@
  * and field-level rejection that isn't covered in phase1.test.ts.
  */
 import { describe, it, expect } from 'vitest';
-import { AgentConfigSchema, AgentBehaviorConfigSchema, TradeDecisionSchema } from '../../packages/shared/src/validation.ts';
+import {
+  AgentConfigSchema,
+  AgentBehaviorConfigSchema,
+  ENTITY_NAME_MAX_CHARS,
+  TradeDecisionSchema,
+} from '../../packages/shared/src/validation.ts';
 
 // ── AgentConfigSchema boundaries ─────────────────────────────────────────────
 
@@ -14,13 +19,13 @@ describe('AgentConfigSchema — boundaries', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects name longer than 50 chars', () => {
-    const r = AgentConfigSchema.safeParse({ name: 'x'.repeat(51) });
+  it(`rejects name longer than ${ENTITY_NAME_MAX_CHARS} chars`, () => {
+    const r = AgentConfigSchema.safeParse({ name: 'x'.repeat(ENTITY_NAME_MAX_CHARS + 1) });
     expect(r.success).toBe(false);
   });
 
-  it('accepts name at max boundary (50 chars)', () => {
-    const r = AgentConfigSchema.safeParse({ name: 'x'.repeat(50) });
+  it(`accepts name at max boundary (${ENTITY_NAME_MAX_CHARS} chars)`, () => {
+    const r = AgentConfigSchema.safeParse({ name: 'x'.repeat(ENTITY_NAME_MAX_CHARS) });
     expect(r.success).toBe(true);
   });
 

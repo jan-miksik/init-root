@@ -125,19 +125,52 @@ interface PerformanceSnapshot {
 }
 
 const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
+interface AgentStatusResponse {
+  agentId: string | null;
+  status: string;
+  balance: number | null;
+  nextAlarmAt: number | null;
+}
+
+function formatUsdNoNegativeZero(value: number, digits = 0): string {
+  const abs = Math.abs(value);
+  const effectiveDigits = digits === 0 && abs < 1 ? 2 : digits;
+  const roundingUnit = 10 ** (-effectiveDigits);
+  const roundsToZero = abs < 0.5 * roundingUnit;
+  const normalized = Object.is(value, -0) || roundsToZero ? 0 : value;
+  if (normalized < 0) return `$-${Math.abs(normalized).toFixed(effectiveDigits)}`;
+  return `$${normalized.toFixed(effectiveDigits)}`;
+}
+
+function formatPnlInline(usd?: number | null, pct?: number | null): string {
+  if (usd === undefined || usd === null || pct === undefined || pct === null) return '—';
+  const normalizedPct = Object.is(pct, -0) || Math.abs(pct) < 0.05 ? 0 : pct;
+  return `${formatUsdNoNegativeZero(usd, 0)} (${normalizedPct.toFixed(1)}%)`;
+}
+
+function winRateClass(rate?: number | null): 'positive' | 'negative' | 'neutral' {
+  if (!rate) return 'neutral';
+  return rate >= 50 ? 'positive' : 'negative';
+}
 
 async function loadAgentPerformance(agentId: string) {
   try {
-    const res = await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`);
-    const latest = res.snapshots[0];
-    if (!latest) return;
     const agent = agents.value.find((a) => a.id === agentId);
-    const startingBalance = agent?.config.paperBalance ?? latest.balance / (1 + latest.totalPnlPct / 100);
-    const totalPnlUsd = latest.balance - startingBalance;
-    agentPnl.value[agentId] = {
+    if (!agent) return;
+    await request<AgentStatusResponse>(`/api/agents/${agentId}/status`).catch(() => null);
+    await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`).catch(() => null);
+    const tradesRes = await request<{ trades: Array<{ status: 'open' | 'closed'; pnlUsd?: number | null }> }>(
+      `/api/agents/${agentId}/trades`
+    ).catch(() => null);
+    const startingBalance = agent.config.paperBalance;
+    const totalPnlUsd = (tradesRes?.trades ?? [])
+      .filter((t) => t.status === 'closed')
+      .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+    const totalPnlPct = (totalPnlUsd / startingBalance) * 100;
+    agentPnl.value = { ...agentPnl.value, [agentId]: {
       totalPnlUsd,
-      totalPnlPct: latest.totalPnlPct,
-    };
+      totalPnlPct,
+    } };
   } catch {
     // ignore per-agent performance errors in list view
   }
@@ -147,9 +180,7 @@ watch(
   agents,
   (list) => {
     for (const a of list) {
-      if (!agentPnl.value[a.id]) {
-        loadAgentPerformance(a.id);
-      }
+      loadAgentPerformance(a.id);
     }
   },
   { immediate: true },
@@ -192,6 +223,7 @@ async function refreshOverview() {
   refreshing.value = true;
   try {
     await Promise.all([fetchAgents(), fetchStats()]);
+    await Promise.all(agents.value.map((a) => loadAgentPerformance(a.id)));
   } finally {
     refreshing.value = false;
   }
@@ -323,7 +355,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       </div>
       <div class="stat-card">
         <div class="stat-label">Win Rate</div>
-        <div class="stat-value" :class="(stats?.winRate ?? 0) >= 50 ? 'positive' : 'negative'">
+        <div class="stat-value" :class="winRateClass(stats?.winRate)">
           {{ stats?.winRate !== null && stats?.winRate !== undefined ? stats.winRate.toFixed(1) + '%' : '—' }}
         </div>
         <div class="stat-change">across closed trades</div>
@@ -333,7 +365,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
         <div class="stat-value" :class="(realizedPnlUsd ?? 0) >= 0 ? 'positive' : 'negative'">
           {{
             realizedPnlUsd !== null
-              ? (realizedPnlUsd >= 0 ? '+' : '') + '$' + realizedPnlUsd.toFixed(0)
+              ? formatUsdNoNegativeZero(realizedPnlUsd, 0)
               : '—'
           }}
         </div>
@@ -450,11 +482,8 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               </td>
               <td v-if="visibleColumns.totalPnl" class="mono" style="font-size: 12px;">
                 <template v-if="agentPnl[agent.id]">
-                  <span :class="agentPnl[agent.id]!.totalPnlUsd >= 0 ? 'positive' : 'negative'">
-                    {{ agentPnl[agent.id]!.totalPnlUsd >= 0 ? '+' : '' }}${{ agentPnl[agent.id]!.totalPnlUsd.toFixed(0) }}
-                  </span>
-                  <span style="color: var(--text-muted); margin-left: 4px;">
-                    ({{ agentPnl[agent.id]!.totalPnlPct >= 0 ? '+' : '' }}{{ agentPnl[agent.id]!.totalPnlPct.toFixed(1) }}%)
+                  <span :class="agentPnl[agent.id]!.totalPnlUsd > 0 ? 'positive' : agentPnl[agent.id]!.totalPnlUsd < 0 ? 'negative' : 'neutral'">
+                    {{ formatPnlInline(agentPnl[agent.id]!.totalPnlUsd, agentPnl[agent.id]!.totalPnlPct) }}
                   </span>
                 </template>
                 <span v-else style="color: var(--text-muted);">—</span>

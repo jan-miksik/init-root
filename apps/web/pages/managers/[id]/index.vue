@@ -73,27 +73,101 @@
       <div class="detail-columns">
         <!-- Decision Log (left) -->
         <div class="detail-col-left">
-          <div class="col-header">Decision Log</div>
+          <div class="col-header">
+            <span>Decision Log</span>
+            <button
+              class="btn btn-ghost btn-sm"
+              style="margin-left: auto; font-size: 11px;"
+              @click="showMdPreview = !showMdPreview"
+            >{{ showMdPreview ? 'MD ●' : 'MD ○' }}</button>
+          </div>
           <div v-if="logs.length === 0" class="empty-state" style="padding: 32px 24px;">
             <div class="empty-title">No decisions logged yet</div>
             <p>Start the manager to begin generating decisions.</p>
           </div>
-          <div v-else style="display: flex; flex-direction: column; gap: 8px;">
-            <div v-for="log in pagedLogs" :key="log.id" class="card" style="padding: 14px 16px;">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                <span class="badge" :class="actionBadgeClass(log.action)" style="font-size: 11px;">{{ log.action }}</span>
-                <span style="font-size: 12px; color: var(--text-muted);">{{ new Date(log.createdAt).toLocaleString() }}</span>
-                <span
-                  v-if="log.llmPromptTokens != null || log.llmCompletionTokens != null"
-                  class="mono"
-                  style="margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap;"
-                >
-                  {{ log.llmPromptTokens ?? '—' }} / {{ log.llmCompletionTokens ?? '—' }} tokens
-                </span>
+          <div v-else class="manager-log-feed">
+            <div v-for="log in pagedLogs" :key="log.id" class="dec-entry">
+              <div class="dec-main">
+                <div class="dec-main-header">
+                  <span class="badge" :class="actionBadgeClass(log.action)" style="font-size: 11px;">{{ log.action }}</span>
+                  <span class="dec-meta">{{ new Date(log.createdAt).toLocaleString() }}</span>
+                  <span
+                    v-if="log.llmPromptTokens != null || log.llmCompletionTokens != null"
+                    class="dec-meta mono"
+                    style="margin-left: auto; white-space: nowrap;"
+                  >
+                    {{ log.llmPromptTokens ?? '—' }}↑ {{ log.llmCompletionTokens ?? '—' }}↓
+                  </span>
+                </div>
+                <!-- eslint-disable-next-line vue/no-v-html -->
+                <div class="chat-reasoning" :class="{ 'chat-reasoning--md': showMdPreview }" v-html="sectionHtml(log.reasoning, showMdPreview)" />
+                <p v-if="log.result?.detail" class="dec-meta">{{ log.result.detail }}</p>
+                <p v-if="log.result?.error" class="dec-meta" style="color: var(--red);">{{ log.result.error }}</p>
               </div>
-              <p style="font-size: 13px; color: var(--text-dim);">{{ log.reasoning }}</p>
-              <p v-if="log.result?.detail" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">{{ log.result.detail }}</p>
-              <p v-if="log.result?.error" style="font-size: 12px; color: var(--red); margin-top: 4px;">{{ log.result.error }}</p>
+
+              <button class="dec-details-btn" @click="toggleSection(log.id, 'details')">
+                Details {{ expandedSections[log.id]?.has('details') ? '▾' : '▸' }}
+              </button>
+
+              <div v-if="expandedSections[log.id]?.has('details')" class="dec-details">
+                <div class="prompt-pills">
+                  <button class="prompt-pill prompt-pill--system" @click="toggleSection(log.id, 'system')">
+                    <span>[SYSTEM]</span>
+                    <span class="pill-chevron">{{ expandedSections[log.id]?.has('system') ? '▾' : '▸' }}</span>
+                  </button>
+                  <div v-if="expandedSections[log.id]?.has('system')" class="pill-content">
+                    <pre v-if="!showMdPreview" class="dec-code-block">{{ managerPrompt(log.result?.llmPromptText).system }}</pre>
+                    <!-- eslint-disable-next-line vue/no-v-html -->
+                    <div
+                      v-else
+                      class="dec-code-block chat-reasoning chat-reasoning--md"
+                      v-html="sectionHtml(managerPrompt(log.result?.llmPromptText).system, true)"
+                    />
+                  </div>
+
+                  <button class="prompt-pill prompt-pill--market" @click="toggleSection(log.id, 'context')">
+                    <span>[PORTFOLIO CONTEXT]</span>
+                    <span class="pill-chevron">{{ expandedSections[log.id]?.has('context') ? '▾' : '▸' }}</span>
+                  </button>
+                  <div v-if="expandedSections[log.id]?.has('context')" class="pill-content">
+                    <pre v-if="!showMdPreview" class="dec-code-block">{{ managerPrompt(log.result?.llmPromptText).context }}</pre>
+                    <!-- eslint-disable-next-line vue/no-v-html -->
+                    <div
+                      v-else
+                      class="dec-code-block chat-reasoning chat-reasoning--md"
+                      v-html="sectionHtml(managerPrompt(log.result?.llmPromptText).context, true)"
+                    />
+                  </div>
+
+                  <button class="prompt-pill prompt-pill--setup" @click="toggleSection(log.id, 'setup')">
+                    <span>[EDITABLE SETUP]</span>
+                    <span class="pill-chevron">{{ expandedSections[log.id]?.has('setup') ? '▾' : '▸' }}</span>
+                  </button>
+                  <div v-if="expandedSections[log.id]?.has('setup')" class="pill-content">
+                    <pre v-if="!showMdPreview" class="dec-code-block">{{ managerPrompt(log.result?.llmPromptText).editableSetup }}</pre>
+                    <!-- eslint-disable-next-line vue/no-v-html -->
+                    <div
+                      v-else
+                      class="dec-code-block chat-reasoning chat-reasoning--md"
+                      v-html="sectionHtml(managerPrompt(log.result?.llmPromptText).editableSetup, true)"
+                    />
+                  </div>
+
+                  <button class="prompt-pill prompt-pill--llm" @click="toggleSection(log.id, 'response')">
+                    <span>[RESPONSE]</span>
+                    <span class="pill-chevron">{{ expandedSections[log.id]?.has('response') ? '▾' : '▸' }}</span>
+                  </button>
+                  <div v-if="expandedSections[log.id]?.has('response')" class="pill-content">
+                    <pre v-if="!showMdPreview" class="dec-code-block">{{ log.result?.llmRawResponse || '(no raw response stored)' }}</pre>
+                    <!-- eslint-disable-next-line vue/no-v-html -->
+                    <div
+                      v-else
+                      class="dec-code-block chat-reasoning chat-reasoning--md"
+                      v-html="sectionHtml(log.result?.llmRawResponse || '(no raw response stored)', true)"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
             <!-- Pagination -->
             <div v-if="totalLogPages > 1" class="log-pagination">
@@ -172,6 +246,8 @@
 import { ref, computed, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getManagerProfile, DEFAULT_MANAGER_PROFILE_ID } from '@dex-agents/shared';
+import { parse as markedParse } from 'marked';
+import { splitManagerPromptSections } from '~/lib/manager-prompt';
 
 const route = useRoute();
 const router = useRouter();
@@ -211,6 +287,40 @@ const { data: tokenUsageData } = await useFetch<{ totalTokens: number }>(`/api/m
   credentials: 'include',
 });
 const totalTokensUsed = computed(() => tokenUsageData.value?.totalTokens ?? 0);
+const showMdPreview = ref(false);
+const expandedSections = ref<Record<string, Set<string>>>({});
+
+function toggleSection(logId: string, section: string) {
+  const current = expandedSections.value[logId] ?? new Set<string>();
+  const next = new Set(current);
+  if (next.has(section)) next.delete(section);
+  else next.add(section);
+  expandedSections.value = { ...expandedSections.value, [logId]: next };
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+function renderMarkdown(text: string): string {
+  try {
+    return markedParse(text, { async: false }) as string;
+  } catch {
+    return escapeHtml(text);
+  }
+}
+
+function sectionHtml(text: string, md: boolean): string {
+  return md ? renderMarkdown(text) : escapeHtml(text);
+}
+
+function managerPrompt(promptText: string | undefined | null) {
+  return splitManagerPromptSections(promptText);
+}
 
 const LOG_PAGE_SIZE = 10;
 const logPage = ref(1);
@@ -429,7 +539,7 @@ async function loadMoreLogs() {
 /* Two-column layout */
 .detail-columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
   gap: 20px;
   align-items: start;
 }
@@ -440,6 +550,9 @@ async function loadMoreLogs() {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .log-pagination {
   display: flex;
@@ -447,6 +560,89 @@ async function loadMoreLogs() {
   justify-content: center;
   gap: 10px;
   margin-top: 4px;
+}
+
+.manager-log-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dec-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 10px 12px;
+  background: var(--surface, #141414);
+  border: 1px solid var(--border, #2a2a2a);
+}
+.dec-main { display: flex; flex-direction: column; gap: 8px; }
+.dec-main-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dec-meta {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+}
+.dec-details-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.dec-details-btn:hover { color: var(--text); }
+.dec-details {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.prompt-pills { display: flex; flex-direction: column; gap: 4px; }
+.prompt-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--text-muted);
+}
+.prompt-pill--market { color: #f59e0b; }
+.prompt-pill--setup { color: #60a5fa; }
+.prompt-pill--llm { color: #4ade80; }
+.pill-chevron { flex-shrink: 0; font-size: 12px; }
+.pill-content { padding-left: 10px; }
+.dec-code-block {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary, #aaa);
+  padding: 8px 10px;
+  margin: 0;
+  background: color-mix(in srgb, var(--border, #2a2a2a) 10%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-reasoning {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.chat-reasoning :deep(p) { margin: 0 0 6px; }
+.chat-reasoning :deep(ul) { margin: 4px 0; padding-left: 16px; }
+
+@media (max-width: 1080px) {
+  .detail-columns { grid-template-columns: 1fr; }
 }
 
 /* Delete modal */

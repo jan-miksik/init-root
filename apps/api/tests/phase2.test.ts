@@ -171,7 +171,9 @@ describe('Phase 2: DexScreener helpers', () => {
 
 // ─── Live DexScreener API test (requires network) ─────────────────────────────
 describe('Phase 2: DexScreener Live API', () => {
-  it('fetches WETH/USDC pair on Base', async () => {
+  const runLive = process.env.RUN_LIVE_TESTS === '1';
+
+  (runLive ? it : it.skip)('fetches WETH/USDC pair on Base', async () => {
     const response = await fetch(
       'https://api.dexscreener.com/latest/dex/search?q=WETH%20USDC%20base'
     );
