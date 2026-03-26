@@ -85,40 +85,40 @@ function formatPnlUsd(usd?: number) {
 
 <template>
   <div class="table-wrap">
-    <table>
+    <table class="tt">
       <thead>
         <tr>
-          <th></th>
-          <th v-if="showAgent">Agent</th>
+          <th class="tt-col-expand"></th>
+          <th v-if="showAgent" class="tt-col-agent">Agent</th>
           <th class="sortable" @click="toggleSort('pair')">Pair <span class="sort-icon">{{ sortIcon('pair') }}</span></th>
           <th>Side</th>
           <th>Entry</th>
           <th>Exit</th>
-          <th class="sortable" @click="toggleSort('amountUsd')">Amount <span class="sort-icon">{{ sortIcon('amountUsd') }}</span></th>
+          <th class="sortable" @click="toggleSort('amountUsd')">Amt <span class="sort-icon">{{ sortIcon('amountUsd') }}</span></th>
           <th class="sortable" @click="toggleSort('confidenceBefore')">Conf <span class="sort-icon">{{ sortIcon('confidenceBefore') }}</span></th>
           <th class="sortable" @click="toggleSort('pnlPct')">P&amp;L % <span class="sort-icon">{{ sortIcon('pnlPct') }}</span></th>
-          <th class="sortable" @click="toggleSort('pnlUsd')">Gain/Loss <span class="sort-icon">{{ sortIcon('pnlUsd') }}</span></th>
-          <th>Strategy</th>
+          <th class="sortable" @click="toggleSort('pnlUsd')">P&amp;L $ <span class="sort-icon">{{ sortIcon('pnlUsd') }}</span></th>
           <th>Status</th>
           <th class="sortable" @click="toggleSort('openedAt')">Opened <span class="sort-icon">{{ sortIcon('openedAt') }}</span></th>
-          <th style="width: 110px; text-align: right;">Actions</th>
+          <th class="tt-col-actions">Actions</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="sortedTrades.length === 0">
-          <td :colspan="showAgent ? 14 : 13" style="text-align: center; padding: 32px; color: var(--text-muted);">
+          <td :colspan="showAgent ? 13 : 12" style="text-align: center; padding: 32px; color: var(--text-muted);">
             No trades yet
           </td>
         </tr>
         <template v-for="trade in sortedTrades" :key="trade.id">
-          <tr style="cursor: pointer;" @click="toggleRow(trade.id)">
-            <td style="color: var(--text-muted); font-size: 11px; width: 16px;">
+          <tr class="tt-row" @click="toggleRow(trade.id)">
+            <td class="tt-cell-expand">
               {{ expandedRows.has(trade.id) ? '▼' : '▶' }}
             </td>
-            <td v-if="showAgent">
+            <td v-if="showAgent" class="tt-cell-agent">
               <NuxtLink
                 :to="`/agents/${trade.agentId}`"
-                class="agent-link mono"
+                class="agent-link mono tt-agent-name"
+                :title="trade.agentName ?? trade.agentId"
                 @click.stop
               >
                 {{ trade.agentName ?? trade.agentId }}
@@ -142,20 +142,16 @@ function formatPnlUsd(usd?: number) {
             <td class="mono" :class="pnlClass(trade.pnlUsd)">
               {{ formatPnlUsd(trade.pnlUsd) }}
             </td>
-            <td style="color: var(--text-muted); font-size: 12px;">{{ trade.strategyUsed }}</td>
             <td>
               <span
                 class="badge"
                 :class="trade.status === 'open' ? 'badge-running' : 'badge-stopped'"
               >
-                <span :class="{ 'close-status': trade.status === 'closed' }">
-                  {{ trade.status === 'closed' ? 'CLOSED' : trade.status }}
-                </span>
-                <span v-if="trade.status === 'closed' && trade.closeReason" class="close-reason">({{ trade.closeReason.replace(/_/g, ' ') }})</span>
+                {{ trade.status === 'open' ? 'OPEN' : 'CLOSED' }}
               </span>
             </td>
-            <td style="color: var(--text-muted); font-size: 12px;">{{ formatDate(trade.openedAt) }}</td>
-            <td style="text-align: right;">
+            <td class="tt-cell-date">{{ formatDate(trade.openedAt) }}</td>
+            <td class="tt-cell-actions">
               <button
                 v-if="trade.status === 'open'"
                 type="button"
@@ -168,10 +164,18 @@ function formatPnlUsd(usd?: number) {
               <span v-else style="color: var(--text-muted); font-size: 12px;">—</span>
             </td>
           </tr>
-          <tr v-if="expandedRows.has(trade.id)">
-            <td :colspan="showAgent ? 14 : 13" style="background: var(--bg-secondary, #1a1a2e); padding: 12px 16px;">
-              <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap;">
-                <strong style="color: var(--text-primary);">Reasoning:</strong> {{ trade.reasoning }}
+          <tr v-if="expandedRows.has(trade.id)" class="tt-detail-row">
+            <td :colspan="showAgent ? 13 : 12">
+              <div class="tt-detail">
+                <div class="tt-detail-meta">
+                  <span v-if="trade.strategyUsed" class="tt-meta-tag">{{ trade.strategyUsed }}</span>
+                  <span v-if="trade.closeReason" class="tt-meta-tag tt-meta-tag--reason">{{ trade.closeReason.replace(/_/g, ' ') }}</span>
+                  <span v-if="trade.dex" class="tt-meta-tag">{{ trade.dex }}</span>
+                </div>
+                <div class="tt-detail-reasoning">
+                  <span class="tt-detail-label">Reasoning</span>
+                  {{ trade.reasoning }}
+                </div>
               </div>
             </td>
           </tr>
@@ -182,34 +186,110 @@ function formatPnlUsd(usd?: number) {
 </template>
 
 <style scoped>
+/* ── Table structure ─────────────────────────────────── */
+.tt { table-layout: fixed; }
+
+.tt-col-expand { width: 24px; }
+.tt-col-agent  { width: 140px; }
+.tt-col-actions { width: 80px; text-align: right; }
+
+.tt-row { cursor: pointer; }
+
+.tt-cell-expand {
+  color: var(--text-muted);
+  font-size: 10px;
+  width: 24px;
+  padding-left: 8px;
+  padding-right: 0;
+}
+
+/* ── Agent name truncation ───────────────────────────── */
+.tt-cell-agent { max-width: 0; }
+
+.tt-agent-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-size: 11px;
+}
+
+.tt-cell-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tt-cell-actions { text-align: right; }
+
+/* ── Sorting ─────────────────────────────────────────── */
 .sortable {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
-.sortable:hover {
-  color: var(--text);
-}
+.sortable:hover { color: var(--text); }
 .sort-icon {
   font-size: 10px;
   color: var(--text-muted);
   margin-left: 2px;
 }
+
+/* ── Agent link ──────────────────────────────────────── */
 .agent-link {
   color: var(--accent);
   text-decoration: none;
 }
-.agent-link:hover {
-  text-decoration: underline;
+.agent-link:hover { text-decoration: underline; }
+
+/* ── Expanded detail row ─────────────────────────────── */
+.tt-detail-row td {
+  background: var(--bg-secondary, #1a1a2e);
+  padding: 0;
+  border-bottom: 1px solid var(--border);
 }
-.close-reason {
+
+.tt-detail {
+  padding: 10px 16px 12px;
+}
+
+.tt-detail-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.tt-meta-tag {
+  font-family: var(--font-mono);
   font-size: 10px;
-  opacity: 0.6;
-  margin-left: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
 }
-.close-status {
+
+.tt-meta-tag--reason {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.tt-detail-reasoning {
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.tt-detail-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
 }
 </style>

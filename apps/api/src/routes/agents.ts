@@ -252,6 +252,7 @@ agentsRoute.delete('/:id', async (c) => {
   await db.delete(trades).where(eq(trades.agentId, id));
   await db.delete(agentDecisions).where(eq(agentDecisions.agentId, id));
   await db.delete(performanceSnapshots).where(eq(performanceSnapshots.agentId, id));
+  await db.delete(agentSelfModifications).where(eq(agentSelfModifications.agentId, id));
   await db.delete(agents).where(eq(agents.id, id));
   return c.json({ ok: true });
 });
@@ -462,6 +463,7 @@ agentsRoute.post('/:id/history/clear', async (c) => {
   await db.delete(trades).where(eq(trades.agentId, id));
   await db.delete(agentDecisions).where(eq(agentDecisions.agentId, id));
   await db.delete(performanceSnapshots).where(eq(performanceSnapshots.agentId, id));
+  await db.delete(agentSelfModifications).where(eq(agentSelfModifications.agentId, id));
 
   return c.json({ ok: true });
 });

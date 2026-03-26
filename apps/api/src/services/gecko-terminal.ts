@@ -86,6 +86,15 @@ export interface GeckoPoolNorm {
   recentPrices?: number[];
 }
 
+/** Candle shape returned by getPoolOHLCV */
+export interface OHLCVCandle {
+  t: number; // unix ms
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = false } = {}) {
@@ -167,5 +176,22 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
     return closes;
   }
 
-  return { searchPools, getPoolPriceSeries };
+  /**
+   * Fetch full OHLCV candles for a pool (oldest→newest).
+   * @param timeframe 'hour' | 'day' | 'minute'
+   */
+  async function getPoolOHLCV(
+    address: string,
+    limit = 48,
+    timeframe: 'hour' | 'day' | 'minute' = 'hour',
+  ): Promise<OHLCVCandle[]> {
+    const cacheKey = `gecko:ohlcv-full:base:${address.toLowerCase()}:${timeframe}:${limit}`;
+    const url = `${GECKO_BASE}/networks/base/pools/${address}/ohlcv/${timeframe}?limit=${limit}&currency=usd`;
+    const data = await cachedFetch(cacheKey, url, GeckoOHLCVSchema);
+    return data.data.attributes.ohlcv_list
+      .map(([t, o, h, l, c]) => ({ t: t * 1000, o, h, l, c }))
+      .reverse(); // oldest first
+  }
+
+  return { searchPools, getPoolPriceSeries, getPoolOHLCV };
 }

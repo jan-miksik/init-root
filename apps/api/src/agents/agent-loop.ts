@@ -1006,7 +1006,8 @@ export async function executeTradeDecision(
         `[agent-loop] ${agentId}: Opened ${decision.action} ${targetPairName} $${amountUsd.toFixed(2)} @ $${pairData.priceUsd}`
       );
     } catch (err) {
-      console.warn(`[agent-loop] ${agentId}: Failed to open position:`, err);
+      console.error(`[agent-loop] ${agentId}: Failed to open position:`, err);
+      log.error('trade_open_failed', { pair: targetPairName, side: decision.action, error: String(err) });
     }
   } else if (decision.action === 'close' && engine.openPositions.length > 0) {
     // Close all open positions

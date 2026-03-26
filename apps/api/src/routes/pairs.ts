@@ -99,6 +99,34 @@ pairs.post('/prices', async (c) => {
   return c.json({ prices, normalizedByInput });
 });
 
+/**
+ * GET /api/pairs/:chain/:address/ohlcv?timeframe=1h&limit=48
+ * Returns OHLCV candles for charting. Timeframes: 15m, 1h, 4h, 1d.
+ * NOTE: Must be registered BEFORE /:chain/:address to avoid param capture.
+ */
+pairs.get('/:chain/:address/ohlcv', async (c) => {
+  const address = c.req.param('address');
+  const tf = (c.req.query('timeframe') ?? '1h') as string;
+
+  const tfMap: Record<string, { api: 'minute' | 'hour' | 'day'; limit: number }> = {
+    '15m': { api: 'minute', limit: 96 },   // ~24h of 15m candles
+    '1h':  { api: 'hour',   limit: 48 },   // 48h
+    '4h':  { api: 'hour',   limit: 96 },   // ~16 days (4h = every 4th hourly candle)
+    '1d':  { api: 'day',    limit: 30 },   // 30 days
+  };
+
+  const config = tfMap[tf];
+  if (!config) return c.json({ error: `Invalid timeframe: ${tf}. Use 15m, 1h, 4h, 1d` }, 400);
+
+  const gecko = createGeckoTerminalService(c.env.CACHE);
+  const candles = await gecko.getPoolOHLCV(address, config.limit, config.api);
+
+  // For 4h: downsample hourly candles to 4h buckets
+  const result = tf === '4h' ? downsample(candles, 4) : candles;
+
+  return c.json({ candles: result, timeframe: tf });
+});
+
 /** GET /api/pairs/:chain/:address */
 pairs.get('/:chain/:address', async (c) => {
   const chain = c.req.param('chain');
@@ -113,6 +141,23 @@ pairs.get('/:chain/:address', async (c) => {
 
   return c.json({ pair: results[0], allResults: results });
 });
+
+/** Downsample hourly candles into N-hour buckets */
+function downsample(candles: Array<{ t: number; o: number; h: number; l: number; c: number }>, hours: number) {
+  const buckets: typeof candles = [];
+  for (let i = 0; i < candles.length; i += hours) {
+    const slice = candles.slice(i, i + hours);
+    if (slice.length === 0) continue;
+    buckets.push({
+      t: slice[0].t,
+      o: slice[0].o,
+      h: Math.max(...slice.map(c => c.h)),
+      l: Math.min(...slice.map(c => c.l)),
+      c: slice[slice.length - 1].c,
+    });
+  }
+  return buckets;
+}
 
 /** GET /api/pairs/token/:address */
 pairs.get('/token/:address', async (c) => {

@@ -1,0 +1,252 @@
+<script setup lang="ts">
+import { Line } from 'vue-chartjs';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+} from 'chart.js';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
+
+const props = defineProps<{
+  chain: string;
+  pairAddress: string;
+}>();
+
+const { request } = useApi();
+
+const timeframe = ref<'1h' | '4h' | '1d'>('1h');
+const candles = ref<Array<{ t: number; o: number; h: number; l: number; c: number }>>([]);
+const loading = ref(false);
+const error = ref(false);
+
+const currentPrice = computed(() => {
+  if (candles.value.length === 0) return null;
+  return candles.value[candles.value.length - 1]!.c;
+});
+
+const priceDirection = computed(() => {
+  if (candles.value.length < 2) return 0;
+  const first = candles.value[0]!.o;
+  const last = candles.value[candles.value.length - 1]!.c;
+  return last >= first ? 1 : -1;
+});
+
+const priceChangePct = computed(() => {
+  if (candles.value.length < 2) return 0;
+  const first = candles.value[0]!.o;
+  const last = candles.value[candles.value.length - 1]!.c;
+  return ((last - first) / first) * 100;
+});
+
+async function fetchOHLCV() {
+  if (!props.pairAddress) return;
+  loading.value = true;
+  error.value = false;
+  try {
+    const data = await request<{ candles: typeof candles.value }>(
+      `/api/pairs/${props.chain}/${props.pairAddress}/ohlcv?timeframe=${timeframe.value}`,
+    );
+    candles.value = data.candles;
+  } catch {
+    error.value = true;
+    candles.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+watch([() => props.pairAddress, timeframe], () => fetchOHLCV(), { immediate: true });
+
+function formatPrice(price: number): string {
+  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (price >= 1) return price.toFixed(4);
+  if (price >= 0.0001) return price.toFixed(6);
+  return price.toExponential(3);
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  if (timeframe.value === '1d') return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+const lineColor = computed(() => priceDirection.value >= 0 ? '#6BCB77' : '#FF6B6B');
+const fillColor = computed(() => priceDirection.value >= 0 ? 'rgba(107,203,119,0.08)' : 'rgba(255,107,107,0.08)');
+
+const chartData = computed(() => ({
+  labels: candles.value.map((c) => formatTime(c.t)),
+  datasets: [
+    {
+      data: candles.value.map((c) => c.c),
+      borderColor: lineColor.value,
+      backgroundColor: fillColor.value,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHitRadius: 8,
+      fill: true,
+      tension: 0.2,
+    },
+  ],
+}));
+
+const chartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 0 },
+  interaction: {
+    mode: 'index' as const,
+    intersect: false,
+  },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: '#161616',
+      borderColor: '#2A2A2A',
+      borderWidth: 1,
+      titleColor: '#8A8580',
+      bodyColor: '#E8E4DF',
+      titleFont: { family: "'Space Mono', monospace", size: 10 },
+      bodyFont: { family: "'Space Mono', monospace", size: 11 },
+      padding: 8,
+      displayColors: false,
+      callbacks: {
+        label: (ctx: { parsed: { y: number | null } }) => `$${formatPrice(ctx.parsed.y ?? 0)}`,
+      },
+    },
+  },
+  scales: {
+    x: {
+      display: false,
+    },
+    y: {
+      display: false,
+    },
+  },
+}));
+
+const tfLabels: Record<string, string> = { '1h': '1H', '4h': '4H', '1d': '1D' };
+</script>
+
+<template>
+  <div class="sparkline">
+    <!-- Header: current price + timeframe toggle -->
+    <div class="sparkline-header">
+      <div class="sparkline-price-group">
+        <span v-if="currentPrice" class="sparkline-price mono">${{ formatPrice(currentPrice) }}</span>
+        <span v-else class="sparkline-price mono" style="color: var(--text-muted);">--</span>
+        <span
+          v-if="candles.length >= 2"
+          class="sparkline-change mono"
+          :class="priceDirection >= 0 ? 'positive' : 'negative'"
+        >
+          {{ priceChangePct >= 0 ? '+' : '' }}{{ priceChangePct.toFixed(2) }}%
+        </span>
+      </div>
+      <div class="sparkline-tf-group">
+        <button
+          v-for="tf in (['1h', '4h', '1d'] as const)"
+          :key="tf"
+          class="sparkline-tf-btn"
+          :class="{ active: timeframe === tf }"
+          @click="timeframe = tf"
+        >
+          {{ tfLabels[tf] }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="sparkline-chart" :class="{ 'sparkline-loading': loading }">
+      <Line v-if="candles.length > 0" :data="chartData" :options="chartOptions" />
+      <div v-else-if="error" class="sparkline-empty">Failed to load</div>
+      <div v-else-if="loading" class="sparkline-empty">Loading...</div>
+      <div v-else class="sparkline-empty">No data</div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.sparkline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px 8px;
+}
+
+.sparkline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sparkline-price-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sparkline-price {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sparkline-change {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sparkline-tf-group {
+  display: flex;
+  gap: 2px;
+}
+
+.sparkline-tf-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: all var(--t-snap);
+}
+
+.sparkline-tf-btn:hover {
+  color: var(--text-dim);
+}
+
+.sparkline-tf-btn.active {
+  color: var(--text);
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.sparkline-chart {
+  height: 120px;
+  position: relative;
+  transition: opacity var(--t-data);
+}
+
+.sparkline-loading {
+  opacity: 0.5;
+}
+
+.sparkline-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+</style>

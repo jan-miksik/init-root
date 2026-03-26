@@ -110,16 +110,9 @@ function sortedList(list: typeof agents.value) {
 
 const sortedAgents = computed(() => sortedList(agents.value));
 
-// Aggregated P&L from per-agent performance snapshots (realized + unrealized)
-const totalPnlFromAgents = computed(() => {
-  const entries = Object.values(agentPnl.value);
-  if (entries.length === 0) return null;
-  return entries.reduce((sum, e) => sum + e.totalPnlUsd, 0);
-});
-const realizedPnl = computed(() => stats.value?.totalPnlUsd ?? 0);
-const unrealizedPnl = computed(() =>
-  totalPnlFromAgents.value !== null ? totalPnlFromAgents.value - realizedPnl.value : null
-);
+// Keep Agents page overview stats consistent with Trades page:
+// Total P&L shown here is realized P&L from closed trades (same as /trades).
+const realizedPnlUsd = computed(() => stats.value?.totalPnlUsd ?? null);
 
 // Per-agent P&L (from performance snapshots)
 interface PerformanceSnapshot {
@@ -337,15 +330,14 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       </div>
       <div class="stat-card">
         <div class="stat-label">Total P&amp;L</div>
-        <div class="stat-value" :class="(totalPnlFromAgents ?? 0) >= 0 ? 'positive' : 'negative'">
-          {{ totalPnlFromAgents !== null ? (totalPnlFromAgents >= 0 ? '+' : '') + '$' + totalPnlFromAgents.toFixed(0) : '—' }}
+        <div class="stat-value" :class="(realizedPnlUsd ?? 0) >= 0 ? 'positive' : 'negative'">
+          {{
+            realizedPnlUsd !== null
+              ? (realizedPnlUsd >= 0 ? '+' : '') + '$' + realizedPnlUsd.toFixed(0)
+              : '—'
+          }}
         </div>
-        <div class="stat-pnl-breakdown" v-if="totalPnlFromAgents !== null">
-          <span :class="realizedPnl >= 0 ? 'positive' : 'negative'">{{ realizedPnl >= 0 ? '+' : '' }}${{ realizedPnl.toFixed(0) }} realized</span>
-          <span class="pnl-sep">·</span>
-          <span v-if="unrealizedPnl !== null" :class="unrealizedPnl >= 0 ? 'positive' : 'negative'">{{ unrealizedPnl >= 0 ? '+' : '' }}${{ unrealizedPnl.toFixed(0) }} open</span>
-        </div>
-        <div v-else class="stat-change">paper USDC</div>
+        <div class="stat-change">closed trades</div>
       </div>
     </div>
 

@@ -914,8 +914,20 @@ function formatLatency(ms: number): string {
                 </div>
               </div>
 
-              <!-- DexScreener chart — full width -->
-              <DexChart chain="base" :pair-address="getPairAddress(pair)" :height="350" />
+              <!-- Price sparkline -->
+              <PriceSparkline chain="base" :pair-address="getPairAddress(pair)" />
+
+              <!-- DexScreener link -->
+              <div v-if="getPairAddress(pair)" style="padding: 0 16px 8px; text-align: right;">
+                <a
+                  :href="`https://dexscreener.com/base/${getPairAddress(pair)}`"
+                  target="_blank"
+                  rel="noopener"
+                  class="dex-link"
+                >
+                  Full chart &rarr;
+                </a>
+              </div>
             </div>
 
             <!-- Position rows -->
@@ -1366,5 +1378,20 @@ span.prompt-pill:hover {
 .self-mod-actions {
   display: flex;
   gap: 8px;
+}
+
+/* ── DexScreener link ──────────────────────────────────────────── */
+
+.dex-link {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  transition: color var(--t-snap);
+}
+
+.dex-link:hover {
+  color: var(--text);
 }
 </style>
