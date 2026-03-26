@@ -10,6 +10,36 @@ import { users } from '../db/schema.js';
 import { generateId, nowIso } from './utils.js';
 
 const SESSION_TTL_SECS = 60 * 60 * 24 * 7; // 7 days
+const SESSION_HOT_CACHE_TTL_MS = 30_000; // short per-isolate cache to reduce KV reads
+const SESSION_HOT_CACHE_MAX_ENTRIES = 5_000;
+
+type SessionHotCacheEntry = {
+  session: SessionData;
+  cachedUntil: number;
+};
+
+const sessionHotCache = new Map<string, SessionHotCacheEntry>();
+let sessionHotCacheLastCleanupMs = 0;
+
+function cleanupSessionHotCache(nowMs: number): void {
+  if (nowMs - sessionHotCacheLastCleanupMs < 10_000) return;
+  sessionHotCacheLastCleanupMs = nowMs;
+
+  for (const [key, entry] of sessionHotCache) {
+    if (entry.cachedUntil <= nowMs || entry.session.expiresAt <= nowMs) {
+      sessionHotCache.delete(key);
+    }
+  }
+
+  if (sessionHotCache.size > SESSION_HOT_CACHE_MAX_ENTRIES) {
+    let toDelete = sessionHotCache.size - SESSION_HOT_CACHE_MAX_ENTRIES;
+    for (const key of sessionHotCache.keys()) {
+      sessionHotCache.delete(key);
+      toDelete--;
+      if (toDelete <= 0) break;
+    }
+  }
+}
 
 export interface SessionData {
   userId: string;
@@ -37,8 +67,13 @@ export async function createSession(
     walletAddress,
     expiresAt: Date.now() + SESSION_TTL_SECS * 1000,
   };
-  await cache.put(`session:${token}`, JSON.stringify(session), {
+  const key = `session:${token}`;
+  await cache.put(key, JSON.stringify(session), {
     expirationTtl: SESSION_TTL_SECS,
+  });
+  sessionHotCache.set(key, {
+    session,
+    cachedUntil: Math.min(session.expiresAt, Date.now() + SESSION_HOT_CACHE_TTL_MS),
   });
   return token;
 }
@@ -51,14 +86,29 @@ export async function getSession(
   // Reject obviously invalid tokens before hitting KV (prevents probing with empty/crafted strings)
   if (!token || token.length < 16 || token.length > 128 || !/^[0-9a-f]+$/.test(token)) return null;
 
-  const raw = await cache.get(`session:${token}`, 'text');
+  const now = Date.now();
+  cleanupSessionHotCache(now);
+
+  const key = `session:${token}`;
+  const hot = sessionHotCache.get(key);
+  if (hot && hot.cachedUntil > now && hot.session.expiresAt > now) {
+    return hot.session;
+  }
+  if (hot) sessionHotCache.delete(key);
+
+  const raw = await cache.get(key, 'text');
   if (!raw) return null;
   try {
     const session = JSON.parse(raw) as SessionData;
-    if (session.expiresAt < Date.now()) {
-      await cache.delete(`session:${token}`);
+    if (session.expiresAt < now) {
+      await cache.delete(key);
+      sessionHotCache.delete(key);
       return null;
     }
+    sessionHotCache.set(key, {
+      session,
+      cachedUntil: Math.min(session.expiresAt, now + SESSION_HOT_CACHE_TTL_MS),
+    });
     return session;
   } catch {
     return null;
@@ -67,7 +117,9 @@ export async function getSession(
 
 /** Delete a session (logout) */
 export async function deleteSession(cache: KVNamespace, token: string): Promise<void> {
-  await cache.delete(`session:${token}`);
+  const key = `session:${token}`;
+  sessionHotCache.delete(key);
+  await cache.delete(key);
 }
 
 /** Build a Set-Cookie header value for the session token */

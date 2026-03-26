@@ -9,6 +9,52 @@ import { z } from 'zod';
 
 const GECKO_BASE = 'https://api.geckoterminal.com/api/v2';
 const CACHE_TTL = 900; // seconds — 15 min matches frontend cache window
+const HOT_CACHE_TTL_MS = 20_000; // short per-isolate cache to suppress repeated KV reads
+const HOT_CACHE_MAX_ENTRIES = 2_000;
+
+type HotCacheEntry = {
+  value: unknown;
+  expiresAt: number;
+};
+
+const hotCache = new Map<string, HotCacheEntry>();
+let hotCacheLastCleanupMs = 0;
+
+function cleanupHotCache(nowMs: number): void {
+  if (nowMs - hotCacheLastCleanupMs < 10_000) return;
+  hotCacheLastCleanupMs = nowMs;
+
+  for (const [key, entry] of hotCache) {
+    if (entry.expiresAt <= nowMs) hotCache.delete(key);
+  }
+
+  if (hotCache.size > HOT_CACHE_MAX_ENTRIES) {
+    let toDelete = hotCache.size - HOT_CACHE_MAX_ENTRIES;
+    for (const key of hotCache.keys()) {
+      hotCache.delete(key);
+      toDelete--;
+      if (toDelete <= 0) break;
+    }
+  }
+}
+
+function getHotCached<T>(key: string): T | null {
+  const now = Date.now();
+  cleanupHotCache(now);
+  const cached = hotCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= now) {
+    hotCache.delete(key);
+    return null;
+  }
+  return cached.value as T;
+}
+
+function setHotCached(key: string, value: unknown): void {
+  const now = Date.now();
+  cleanupHotCache(now);
+  hotCache.set(key, { value, expiresAt: now + HOT_CACHE_TTL_MS });
+}
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 // Use .nullable().optional() everywhere — GeckoTerminal returns null for missing
@@ -100,11 +146,18 @@ export interface OHLCVCandle {
 export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = false } = {}) {
   async function cachedFetch<T>(cacheKey: string, url: string, schema: z.ZodType<T>): Promise<T> {
     if (!bypassCache) {
+      const hot = getHotCached<T>(cacheKey);
+      if (hot !== null) {
+        console.log(`cache_hit service=gecko-terminal layer=memory key=${cacheKey}`);
+        return hot;
+      }
+
       const hit = await cache.get(cacheKey, 'text');
       if (hit) {
         const parsed = schema.safeParse(JSON.parse(hit));
         if (parsed.success) {
-          console.log(`cache_hit service=gecko-terminal key=${cacheKey}`);
+          setHotCached(cacheKey, parsed.data);
+          console.log(`cache_hit service=gecko-terminal layer=kv key=${cacheKey}`);
           return parsed.data;
         }
       }
@@ -127,6 +180,7 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
     if (!parsed.success) {
       throw new Error(`GeckoTerminal schema mismatch: ${parsed.error.message.slice(0, 300)}`);
     }
+    setHotCached(cacheKey, parsed.data);
     await cache.put(cacheKey, JSON.stringify(json), { expirationTtl: CACHE_TTL });
     return parsed.data;
   }

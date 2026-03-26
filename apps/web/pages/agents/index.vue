@@ -125,12 +125,6 @@ interface PerformanceSnapshot {
 }
 
 const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
-interface AgentStatusResponse {
-  agentId: string | null;
-  status: string;
-  balance: number | null;
-  nextAlarmAt: number | null;
-}
 
 function formatUsdNoNegativeZero(value: number, digits = 0): string {
   const abs = Math.abs(value);
@@ -157,20 +151,36 @@ async function loadAgentPerformance(agentId: string) {
   try {
     const agent = agents.value.find((a) => a.id === agentId);
     if (!agent) return;
-    await request<AgentStatusResponse>(`/api/agents/${agentId}/status`).catch(() => null);
-    await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`).catch(() => null);
-    const tradesRes = await request<{ trades: Array<{ status: 'open' | 'closed'; pnlUsd?: number | null }> }>(
-      `/api/agents/${agentId}/trades`
-    ).catch(() => null);
     const startingBalance = agent.config.paperBalance;
+    const perf = await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`, { silent: true }).catch(
+      () => null
+    );
+    const latest = perf?.snapshots?.[0] ?? null;
+    if (latest && Number.isFinite(latest.totalPnlPct) && startingBalance > 0) {
+      const totalPnlPct = latest.totalPnlPct;
+      const totalPnlUsd = (startingBalance * totalPnlPct) / 100;
+      if (!agents.value.some((a) => a.id === agentId)) return;
+      agentPnl.value = {
+        ...agentPnl.value,
+        [agentId]: { totalPnlUsd, totalPnlPct },
+      };
+      return;
+    }
+
+    // Fallback: sum realized P&L from trade history (best-effort; keep silent to avoid noisy console errors)
+    const tradesRes = await request<{ trades: Array<{ status: 'open' | 'closed'; pnlUsd?: number | null }> }>(
+      `/api/agents/${agentId}/trades`,
+      { silent: true }
+    ).catch(() => null);
     const totalPnlUsd = (tradesRes?.trades ?? [])
       .filter((t) => t.status === 'closed')
       .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
-    const totalPnlPct = (totalPnlUsd / startingBalance) * 100;
-    agentPnl.value = { ...agentPnl.value, [agentId]: {
-      totalPnlUsd,
-      totalPnlPct,
-    } };
+    const totalPnlPct = startingBalance > 0 ? (totalPnlUsd / startingBalance) * 100 : 0;
+    if (!agents.value.some((a) => a.id === agentId)) return;
+    agentPnl.value = {
+      ...agentPnl.value,
+      [agentId]: { totalPnlUsd, totalPnlPct },
+    };
   } catch {
     // ignore per-agent performance errors in list view
   }
@@ -211,7 +221,7 @@ function handleGlobalClick(e: MouseEvent) {
 }
 
 onMounted(() => {
-  refreshOverview();
+  refreshOverview(false);
   document.addEventListener('click', handleGlobalClick);
 });
 
@@ -219,10 +229,10 @@ onUnmounted(() => {
   document.removeEventListener('click', handleGlobalClick);
 });
 
-async function refreshOverview() {
+async function refreshOverview(force = false) {
   refreshing.value = true;
   try {
-    await Promise.all([fetchAgents(), fetchStats()]);
+    await Promise.all([fetchAgents({ force }), fetchStats({ force })]);
     await Promise.all(agents.value.map((a) => loadAgentPerformance(a.id)));
   } finally {
     refreshing.value = false;
@@ -234,6 +244,7 @@ async function handleDelete(id: string) {
   if (!confirm('Delete this agent? This cannot be undone.')) return;
   try {
     await deleteAgent(id);
+    await fetchStats({ force: true });
   } catch (e) {
     alert(`Failed to delete: ${extractApiError(e)}`);
   }
@@ -272,7 +283,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
         </p>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="btn btn-ghost btn-sm" :disabled="refreshing" @click="refreshOverview">
+        <button class="btn btn-ghost btn-sm" :disabled="refreshing" @click="refreshOverview(true)">
           <span v-if="refreshing" class="spinner" />
           <span v-else>↻</span>
           Refresh

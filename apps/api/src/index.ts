@@ -23,55 +23,6 @@ export { TradingAgentDO } from './agents/trading-agent.js';
 export { AgentManagerDO } from './agents/agent-manager.js';
 export { GlobalRateLimiterDO } from './lib/global-rate-limiter.js';
 
-function cronToMs(cron: string): number | null {
-  switch (cron) {
-    case '*/15 * * * *':
-      return 15 * 60_000;
-    case '0 * * * *':
-      return 60 * 60_000;
-    case '0 */4 * * *':
-      return 4 * 60 * 60_000;
-    case '0 0 * * *':
-      return 24 * 60 * 60_000;
-    default:
-      return null;
-  }
-}
-
-async function shouldRunCron(cron: string, env: Env): Promise<boolean> {
-  const key = `cron:last:${cron}`;
-  const now = Date.now();
-
-  let lastRun = 0;
-  try {
-    const stored = await env.CACHE.get(key);
-    if (stored) {
-      const parsed = Number(stored);
-      if (!Number.isNaN(parsed)) lastRun = parsed;
-    }
-  } catch {
-    // If KV is unavailable for any reason, fall back to always running the cron.
-    return true;
-  }
-
-  const intervalMs = cronToMs(cron);
-  if (lastRun && intervalMs && now - lastRun < intervalMs * 0.8) {
-    console.log(
-      `[cron] Skipping duplicate run for ${cron}. lastRun=${new Date(
-        lastRun
-      ).toISOString()} now=${new Date(now).toISOString()}`
-    );
-    return false;
-  }
-
-  try {
-    await env.CACHE.put(key, String(now), { expirationTtl: 24 * 60 * 60 });
-  } catch {
-    // Non-fatal; cron can still proceed even if we fail to record the timestamp.
-  }
-
-  return true;
-}
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -83,6 +34,7 @@ app.use(
   createRateLimitMiddleware<{ Bindings: Env; Variables: AuthVariables }>({
     limit: 200,
     windowSecs: 60,
+    strategy: 'memory',
   })
 );
 
@@ -93,6 +45,7 @@ app.use(
   createRateLimitMiddleware<{ Bindings: Env; Variables: AuthVariables }>({
     limit: 10,
     windowSecs: 300, // 10 nonce requests per 5 min per IP
+    strategy: 'memory',
   })
 );
 app.use(
@@ -100,6 +53,7 @@ app.use(
   createRateLimitMiddleware<{ Bindings: Env; Variables: AuthVariables }>({
     limit: 10,
     windowSecs: 300, // 10 verify attempts per 5 min per IP
+    strategy: 'memory',
   })
 );
 
@@ -228,89 +182,11 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal Server Error' }, 500);
 });
 
-/** Get agentIds for a given interval from the global scheduler DO.
- *  Returns null if the scheduler is unavailable (triggers D1 fallback). */
-async function getScheduledAgentIds(env: Env, interval: string): Promise<string[] | null> {
-  try {
-    const stub = env.AGENT_MANAGER.get(env.AGENT_MANAGER.idFromName('scheduler'));
-    const res = await stub.fetch(
-      new Request(`http://do/scheduler/agents?interval=${encodeURIComponent(interval)}`)
-    );
-    if (!res.ok) return null;
-    const data = await res.json() as { agentIds: string[] };
-    return data.agentIds;
-  } catch {
-    return null;
-  }
-}
-
-// Cron trigger handler
-const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) => {
-  const cron = event.cron;
-  console.log(`[cron] Triggered: ${cron}`);
-
-  if (!(await shouldRunCron(cron, env))) {
-    return;
-  }
-
-  if (cron === '0 * * * *') {
-    ctx.waitUntil(snapshotAllAgents(env));
-    // Also run 1h agents (snapshot cron shares the same trigger)
-  }
-
-  const cronToInterval: Record<string, string> = {
-    '*/15 * * * *': '15m',
-    '0 * * * *': '1h',
-    '0 */4 * * *': '4h',
-    '0 0 * * *': '1d',
-  };
-  const targetInterval = cronToInterval[cron];
-  if (!targetInterval) return;
-
-  // Try scheduler DO first (avoids full D1 scan)
-  const scheduledIds = await getScheduledAgentIds(env, targetInterval);
-
-  let agentIds: string[];
-  if (scheduledIds !== null) {
-    agentIds = scheduledIds;
-    console.log(`[cron] Scheduler DO returned ${agentIds.length} agents for interval=${targetInterval}`);
-  } else {
-    // Fallback: full D1 scan (ensures correctness even if scheduler state is stale)
-    console.warn(`[cron] Scheduler DO unavailable — falling back to D1 scan for interval=${targetInterval}`);
-    const db = (await import('drizzle-orm/d1')).drizzle(env.DB);
-    const { agents } = await import('./db/schema.js');
-    const { eq } = await import('drizzle-orm');
-    const runningAgents = await db.select({ id: agents.id, config: agents.config })
-      .from(agents)
-      .where(eq(agents.status, 'running'));
-    agentIds = runningAgents
-      .filter((agent) => {
-        const config = JSON.parse(agent.config) as { analysisInterval?: string };
-        const effectiveInterval =
-          config.analysisInterval === '1m' || config.analysisInterval === '5m'
-            ? '15m'
-            : (config.analysisInterval ?? '1h');
-        return effectiveInterval === targetInterval;
-      })
-      .map((a) => a.id);
-  }
-
-  for (const agentId of agentIds) {
-    const doId = env.TRADING_AGENT.idFromName(agentId);
-    const stub = env.TRADING_AGENT.get(doId);
-
-    ctx.waitUntil(
-      stub
-        .fetch(
-          new Request('http://do/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ agentId }),
-          })
-        )
-        .catch((e) => console.warn(`[cron] Failed to trigger analysis for agent ${agentId}:`, e))
-    );
-  }
+// Hourly cron — only used for performance snapshots.
+// Agent analysis is driven by DO alarms (self-scheduling), not cron triggers.
+const scheduled: ExportedHandlerScheduledHandler<Env> = async (_event, env, ctx) => {
+  console.log('[cron] Hourly snapshot triggered');
+  ctx.waitUntil(snapshotAllAgents(env));
 };
 
 /**

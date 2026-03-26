@@ -2,11 +2,12 @@
  * Trades composable — fetch trade history and stats.
  */
 
+import { TRADES_LIST_PREFIX, TRADES_STATS_KEY } from './cacheKeys';
+
 const TRADES_TTL = 15 * 60 * 1000; // 15 min
-const STATS_KEY = 'trades:stats';
 
 function tradesKey(params?: { status?: string; limit?: number }): string {
-  return `trades:list:${params?.status ?? ''}:${params?.limit ?? ''}`;
+  return `${TRADES_LIST_PREFIX}${params?.status ?? ''}:${params?.limit ?? ''}`;
 }
 
 export interface Trade {
@@ -48,16 +49,19 @@ export function useTrades() {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  async function fetchTrades(params?: {
-    status?: string;
-    limit?: number;
-  }) {
+  async function fetchTrades(
+    params?: {
+      status?: string;
+      limit?: number;
+    },
+    opts?: { force?: boolean }
+  ) {
     loading.value = true;
     error.value = null;
     try {
       const key = tradesKey(params);
-      const cached = cache.get<{ trades: Trade[] }>(key);
-      if (cached) {
+      const cached = opts?.force ? null : cache.get<{ trades: Trade[] }>(key);
+      if (cached && !opts?.force) {
         trades.value = cached.trades;
         return;
       }
@@ -75,15 +79,15 @@ export function useTrades() {
     }
   }
 
-  async function fetchStats() {
+  async function fetchStats(opts?: { force?: boolean }) {
     try {
-      const cached = cache.get<TradeStats>(STATS_KEY);
-      if (cached) {
+      const cached = opts?.force ? null : cache.get<TradeStats>(TRADES_STATS_KEY);
+      if (cached && !opts?.force) {
         stats.value = cached;
         return;
       }
       const result = await request<TradeStats>('/api/trades/stats');
-      cache.set(STATS_KEY, result, TRADES_TTL);
+      cache.set(TRADES_STATS_KEY, result, TRADES_TTL);
       stats.value = result;
     } catch (e) {
       error.value = extractApiError(e);
@@ -99,8 +103,8 @@ export function useTrades() {
     const res = await request<{ ok: boolean; trade: Trade }>(`/api/trades/${tradeId}/close`, {
       method: 'POST',
     });
-    cache.invalidate(STATS_KEY);
-    cache.invalidatePrefix('trades:list:');
+    cache.invalidate(TRADES_STATS_KEY);
+    cache.invalidatePrefix(TRADES_LIST_PREFIX);
     return res.trade;
   }
 

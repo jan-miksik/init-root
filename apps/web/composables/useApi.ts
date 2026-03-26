@@ -46,21 +46,22 @@ export function useApi() {
 
   async function request<T>(
     path: string,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown> & { silent?: boolean }
   ): Promise<T> {
-    const method = (options?.method as string) ?? 'GET';
+    const { silent, ...rest } = (options ?? {}) as Record<string, unknown> & { silent?: boolean };
+    const method = (rest?.method as string) ?? 'GET';
     try {
       const res = await $fetch<T>(`${base}${path}`, {
-        ...options,
-        timeout: (options?.timeout as number) ?? DEFAULT_TIMEOUT_MS,
+        ...rest,
+        timeout: (rest?.timeout as number) ?? DEFAULT_TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',
-          ...((options?.headers as Record<string, string>) ?? {}),
+          ...((rest?.headers as Record<string, string>) ?? {}),
         },
       } as Parameters<typeof $fetch>[1]);
       return res as T;
     } catch (err) {
-      console.error(`[api] ${method} ${path} failed:`, err);
+      if (!silent) console.error(`[api] ${method} ${path} failed:`, err);
       throw err;
     }
   }

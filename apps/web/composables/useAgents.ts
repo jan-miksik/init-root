@@ -1,3 +1,5 @@
+import { TRADES_LIST_PREFIX, TRADES_STATS_KEY } from './cacheKeys';
+
 /**
  * Agents composable — CRUD operations and state management for trading agents.
  */
@@ -56,12 +58,12 @@ export function useAgents() {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  async function fetchAgents() {
+  async function fetchAgents(opts?: { force?: boolean }) {
     loading.value = true;
     error.value = null;
     try {
-      const cached = cache.get<{ agents: Agent[] }>(AGENTS_KEY);
-      if (cached) {
+      const cached = opts?.force ? null : cache.get<{ agents: Agent[] }>(AGENTS_KEY);
+      if (cached && !opts?.force) {
         agents.value = cached.agents;
         return;
       }
@@ -112,11 +114,15 @@ export function useAgents() {
 
   async function clearAgentHistory(id: string): Promise<void> {
     await request(`/api/agents/${id}/history/clear`, { method: 'POST' });
+    cache.invalidate(TRADES_STATS_KEY);
+    cache.invalidatePrefix(TRADES_LIST_PREFIX);
   }
 
   async function deleteAgent(id: string): Promise<void> {
     await request(`/api/agents/${id}`, { method: 'DELETE' });
     cache.invalidate(AGENTS_KEY);
+    cache.invalidate(TRADES_STATS_KEY);
+    cache.invalidatePrefix(TRADES_LIST_PREFIX);
     agents.value = agents.value.filter((a) => a.id !== id);
   }
 
