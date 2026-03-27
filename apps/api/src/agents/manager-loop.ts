@@ -16,6 +16,7 @@ import { createDexDataService, getPriceUsd } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
 import { generateId, nowIso } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
+import { normalizeManagerDecisionInterval } from '../lib/manager-interval-sync.js';
 import type { ManagerConfig } from '@dex-agents/shared';
 import { filterSupportedBasePairs, SUPPORTED_BASE_PAIRS, getAgentPersonaTemplate, getDefaultAgentPersona, AGENT_PROFILES } from '@dex-agents/shared';
 
@@ -116,6 +117,38 @@ function normaliseAgentModel(requested: unknown, allowedModels: Set<string>): st
   const fallback = DEFAULT_FREE_AGENT_MODEL;
   if (typeof requested !== 'string') return fallback;
   return allowedModels.has(requested) ? requested : fallback;
+}
+
+const VALID_AGENT_ANALYSIS_INTERVALS = new Set(['15m', '1h', '4h', '1d']);
+const LEGACY_AGENT_INTERVAL_MAP: Record<string, string> = {
+  '60': '1m',
+  '300': '5m',
+  '900': '15m',
+  '3600': '1h',
+  '14400': '4h',
+  '86400': '1d',
+};
+
+function normalizeRawAnalysisInterval(value: unknown): string | null {
+  const raw = typeof value === 'number' && Number.isFinite(value)
+    ? String(Math.trunc(value))
+    : value;
+  if (typeof raw !== 'string') return null;
+
+  let interval = raw.trim();
+  if (!interval) return null;
+
+  if (LEGACY_AGENT_INTERVAL_MAP[interval]) interval = LEGACY_AGENT_INTERVAL_MAP[interval];
+  if (interval === '1m' || interval === '5m') interval = '15m';
+
+  return VALID_AGENT_ANALYSIS_INTERVALS.has(interval) ? interval : null;
+}
+
+export function normalizeManagerAnalysisInterval(value: unknown, fallback: string = '1h'): string {
+  const normalized = normalizeRawAnalysisInterval(value);
+  if (normalized) return normalized;
+  const fallbackNormalized = normalizeRawAnalysisInterval(fallback);
+  return fallbackNormalized ?? '1h';
 }
 
 /** Find the index of the bracket/brace that closes the one opened at `openIdx`. */
@@ -338,6 +371,14 @@ ${behaviorSection ? '\n' + behaviorSection : ''}
 When creating or modifying agents, you MUST choose pairs only from this allowlist:
 ${SUPPORTED_BASE_PAIRS.map((p: string) => `- "${p}"`).join('\n')}
 
+## Allowed Agent Analysis Intervals
+When creating or modifying agents, "analysisInterval" MUST be one of:
+- "15m"
+- "1h"
+- "4h"
+- "1d"
+Do not use unsupported legacy values like "1m", "5m", "30m", or numeric seconds/minutes.
+
 ## Available LLM Models For Agents
 Use only these llmModel IDs when creating or modifying agents:
 ${availableModels.map((m) => `- "${m}"`).join('\n')}
@@ -355,10 +396,10 @@ ${AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
+- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval (15m|1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
 - "start_agent": start a stopped or paused agent (provide agentId)
 - "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
+- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (15m|1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
 - "terminate_agent": permanently stop an agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 
@@ -444,10 +485,14 @@ export async function executeManagerAction(
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
       const existingConfig = JSON.parse(agent.config);
+      const previousAnalysisInterval = normalizeManagerAnalysisInterval(existingConfig.analysisInterval, '1h');
       const { personaMd: paramsPersona, ...restParams } = params as Record<string, unknown> & { personaMd?: string };
       const patch: Record<string, unknown> = { ...restParams };
       if (typeof patch.llmModel === 'string') {
         patch.llmModel = normaliseAgentModel(patch.llmModel, allowedModels);
+      }
+      if (patch.analysisInterval !== undefined) {
+        patch.analysisInterval = normalizeManagerAnalysisInterval(patch.analysisInterval, previousAnalysisInterval);
       }
       if (patch.pairs != null && Array.isArray(patch.pairs)) {
         const normalized = normalizePairsForDex(patch.pairs as string[]);
@@ -461,6 +506,12 @@ export async function executeManagerAction(
         }
       }
       const mergedConfig = { ...existingConfig, ...patch };
+      const nextAnalysisInterval = normalizeManagerAnalysisInterval(
+        mergedConfig.analysisInterval,
+        previousAnalysisInterval
+      );
+      mergedConfig.analysisInterval = nextAnalysisInterval;
+      const analysisIntervalChanged = nextAnalysisInterval !== previousAnalysisInterval;
       const updates: Partial<typeof agents.$inferInsert> = {
         config: JSON.stringify(mergedConfig),
         llmModel: (mergedConfig.llmModel ?? agent.llmModel) || DEFAULT_FREE_AGENT_MODEL,
@@ -470,6 +521,49 @@ export async function executeManagerAction(
         updates.personaMd = typeof paramsPersona === 'string' ? paramsPersona : null;
       }
       await db.update(agents).set(updates).where(eq(agents.id, agentId));
+      const [updatedAgent] = await db.select().from(agents).where(eq(agents.id, agentId));
+
+      if (agent.status === 'running' && updatedAgent) {
+        const doId = env.TRADING_AGENT.idFromName(agentId);
+        const stub = env.TRADING_AGENT.get(doId);
+
+        try {
+          await stub.fetch(
+            new Request('http://do/sync-config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                agentRow: {
+                  id: updatedAgent.id,
+                  name: updatedAgent.name,
+                  status: updatedAgent.status,
+                  config: updatedAgent.config,
+                  ownerAddress: updatedAgent.ownerAddress ?? null,
+                  llmModel: updatedAgent.llmModel ?? null,
+                  profileId: updatedAgent.profileId ?? null,
+                  personaMd: updatedAgent.personaMd ?? null,
+                },
+              }),
+            }),
+          );
+        } catch (err) {
+          console.warn(`[manager-loop] failed to sync config cache to TRADING_AGENT DO for ${agentId}:`, err);
+        }
+
+        if (analysisIntervalChanged) {
+          try {
+            await stub.fetch(
+              new Request('http://do/set-interval', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ analysisInterval: nextAnalysisInterval }),
+              }),
+            );
+          } catch (err) {
+            console.warn(`[manager-loop] failed to sync interval to TRADING_AGENT DO for ${agentId}:`, err);
+          }
+        }
+      }
       return { success: true, detail: `Agent ${agentId} modified` };
     }
 
@@ -478,7 +572,7 @@ export async function executeManagerAction(
       const agentName = String(params.name ?? 'Manager-created Agent');
       const paperBalance = Number(params.paperBalance ?? 10000);
       const slippageSimulation = 0.3;
-      const analysisInterval = String(params.analysisInterval ?? '1h');
+      const analysisInterval = normalizeManagerAnalysisInterval(params.analysisInterval, '1h');
       const llmModel = normaliseAgentModel(params.llmModel, allowedModels);
       // Use the LLM-chosen profileId if it's a valid agent profile, otherwise no profile.
       const validAgentProfileIds = new Set(AGENT_PROFILES.map((p) => p.id));
@@ -566,6 +660,15 @@ export async function runManagerLoop(
   }
 
   const config = JSON.parse(managerRow.config) as ManagerConfig;
+  const runtimeDecisionInterval = normalizeManagerDecisionInterval(
+    (config as { decisionInterval?: string }).decisionInterval,
+  );
+  // Keep DO scheduling state aligned with DB config on every cycle.
+  try {
+    await ctx.storage.put('decisionInterval', runtimeDecisionInterval);
+  } catch (err) {
+    console.warn(`[manager-loop] ${managerId}: failed to sync decisionInterval into DO storage:`, err);
+  }
 
   // 2. Load all managed agents
   const managedRows = await db.select().from(agents).where(eq(agents.managerId, managerId));

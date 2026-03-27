@@ -1,6 +1,19 @@
 <script setup lang="ts">
+import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@dex-agents/shared';
+
 definePageMeta({ ssr: false });
 const { trades, stats, loading, error, fetchTrades, fetchStats } = useTrades();
+const { agents, fetchAgents } = useAgents();
+
+const agentEmojiMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {};
+  for (const agent of agents.value) {
+    const configProfileId = (agent.config as { profileId?: string }).profileId;
+    const profileId = agent.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
+    map[agent.id] = getAgentProfile(profileId)?.emoji ?? '🤖';
+  }
+  return map;
+});
 
 const statusFilter = ref('');
 const limitFilter = ref(100);
@@ -14,6 +27,7 @@ async function load() {
   await Promise.all([
     fetchTrades({ status: statusFilter.value || undefined, limit: limitFilter.value }),
     fetchStats(),
+    fetchAgents(),
   ]);
 }
 
@@ -90,7 +104,7 @@ watch([statusFilter, limitFilter], load);
     </div>
     <div v-else-if="error" class="alert alert-error">{{ error }}</div>
     <div v-else class="card">
-      <TradeTable :trades="trades" :show-agent="true" />
+      <TradeTable :trades="trades" :show-agent="true" :agent-emojis="agentEmojiMap" />
     </div>
   </main>
 </template>

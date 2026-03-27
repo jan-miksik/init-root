@@ -25,7 +25,6 @@ const viewMode = ref<'table' | 'grid'>('table');
 // Column visibility for table view
 type ColumnKey =
   | 'status'
-  | 'autonomyLevel'
   | 'pairs'
   | 'model'
   | 'analysisInterval'
@@ -37,7 +36,6 @@ type ColumnKey =
 
 const visibleColumns = ref<Record<ColumnKey, boolean>>({
   status: true,
-  autonomyLevel: true,
   pairs: false, // hidden by default
   model: false, // hidden by default
   analysisInterval: true,
@@ -59,7 +57,6 @@ const openActionsForAgent = ref<string | null>(null);
 type SortKey =
   | 'name'
   | 'status'
-  | 'autonomyLevel'
   | 'analysisInterval'
   | 'paperBalance'
   | 'maxPositionSizePct'
@@ -110,21 +107,24 @@ function sortedList(list: typeof agents.value) {
 
 const sortedAgents = computed(() => sortedList(agents.value));
 
-// Keep Agents page overview stats consistent with Trades page:
-// Total P&L shown here is realized P&L from closed trades (same as /trades).
-const realizedPnlUsd = computed(() => stats.value?.totalPnlUsd ?? null);
-
-// Per-agent P&L (from performance snapshots)
-interface PerformanceSnapshot {
-  id: string;
-  balance: number;
-  totalPnlPct: number;
-  winRate: number;
-  totalTrades: number;
-  snapshotAt: string;
-}
+// Per-agent P&L (realized P&L from closed trades; synced with agent detail table)
 
 const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
+
+const realizedPnlUsd = computed(() => {
+  if (agents.value.length === 0) return 0;
+  const ids = new Set(agents.value.map((a) => a.id));
+  let sum = 0;
+  let hasAny = false;
+  for (const [agentId, pnl] of Object.entries(agentPnl.value)) {
+    if (!ids.has(agentId)) continue;
+    sum += pnl.totalPnlUsd;
+    hasAny = true;
+  }
+  // Fallback during first load before per-agent totals arrive.
+  if (!hasAny) return stats.value?.totalPnlUsd ?? 0;
+  return sum;
+});
 
 function formatUsdNoNegativeZero(value: number, digits = 0): string {
   const abs = Math.abs(value);
@@ -152,22 +152,7 @@ async function loadAgentPerformance(agentId: string) {
     const agent = agents.value.find((a) => a.id === agentId);
     if (!agent) return;
     const startingBalance = agent.config.paperBalance;
-    const perf = await request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${agentId}/performance`, { silent: true }).catch(
-      () => null
-    );
-    const latest = perf?.snapshots?.[0] ?? null;
-    if (latest && Number.isFinite(latest.totalPnlPct) && startingBalance > 0) {
-      const totalPnlPct = latest.totalPnlPct;
-      const totalPnlUsd = (startingBalance * totalPnlPct) / 100;
-      if (!agents.value.some((a) => a.id === agentId)) return;
-      agentPnl.value = {
-        ...agentPnl.value,
-        [agentId]: { totalPnlUsd, totalPnlPct },
-      };
-      return;
-    }
-
-    // Fallback: sum realized P&L from trade history (best-effort; keep silent to avoid noisy console errors)
+    // Use live trade history so refresh reflects the latest closed trades immediately.
     const tradesRes = await request<{ trades: Array<{ status: 'open' | 'closed'; pnlUsd?: number | null }> }>(
       `/api/agents/${agentId}/trades`,
       { silent: true }
@@ -189,6 +174,12 @@ async function loadAgentPerformance(agentId: string) {
 watch(
   agents,
   (list) => {
+    const listIds = new Set(list.map((a) => a.id));
+    const nextPnl: Record<string, { totalPnlUsd: number; totalPnlPct: number }> = {};
+    for (const [agentId, pnl] of Object.entries(agentPnl.value)) {
+      if (listIds.has(agentId)) nextPnl[agentId] = pnl;
+    }
+    agentPnl.value = nextPnl;
     for (const a of list) {
       loadAgentPerformance(a.id);
     }
@@ -311,9 +302,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 <input v-model="visibleColumns.status" type="checkbox" /> Status
               </label>
               <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.autonomyLevel" type="checkbox" /> Autonomy
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
                 <input v-model="visibleColumns.pairs" type="checkbox" /> Pairs
               </label>
               <label style="display: flex; align-items: center; gap: 6px;">
@@ -373,12 +361,8 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       </div>
       <div class="stat-card">
         <div class="stat-label">Total P&amp;L</div>
-        <div class="stat-value" :class="(realizedPnlUsd ?? 0) >= 0 ? 'positive' : 'negative'">
-          {{
-            realizedPnlUsd !== null
-              ? formatUsdNoNegativeZero(realizedPnlUsd, 0)
-              : '—'
-          }}
+        <div class="stat-value" :class="realizedPnlUsd >= 0 ? 'positive' : 'negative'">
+          {{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }}
         </div>
         <div class="stat-change">closed trades</div>
       </div>
@@ -413,13 +397,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 @click="toggleSort('status')"
               >
                 Status <span class="sort-icon">{{ sortIcon('status') }}</span>
-              </th>
-              <th
-                v-if="visibleColumns.autonomyLevel"
-                class="sortable"
-                @click="toggleSort('autonomyLevel')"
-              >
-                Autonomy <span class="sort-icon">{{ sortIcon('autonomyLevel') }}</span>
               </th>
               <th v-if="visibleColumns.pairs">Pairs</th>
               <th v-if="visibleColumns.model">Model</th>
@@ -470,9 +447,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               <td v-if="visibleColumns.status">
                 <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
               </td>
-              <td v-if="visibleColumns.autonomyLevel" style="color: var(--text-muted); font-size: 12px;">
-                —
-              </td>
               <td v-if="visibleColumns.pairs" class="mono" style="font-size: 12px;">
                 {{ agent.config.pairs.join(', ') }}
               </td>
@@ -492,12 +466,14 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 {{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%
               </td>
               <td v-if="visibleColumns.totalPnl" class="mono" style="font-size: 12px;">
-                <template v-if="agentPnl[agent.id]">
-                  <span :class="agentPnl[agent.id]!.totalPnlUsd > 0 ? 'positive' : agentPnl[agent.id]!.totalPnlUsd < 0 ? 'negative' : 'neutral'">
-                    {{ formatPnlInline(agentPnl[agent.id]!.totalPnlUsd, agentPnl[agent.id]!.totalPnlPct) }}
-                  </span>
-                </template>
-                <span v-else style="color: var(--text-muted);">—</span>
+                <Transition name="pnl">
+                  <span
+                    v-if="agentPnl[agent.id]"
+                    :key="formatPnlInline(agentPnl[agent.id]!.totalPnlUsd, agentPnl[agent.id]!.totalPnlPct)"
+                    :class="agentPnl[agent.id]!.totalPnlUsd > 0 ? 'positive' : agentPnl[agent.id]!.totalPnlUsd < 0 ? 'negative' : 'neutral'"
+                  >{{ formatPnlInline(agentPnl[agent.id]!.totalPnlUsd, agentPnl[agent.id]!.totalPnlPct) }}</span>
+                  <span v-else key="empty" style="color: var(--text-muted);">—</span>
+                </Transition>
               </td>
               <td v-if="visibleColumns.actions" style="text-align: right;" @click.stop>
                 <div class="agent-actions-menu">

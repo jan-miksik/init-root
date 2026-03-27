@@ -5,7 +5,7 @@ import { useAccount } from '@wagmi/vue';
 // Feature flag — set to false to remove the beta badge sitewide
 const IS_BETA = true;
 
-const { user, isAuthenticated } = useAuth();
+const { user, isAuthenticated, authResolved } = useAuth();
 const { open: openAppKit } = useAppKit();
 const { isConnected, address } = useAccount();
 
@@ -76,7 +76,12 @@ function truncate(addr: string): string {
         </template>
       </div>
     </nav>
-    <NuxtPage />
+    <main class="app-main">
+      <NuxtPage />
+      <div v-if="!authResolved" class="app-loading-overlay" aria-live="polite" aria-busy="true">
+        <span class="spinner" />
+      </div>
+    </main>
   </div>
 </template>
 
@@ -241,5 +246,19 @@ function truncate(addr: string): string {
 .settings-icon-btn:hover {
   border-color: var(--border-light);
   color: var(--text);
+}
+
+.app-main {
+  position: relative;
+}
+
+.app-loading-overlay {
+  position: fixed;
+  inset: 52px 0 0;
+  z-index: 110;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>

@@ -134,6 +134,24 @@ a:hover {
   50% { opacity: 0.5; }
 }
 
+/* P&L flash animations for table cells */
+@keyframes pnl-flash-pos {
+  0%   { background: rgba(107, 203, 119, 0.55); border-radius: 3px; }
+  100% { background: transparent; }
+}
+@keyframes pnl-flash-neg {
+  0%   { background: rgba(255, 107, 107, 0.55); border-radius: 3px; }
+  100% { background: transparent; }
+}
+.pnl-enter-active {
+  animation-duration: 600ms;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+.pnl-enter-active.positive { animation-name: pnl-flash-pos; }
+.pnl-enter-active.negative { animation-name: pnl-flash-neg; }
+.pnl-enter-active.neutral  { animation-name: pnl-flash-pos; animation-duration: 0ms; }
+
 .navbar-nav {
   display: flex;
   gap: 2px;

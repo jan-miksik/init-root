@@ -31,6 +31,7 @@ export interface AuthUser {
 
 const authUser = ref<AuthUser | null>(null);
 const authLoading = ref(false);
+const authResolved = ref(false);
 let fetchMePromise: Promise<void> | null = null;
 
 // ─── Auto-disconnect hook ─────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ export function useAuth() {
         }
       } finally {
         fetchMePromise = null;
+        authResolved.value = true;
       }
     })();
     return fetchMePromise;
@@ -152,6 +154,7 @@ export function useAuth() {
     user: authUser,
     isAuthenticated,
     isLoading: authLoading,
+    authResolved,
     fetchMe,
     signIn,
     signOut,

@@ -66,8 +66,12 @@ export default defineNuxtPlugin((nuxtApp) => {
   // 5. Watch for wallet disconnection and automatically sign out of the app.
   //    Components should use useAccount() from @wagmi/vue for reactive wallet state.
   watchConnection(wagmiAdapter.wagmiConfig, {
-    onChange(connection) {
-      if (!connection.isConnected) {
+    onChange(connection, prevConnection) {
+      // Only sign out when transitioning from connected → disconnected.
+      // Ignores events during Wagmi initialization where prevConnection is undefined
+      // (wallet reconnecting from localStorage), which would otherwise spuriously log
+      // the user out right after fetchMe() restores their session.
+      if (prevConnection?.isConnected && !connection?.isConnected) {
         handleWalletDisconnect().then((wasSignedIn) => {
           if (import.meta.client && wasSignedIn) {
             navigateTo('/connect');

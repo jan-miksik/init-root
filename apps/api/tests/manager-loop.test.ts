@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseManagerDecisions, buildManagerPrompt, executeManagerAction } from '../src/agents/manager-loop.js';
+import {
+  parseManagerDecisions,
+  buildManagerPrompt,
+  executeManagerAction,
+  normalizeManagerAnalysisInterval,
+} from '../src/agents/manager-loop.js';
 import type { ManagedAgentSnapshot, ManagerMemory, ManagerDecision } from '../src/agents/manager-loop.js';
 
 const mockAgent: ManagedAgentSnapshot = {
@@ -152,6 +157,44 @@ describe('buildManagerPrompt', () => {
       managerConfig: mockManagerConfig,
     });
     expect(prompt).toContain('3500');
+  });
+
+  it('includes strict allowed analysisInterval constraints', () => {
+    const prompt = buildManagerPrompt({
+      agents: [mockAgent],
+      marketData: [],
+      memory: mockMemory,
+      managerConfig: mockManagerConfig,
+    });
+    expect(prompt).toContain('Allowed Agent Analysis Intervals');
+    expect(prompt).toContain('"15m"');
+    expect(prompt).toContain('"1h"');
+    expect(prompt).toContain('"4h"');
+    expect(prompt).toContain('"1d"');
+  });
+});
+
+describe('normalizeManagerAnalysisInterval', () => {
+  it('keeps valid intervals unchanged', () => {
+    expect(normalizeManagerAnalysisInterval('15m')).toBe('15m');
+    expect(normalizeManagerAnalysisInterval('1h')).toBe('1h');
+    expect(normalizeManagerAnalysisInterval('4h')).toBe('4h');
+    expect(normalizeManagerAnalysisInterval('1d')).toBe('1d');
+  });
+
+  it('normalizes legacy short intervals to 15m', () => {
+    expect(normalizeManagerAnalysisInterval('1m')).toBe('15m');
+    expect(normalizeManagerAnalysisInterval('5m')).toBe('15m');
+    expect(normalizeManagerAnalysisInterval('60')).toBe('15m');
+    expect(normalizeManagerAnalysisInterval('300')).toBe('15m');
+    expect(normalizeManagerAnalysisInterval('900')).toBe('15m');
+  });
+
+  it('normalizes invalid values to fallback', () => {
+    expect(normalizeManagerAnalysisInterval('30m')).toBe('1h');
+    expect(normalizeManagerAnalysisInterval('abc')).toBe('1h');
+    expect(normalizeManagerAnalysisInterval(30)).toBe('1h');
+    expect(normalizeManagerAnalysisInterval('bad', '4h')).toBe('4h');
   });
 });
 

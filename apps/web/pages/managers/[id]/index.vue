@@ -47,7 +47,7 @@
         </div>
         <div class="stat-card">
           <div class="stat-label">Interval</div>
-          <div class="stat-value" style="font-size: 16px;">{{ manager.config?.decisionInterval ?? '—' }}</div>
+          <div class="stat-value" style="font-size: 16px;">{{ doStatus?.decisionInterval ?? manager.config?.decisionInterval ?? '—' }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Cycles</div>
@@ -385,7 +385,11 @@ function updateCountdown() {
       }
     }
   }
-  const intervalMs = INTERVAL_MS[manager.value?.config?.decisionInterval ?? '1h'] ?? 3600_000;
+  const effectiveInterval =
+    (doStatus.value?.decisionInterval as string | undefined) ??
+    (manager.value?.config?.decisionInterval as string | undefined) ??
+    '1h';
+  const intervalMs = INTERVAL_MS[effectiveInterval] ?? 3600_000;
   const remaining = Math.max(0, nextAt - Date.now());
   const elapsed = intervalMs - remaining;
   progressPct.value = Math.min(100, Math.max(0, (elapsed / intervalMs) * 100));

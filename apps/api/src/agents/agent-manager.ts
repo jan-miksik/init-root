@@ -2,6 +2,16 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env.js';
 import { runManagerLoop } from './manager-loop.js';
 
+const VALID_DECISION_INTERVALS = new Set(['1h', '4h', '1d']);
+
+function normalizeDecisionInterval(interval: unknown, fallback = '1h'): string {
+  if (typeof interval === 'string') {
+    const normalized = interval.trim();
+    if (VALID_DECISION_INTERVALS.has(normalized)) return normalized;
+  }
+  return fallback;
+}
+
 function intervalToMs(interval: string): number {
   switch (interval) {
     case '1h': return 60 * 60_000;
@@ -33,6 +43,7 @@ export class AgentManagerDO extends DurableObject<Env> {
     if (url.pathname === '/status') {
       const managerId = (await this.ctx.storage.get<string>('managerId')) ?? null;
       const status = (await this.ctx.storage.get<string>('status')) ?? 'stopped';
+      const decisionInterval = (await this.ctx.storage.get<string>('decisionInterval')) ?? null;
       const tickCount = (await this.ctx.storage.get<number>('tickCount')) ?? 0;
       let nextAlarmAt = (await this.ctx.storage.get<number>('nextAlarmAt')) ?? null;
       const deciding = (await this.ctx.storage.get<boolean>('deciding')) ?? false;
@@ -51,23 +62,56 @@ export class AgentManagerDO extends DurableObject<Env> {
         console.log(`[AgentManagerDO] ${managerId}: alarm was overdue — rescheduled in 5s`);
       }
 
-      return Response.json({ managerId, status, tickCount, nextAlarmAt, deciding, lastDecisionAt, lastDecisionMs, hasMemory: !!memory });
+      return Response.json({
+        managerId,
+        status,
+        decisionInterval,
+        tickCount,
+        nextAlarmAt,
+        deciding,
+        lastDecisionAt,
+        lastDecisionMs,
+        hasMemory: !!memory,
+      });
     }
 
     if (url.pathname === '/start' && request.method === 'POST') {
       const body = (await request.json()) as { managerId: string; decisionInterval?: string };
+      const decisionInterval = normalizeDecisionInterval(body.decisionInterval, '1h');
 
       await this.ctx.storage.put('managerId', body.managerId);
       await this.ctx.storage.put('status', 'running');
-      await this.ctx.storage.put('decisionInterval', body.decisionInterval ?? '1h');
+      await this.ctx.storage.put('decisionInterval', decisionInterval);
 
-      const intervalMs = intervalToMs(body.decisionInterval ?? '1h');
+      const intervalMs = intervalToMs(decisionInterval);
       const firstTick = Math.min(5_000, intervalMs);
       const nextAlarmAt = Date.now() + firstTick;
       await this.ctx.storage.put('nextAlarmAt', nextAlarmAt);
       await this.ctx.storage.setAlarm(nextAlarmAt);
 
       return Response.json({ ok: true, status: 'running' });
+    }
+
+    if (url.pathname === '/set-interval' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { decisionInterval?: string };
+      const decisionInterval = typeof body.decisionInterval === 'string' ? body.decisionInterval.trim() : '';
+      if (!VALID_DECISION_INTERVALS.has(decisionInterval)) {
+        return Response.json(
+          { error: 'decisionInterval must be one of: 1h, 4h, 1d' },
+          { status: 400 },
+        );
+      }
+
+      await this.ctx.storage.put('decisionInterval', decisionInterval);
+
+      const status = (await this.ctx.storage.get<string>('status')) ?? 'stopped';
+      if (status === 'running') {
+        const nextAlarmAt = Date.now() + intervalToMs(decisionInterval);
+        await this.ctx.storage.put('nextAlarmAt', nextAlarmAt);
+        await this.ctx.storage.setAlarm(nextAlarmAt);
+      }
+
+      return Response.json({ ok: true, decisionInterval });
     }
 
     if (url.pathname === '/stop' && request.method === 'POST') {
@@ -83,6 +127,18 @@ export class AgentManagerDO extends DurableObject<Env> {
     }
 
     if (url.pathname === '/trigger' && request.method === 'POST') {
+      const body = (await request.json().catch(() => ({}))) as { decisionInterval?: string };
+      const requestedInterval = typeof body.decisionInterval === 'string' ? body.decisionInterval.trim() : '';
+      if (requestedInterval) {
+        if (!VALID_DECISION_INTERVALS.has(requestedInterval)) {
+          return Response.json(
+            { error: 'decisionInterval must be one of: 1h, 4h, 1d' },
+            { status: 400 },
+          );
+        }
+        await this.ctx.storage.put('decisionInterval', requestedInterval);
+      }
+
       const status = (await this.ctx.storage.get<string>('status')) ?? 'stopped';
       if (status !== 'running') {
         return Response.json({ error: 'Manager is not running' }, { status: 400 });

@@ -1,3 +1,5 @@
 <script setup lang="ts">
-await navigateTo('/agents', { replace: true });
+definePageMeta({
+  middleware: () => navigateTo('/agents', { replace: true }),
+});
 </script>

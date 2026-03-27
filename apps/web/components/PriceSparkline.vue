@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Line } from 'vue-chartjs';
+import type { TooltipItem } from 'chart.js';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,6 +16,7 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, 
 const props = defineProps<{
   chain: string;
   pairAddress: string;
+  openTimestamps?: string[];
 }>();
 
 const { request } = useApi();
@@ -78,10 +80,58 @@ function formatTime(ts: number): string {
 const lineColor = computed(() => priceDirection.value >= 0 ? '#6BCB77' : '#FF6B6B');
 const fillColor = computed(() => priceDirection.value >= 0 ? 'rgba(107,203,119,0.08)' : 'rgba(255,107,107,0.08)');
 
+const openMarkers = computed(() => {
+  const markerData = Array<number | null>(candles.value.length).fill(null);
+  const markerLabels: Record<number, string> = {};
+
+  if (candles.value.length === 0 || !props.openTimestamps?.length) {
+    return { markerData, markerLabels };
+  }
+
+  const rangeStart = candles.value[0]!.t;
+  const rangeEnd = candles.value[candles.value.length - 1]!.t;
+  const opensByIndex = new Map<number, number[]>();
+
+  for (const openedAt of props.openTimestamps) {
+    const ts = new Date(openedAt).getTime();
+    if (!Number.isFinite(ts) || ts < rangeStart || ts > rangeEnd) continue;
+
+    let nearestIdx = 0;
+    let nearestDiff = Math.abs(candles.value[0]!.t - ts);
+    for (let i = 1; i < candles.value.length; i++) {
+      const diff = Math.abs(candles.value[i]!.t - ts);
+      if (diff < nearestDiff) {
+        nearestDiff = diff;
+        nearestIdx = i;
+      }
+    }
+
+    const bucket = opensByIndex.get(nearestIdx) ?? [];
+    bucket.push(ts);
+    opensByIndex.set(nearestIdx, bucket);
+  }
+
+  for (const [idx, timestamps] of opensByIndex.entries()) {
+    markerData[idx] = candles.value[idx]!.c;
+    const firstOpened = new Date(Math.min(...timestamps)).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    markerLabels[idx] = timestamps.length === 1
+      ? `Position opened ${firstOpened}`
+      : `${timestamps.length} positions opened (first ${firstOpened})`;
+  }
+
+  return { markerData, markerLabels };
+});
+
 const chartData = computed(() => ({
   labels: candles.value.map((c) => formatTime(c.t)),
   datasets: [
     {
+      label: 'Price',
       data: candles.value.map((c) => c.c),
       borderColor: lineColor.value,
       backgroundColor: fillColor.value,
@@ -90,6 +140,17 @@ const chartData = computed(() => ({
       pointHitRadius: 8,
       fill: true,
       tension: 0.2,
+    },
+    {
+      label: 'Position opens',
+      data: openMarkers.value.markerData,
+      showLine: false,
+      pointRadius: 3.5,
+      pointHoverRadius: 5,
+      pointHitRadius: 10,
+      pointBackgroundColor: '#F5A623',
+      pointBorderColor: '#0F0F0F',
+      pointBorderWidth: 1.2,
     },
   ],
 }));
@@ -115,16 +176,44 @@ const chartOptions = computed(() => ({
       padding: 8,
       displayColors: false,
       callbacks: {
-        label: (ctx: { parsed: { y: number | null } }) => `$${formatPrice(ctx.parsed.y ?? 0)}`,
+        title: (items: TooltipItem<'line'>[]) => {
+          if (items.length === 0) return '';
+          const idx = items[0]!.dataIndex;
+          const candle = candles.value[idx];
+          return candle ? formatTime(candle.t) : '';
+        },
+        label: (ctx: TooltipItem<'line'>) => {
+          if (ctx.dataset.label === 'Position opens') {
+            const markerLabel = openMarkers.value.markerLabels[ctx.dataIndex] ?? 'Position opened';
+            const price = ctx.parsed.y == null ? '' : ` @ $${formatPrice(ctx.parsed.y)}`;
+            return `${markerLabel}${price}`;
+          }
+          return `$${formatPrice(ctx.parsed.y ?? 0)}`;
+        },
       },
     },
   },
   scales: {
     x: {
-      display: false,
+      display: true,
+      grid: { display: false },
+      ticks: {
+        color: '#8A8580',
+        font: { family: "'Space Mono', monospace", size: 9 },
+        autoSkip: true,
+        maxTicksLimit: 4,
+      },
     },
     y: {
-      display: false,
+      display: true,
+      position: 'right' as const,
+      grid: { color: 'rgba(138, 133, 128, 0.16)' },
+      ticks: {
+        color: '#8A8580',
+        font: { family: "'Space Mono', monospace", size: 9 },
+        maxTicksLimit: 4,
+        callback: (value: string | number) => `$${formatPrice(Number(value))}`,
+      },
     },
   },
 }));

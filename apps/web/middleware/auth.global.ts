@@ -2,24 +2,20 @@
  * Auth guard middleware — redirects unauthenticated users to /connect.
  * Runs on every route navigation in the SPA.
  */
-export default defineNuxtRouteMiddleware(async (to) => {
+export default defineNuxtRouteMiddleware((to) => {
   // Always allow the connect page
   if (to.path === '/connect') return;
 
-  const { isAuthenticated, fetchMe } = useAuth();
+  const { isAuthenticated, authResolved, fetchMe } = useAuth();
 
-  // If state is already loaded, check immediately
-  if (isAuthenticated.value) return;
-
-  // Otherwise try to restore the session (session cookie may still be valid).
-  // If the API is down (e.g. 502 from /api/auth/me), don't block navigation — treat as unauthenticated.
-  try {
-    await fetchMe();
-  } catch {
-    // Swallow errors; unauthenticated state is handled below.
+  // Let app render while auth state is restoring in the background.
+  // The bootstrap plugin handles post-restore redirect on first load.
+  if (!authResolved.value) {
+    void fetchMe();
+    return;
   }
 
   if (!isAuthenticated.value) {
-    if (to.path !== '/connect') return navigateTo('/connect');
+    return navigateTo('/connect');
   }
 });

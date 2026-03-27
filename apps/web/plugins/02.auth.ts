@@ -1,10 +1,17 @@
 /**
  * Auth init plugin — restores session state on app start.
- * Non-blocking: starts fetchMe() but doesn't await it, so the app
- * renders immediately while the session check happens in the background.
+ * Runs in the background so the app can render immediately while auth restores.
+ * Once resolved, unauthenticated users are redirected to /connect.
  */
 export default defineNuxtPlugin(() => {
-  const { fetchMe } = useAuth();
-  // Fire-and-forget: don't block app startup waiting for /api/auth/me
-  fetchMe().catch(() => {});
+  const { fetchMe, isAuthenticated } = useAuth();
+  const router = useRouter();
+
+  void fetchMe()
+    .catch(() => {})
+    .finally(() => {
+      if (!isAuthenticated.value && router.currentRoute.value.path !== '/connect') {
+        void navigateTo('/connect', { replace: true });
+      }
+    });
 });

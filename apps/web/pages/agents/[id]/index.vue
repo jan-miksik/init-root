@@ -88,6 +88,14 @@ const livePricesError = ref<string | null>(null);
 const expandedSections = ref<Record<string, Set<string>>>({});
 
 const showMdPreview = ref(false);
+const ANALYZE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+const ANALYZE_RESULT_WAIT_MS = 25_000;
+const ANALYZE_RESULT_WAIT_ON_PENDING_MS = 90_000;
+const ANALYZE_RESULT_POLL_MS = 1_500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function formatJson(text: string): string {
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
@@ -174,7 +182,6 @@ const isModelUnavailableError = computed(() => {
     err.includes('unavailable for free') ||
     err.includes('free requests') ||
     err.includes('rate limit') ||
-    err.includes('timed out') ||
     err.includes('402') ||
     err.includes('429') ||
     (err.includes('llm') && err.includes('failed'))
@@ -254,6 +261,46 @@ async function refreshDoStatus() {
   } catch {
     // non-critical
   }
+}
+
+async function refreshAnalysisOutputs() {
+  const [t, d, p] = await Promise.all([
+    fetchAgentTrades(id.value),
+    request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`),
+    request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${id.value}/performance`),
+  ]);
+  trades.value = t;
+  decisions.value = d.decisions;
+  snapshots.value = p.snapshots;
+}
+
+async function waitForDecisionChange(previousDecisionId: string | null, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`, {
+        timeout: 30_000,
+        silent: true,
+      });
+      decisions.value = res.decisions;
+      const latestDecisionId = res.decisions[0]?.id ?? null;
+      if (latestDecisionId && latestDecisionId !== previousDecisionId) {
+        return true;
+      }
+    } catch {
+      // Keep polling; this is best-effort and should not interrupt analyze flow.
+    }
+    await sleep(ANALYZE_RESULT_POLL_MS);
+  }
+  return false;
+}
+
+function extractAnalyzeError(err: unknown): string {
+  return (
+    (err as { data?: { error?: string }; message?: string })?.data?.error ??
+    (err as { message?: string })?.message ??
+    'Analysis failed — check that OPENROUTER_API_KEY is configured.'
+  );
 }
 
 onMounted(loadAll);
@@ -441,19 +488,42 @@ async function handleStop() {
   doStatus.value = null;
 }
 async function handleAnalyze() {
+  if (isAnalyzing.value) return;
   isAnalyzing.value = true;
   analyzeError.value = null;
+  const previousDecisionId = decisions.value[0]?.id ?? null;
+  let pendingRun = false;
+
   try {
-    await request(`/api/agents/${id.value}/analyze`, { method: 'POST', timeout: 200_000 });
-    // Refresh data after a short delay for the loop to write to D1
-    await new Promise((r) => setTimeout(r, 2000));
-    const [t, d] = await Promise.all([
-      fetchAgentTrades(id.value),
-      request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`),
-    ]);
-    trades.value = t;
-    decisions.value = d.decisions;
-    await refreshDoStatus();
+    try {
+      await request(`/api/agents/${id.value}/analyze`, {
+        method: 'POST',
+        timeout: ANALYZE_REQUEST_TIMEOUT_MS,
+      });
+    } catch (err: unknown) {
+      const msg = extractAnalyzeError(err).toLowerCase();
+      const isAlreadyRunning = msg.includes('already in progress');
+      const isTimeout = msg.includes('request timed out') || msg.includes('timed out') || msg.includes('aborted');
+      if (isAlreadyRunning || isTimeout) {
+        pendingRun = true;
+      } else {
+        throw err;
+      }
+    }
+
+    const hasNewDecision = await waitForDecisionChange(
+      previousDecisionId,
+      pendingRun ? ANALYZE_RESULT_WAIT_ON_PENDING_MS : ANALYZE_RESULT_WAIT_MS,
+    );
+
+    // Always do one full refresh to keep all cards/charts in sync.
+    await refreshAnalysisOutputs();
+    await Promise.all([refreshDoStatus(), fetchLivePrices()]);
+
+    if (pendingRun && !hasNewDecision) {
+      analyzeError.value = 'Analysis is still running in the background. No new decision yet — try again in a few seconds.';
+    }
+
     // Log the latest decision so silent failures are visible in the browser console
     const latest = decisions.value[0];
     if (latest) {
@@ -461,10 +531,7 @@ async function handleAnalyze() {
       console[level](`[analyze] decision=${latest.decision} confidence=${latest.confidence} model=${latest.llmModel}\n${latest.reasoning}`);
     }
   } catch (err: unknown) {
-    const msg =
-      (err as { data?: { error?: string }; message?: string })?.data?.error ??
-      (err as { message?: string })?.message ??
-      'Analysis failed — check that OPENROUTER_API_KEY is configured.';
+    const msg = extractAnalyzeError(err);
     analyzeError.value = msg;
     console.error('[analyze] failed:', msg, err);
   } finally {
@@ -719,14 +786,12 @@ function formatLatency(ms: number): string {
         </div>
         <div class="stat-card">
           <div class="stat-label">Total P&amp;L</div>
-          <div class="stat-value" :class="totalPnlUsd > 0 ? 'positive' : totalPnlUsd < 0 ? 'negative' : 'neutral'">
-            {{ formatUsdNoNegativeZero(totalPnlUsd, 0) }}
+          <div class="stat-value" :class="realizedPnlUsd > 0 ? 'positive' : realizedPnlUsd < 0 ? 'negative' : 'neutral'">
+            {{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }}
           </div>
           <div class="stat-change">
-            {{ (Object.is(totalPnlPct, -0) || Math.abs(totalPnlPct) < 0.005 ? 0 : totalPnlPct).toFixed(1) + '%' }}
-            <template v-if="openTrades.length > 0">
-              · <span :class="realizedPnlUsd > 0 ? 'positive' : realizedPnlUsd < 0 ? 'negative' : 'neutral'">{{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }} realized</span>
-            </template>
+            {{ (Object.is(totalPnlPct, -0) || Math.abs(totalPnlPct) < 0.005 ? 0 : totalPnlPct).toFixed(1) + '% total' }}
+            · <span :class="unrealizedPnlUsd > 0 ? 'positive' : unrealizedPnlUsd < 0 ? 'negative' : 'neutral'">{{ formatUsdNoNegativeZero(unrealizedPnlUsd, 0) }} unrealized</span>
           </div>
         </div>
         <div class="stat-card">
@@ -956,7 +1021,11 @@ function formatLatency(ms: number): string {
               </div>
 
               <!-- Price sparkline -->
-              <PriceSparkline chain="base" :pair-address="getPairAddress(pair)" />
+              <PriceSparkline
+                chain="base"
+                :pair-address="getPairAddress(pair)"
+                :open-timestamps="pairTrades.map((t) => t.openedAt)"
+              />
 
               <!-- DexScreener link -->
               <div v-if="getPairAddress(pair)" style="padding: 0 16px 8px; text-align: right;">

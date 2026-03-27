@@ -2,7 +2,7 @@
 import { useAccount } from '@wagmi/vue';
 
 const { isConnected } = useAccount();
-const { isAuthenticated, isLoading, signIn, user } = useAuth();
+const { isAuthenticated, isLoading, authResolved, signIn, user } = useAuth();
 const error = ref<string | null>(null);
 
 const router = useRouter();
@@ -51,69 +51,79 @@ function truncate(addr: string): string {
 
       <p class="connect-tagline">AI-powered paper trading agents on Base chain</p>
 
-      <!-- Connect wallet (always visible, big button inside box) -->
+      <!-- Connect wallet (always visible) -->
       <div class="connect-section">
         <div class="connect-btn-wrap">
           <w3m-button balance="hide" />
         </div>
       </div>
 
-      <!-- Step 2: SIWE verification (appears after wallet is connected) -->
-        <Transition name="fade">
-          <div v-if="isConnected && !isAuthenticated" class="connect-section siwe-section">
-            <div class="divider" />
-            <h2 class="step-label">Verify your wallet</h2>
-            <p class="step-hint">
-              Sign a short message to prove wallet ownership. No gas required.
-            </p>
-
-            <div v-if="error" class="connect-error">{{ error }}</div>
-
-            <button
-              class="btn btn-primary btn-wide btn-sign-in"
-              :disabled="isLoading"
-              @click="handleSignIn"
-            >
-              <span v-if="isLoading" class="loading-dots">
-                <span /><span /><span />
-              </span>
-              <span v-else>Sign In with Wallet</span>
-            </button>
-          </div>
-        </Transition>
-
-        <!-- Already signed in -->
-        <div v-if="isAuthenticated && user" class="connect-section">
-          <p class="connect-hint">
-            Signed in as <code>{{ truncate(user.walletAddress) }}</code>
-          </p>
-          <NuxtLink to="/agents" class="btn btn-primary btn-wide">Go to Agents</NuxtLink>
+      <!-- Loading: session check in progress -->
+      <Transition name="fade">
+        <div v-if="!authResolved" class="connect-session-loading">
+          <span class="spinner spinner-sm" />
+          <span>Restoring session…</span>
         </div>
+      </Transition>
+
+      <!-- Step 2: SIWE verification — only shown once session check is done -->
+      <Transition name="fade">
+        <div v-if="authResolved && isConnected && !isAuthenticated" class="connect-section siwe-section">
+          <div class="divider" />
+          <h2 class="step-label">Verify your wallet</h2>
+          <p class="step-hint">
+            Sign a short message to prove wallet ownership. No gas required.
+          </p>
+
+          <div v-if="error" class="connect-error">{{ error }}</div>
+
+          <button
+            class="btn btn-primary btn-wide btn-sign-in"
+            :disabled="isLoading"
+            @click="handleSignIn"
+          >
+            <span v-if="isLoading" class="loading-dots">
+              <span /><span /><span />
+            </span>
+            <span v-else>Sign In with Wallet</span>
+          </button>
+        </div>
+      </Transition>
+
+      <!-- Already signed in -->
+      <div v-if="isAuthenticated && user" class="connect-section">
+        <p class="connect-hint">
+          Signed in as <code>{{ truncate(user.walletAddress) }}</code>
+        </p>
+        <NuxtLink to="/agents" class="btn btn-primary btn-wide">Go to Agents</NuxtLink>
+      </div>
     </div>
 
-    <div v-if="isAuthenticated" class="connect-step2">
-      <div class="step-header">
-        <span class="step-num">2</span>
-        <span class="step-label">Connect OpenRouter <span class="step-opt">(optional)</span></span>
+    <Transition name="fade">
+      <div v-if="isAuthenticated" class="connect-step2">
+        <div class="step-header">
+          <span class="step-num">2</span>
+          <span class="step-label">Connect OpenRouter <span class="step-opt">(optional)</span></span>
+        </div>
+        <p class="step-desc">
+          Unlock paid models (GPT-5, Claude, Gemini…) using your own OpenRouter account.
+          Your key is stored encrypted and never shared.
+        </p>
+        <div class="step-actions">
+          <template v-if="user?.openRouterKeySet">
+            <span class="or-connected-badge">✓ OpenRouter connected</span>
+            <NuxtLink to="/agents" class="btn btn-primary btn-sm">Continue →</NuxtLink>
+          </template>
+          <template v-else>
+            <button class="btn btn-primary" :disabled="connectingOR" @click="handleConnectOR">
+              {{ connectingOR ? 'Redirecting…' : 'Connect OpenRouter →' }}
+            </button>
+            <p v-if="connectORError" class="connect-or-error">{{ connectORError }}</p>
+            <NuxtLink to="/agents" class="skip-link">Skip for now</NuxtLink>
+          </template>
+        </div>
       </div>
-      <p class="step-desc">
-        Unlock paid models (GPT-5, Claude, Gemini…) using your own OpenRouter account.
-        Your key is stored encrypted and never shared.
-      </p>
-      <div class="step-actions">
-        <template v-if="user?.openRouterKeySet">
-          <span class="or-connected-badge">✓ OpenRouter connected</span>
-          <NuxtLink to="/agents" class="btn btn-primary btn-sm">Continue →</NuxtLink>
-        </template>
-        <template v-else>
-          <button class="btn btn-primary" :disabled="connectingOR" @click="handleConnectOR">
-            {{ connectingOR ? 'Redirecting…' : 'Connect OpenRouter →' }}
-          </button>
-          <p v-if="connectORError" class="connect-or-error">{{ connectORError }}</p>
-          <NuxtLink to="/agents" class="skip-link">Skip for now</NuxtLink>
-        </template>
-      </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -137,6 +147,7 @@ function truncate(addr: string): string {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  overflow: hidden;
 }
 
 /* Connect button: inside box, full width, bigger */
@@ -177,6 +188,20 @@ function truncate(addr: string): string {
 }
 
 .siwe-section { padding-top: 0.5rem; }
+
+.connect-session-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
 
 .step-label {
   font-size: 0.9rem;
@@ -249,9 +274,9 @@ function truncate(addr: string): string {
 }
 
 .fade-enter-active,
-.fade-leave-active { transition: opacity 0.2s; }
+.fade-leave-active { transition: opacity 0.25s ease, transform 0.25s ease; }
 .fade-enter-from,
-.fade-leave-to { opacity: 0; }
+.fade-leave-to { opacity: 0; transform: translateY(-4px); }
 
 .connect-step2 {
   margin-top: 24px;

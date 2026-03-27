@@ -4,6 +4,7 @@ import type { Trade } from '~/composables/useTrades';
 const props = defineProps<{
   trades: Trade[];
   showAgent?: boolean;
+  agentEmojis?: Record<string, string>;
 }>();
 
 const { request } = useApi();
@@ -25,6 +26,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 let pricesReqId = 0;
+const priceRefreshTick = ref(0);
 const openPairsKey = computed(() =>
   Array.from(new Set(props.trades.filter((t) => t.status === 'open').map((t) => t.pair)))
     .filter(Boolean)
@@ -32,8 +34,13 @@ const openPairsKey = computed(() =>
     .join('|')
 );
 
+// Refresh live prices every 30 s so unrealized P&L animations fire on price changes.
+let priceTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => { priceTimer = setInterval(() => { priceRefreshTick.value++; }, 30_000); });
+onUnmounted(() => { if (priceTimer !== null) clearInterval(priceTimer); });
+
 watch(
-  openPairsKey,
+  [openPairsKey, priceRefreshTick],
   async () => {
     const pairs = openPairsKey.value ? openPairsKey.value.split('|') : [];
     const reqId = ++pricesReqId;
@@ -190,7 +197,7 @@ function formatAmountUsd(amountUsd: number): string {
                 :title="trade.agentName ?? trade.agentId"
                 @click.stop
               >
-                {{ trade.agentName ?? trade.agentId }}
+                <span v-if="agentEmojis?.[trade.agentId]" class="tt-agent-emoji">{{ agentEmojis[trade.agentId] }}</span>{{ trade.agentName ?? trade.agentId }}
               </NuxtLink>
             </td>
             <td class="mono">{{ trade.pair }}</td>
@@ -208,13 +215,22 @@ function formatAmountUsd(amountUsd: number): string {
             <td class="mono">
               <template v-if="trade.status === 'open'">
                 <template v-for="pnl in [getUnrealizedPnl(trade)]" :key="trade.id + '-pnl'">
-                  <span v-if="pnl" class="tt-open-pnl" :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'">
-                    {{ formatPnlInline(pnl.pnlUsd, pnl.pnlPct) }}
-                  </span>
+                  <TransitionGroup v-if="pnl" tag="span" name="pnl" mode="out-in">
+                    <span
+                      :key="formatPnlInline(pnl.pnlUsd, pnl.pnlPct)"
+                      class="tt-open-pnl"
+                      :class="pnl.pnlPct >= 0 ? 'positive' : 'negative'"
+                    >{{ formatPnlInline(pnl.pnlUsd, pnl.pnlPct) }}</span>
+                  </TransitionGroup>
                   <span v-else class="tt-open-pnl" style="color: var(--text-muted);">—</span>
                 </template>
               </template>
-              <span v-else :class="pnlClass(trade.pnlPct)">{{ formatPnlInline(trade.pnlUsd, trade.pnlPct) }}</span>
+              <Transition v-else name="pnl" mode="out-in">
+                <span
+                  :key="formatPnlInline(trade.pnlUsd, trade.pnlPct)"
+                  :class="pnlClass(trade.pnlPct)"
+                >{{ formatPnlInline(trade.pnlUsd, trade.pnlPct) }}</span>
+              </Transition>
             </td>
             <td>
               <span
@@ -287,6 +303,11 @@ function formatAmountUsd(amountUsd: number): string {
   white-space: nowrap;
   max-width: 100%;
   font-size: 11px;
+}
+
+.tt-agent-emoji {
+  font-style: normal;
+  margin-right: 4px;
 }
 
 .tt-cell-date {

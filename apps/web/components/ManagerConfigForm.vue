@@ -403,6 +403,14 @@ const liveSystemPrompt = computed(() => {
 When creating or modifying agents, you MUST choose pairs only from this allowlist:
 ${pairsAllowlist}
 
+## Allowed Agent Analysis Intervals
+When creating or modifying agents, "analysisInterval" MUST be one of:
+- "15m"
+- "1h"
+- "4h"
+- "1d"
+Do not use unsupported legacy values like "1m", "5m", "30m", or numeric seconds/minutes.
+
 ## Available LLM Models For Agents
 Use only these llmModel IDs when creating or modifying agents:
 ${modelAllowlist}
@@ -420,10 +428,10 @@ ${profileAllowlist}
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
+- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval (15m|1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
 - "start_agent": start a stopped or paused agent (provide agentId)
 - "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval, strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
+- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (15m|1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
 - "terminate_agent": permanently stop an agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 

@@ -7,6 +7,7 @@ import { agentManagers, agentManagerLogs, agents, trades, agentDecisions, perfor
 import { CreateManagerRequestSchema, UpdateManagerRequestSchema, UpdatePersonaSchema, getManagerPersonaTemplate } from '@dex-agents/shared';
 import { validateBody } from '../lib/validation.js';
 import { generateId, nowIso } from '../lib/utils.js';
+import { normalizeManagerDecisionInterval, syncRunningManagerDecisionInterval } from '../lib/manager-interval-sync.js';
 
 const managersRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -121,6 +122,8 @@ managersRoute.patch('/:id', async (c) => {
   const { personaMd, ...configPatch } = body as any;
   const existingConfig = JSON.parse(existing.config);
   const mergedConfig = { ...existingConfig, ...configPatch };
+  const previousDecisionInterval = (existingConfig as { decisionInterval?: string }).decisionInterval;
+  const nextDecisionInterval = (mergedConfig as { decisionInterval?: string }).decisionInterval;
 
   const updates: Partial<typeof agentManagers.$inferInsert> = {
     name: body.name ?? existing.name,
@@ -131,6 +134,17 @@ managersRoute.patch('/:id', async (c) => {
   if (body.profileId !== undefined) updates.profileId = body.profileId ?? null;
 
   await db.update(agentManagers).set(updates).where(eq(agentManagers.id, id));
+  try {
+    await syncRunningManagerDecisionInterval(
+      c.env,
+      id,
+      existing.status,
+      previousDecisionInterval,
+      nextDecisionInterval,
+    );
+  } catch (err) {
+    console.warn(`[managers route] Failed to sync decisionInterval to AGENT_MANAGER DO for ${id}:`, err);
+  }
 
   const [updated] = await db.select().from(agentManagers).where(eq(agentManagers.id, id));
   return c.json(formatManager(updated));
@@ -193,13 +207,14 @@ managersRoute.post('/:id/start', async (c) => {
   if (!manager) return c.json({ error: 'Manager not found' }, 404);
 
   const config = JSON.parse(manager.config) as { decisionInterval?: string };
+  const decisionInterval = normalizeManagerDecisionInterval(config.decisionInterval);
   const doId = c.env.AGENT_MANAGER.idFromName(id);
   const stub = c.env.AGENT_MANAGER.get(doId);
 
   await stub.fetch(new Request('http://do/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ managerId: id, decisionInterval: config.decisionInterval ?? '1h' }),
+    body: JSON.stringify({ managerId: id, decisionInterval }),
   }));
 
   await db.update(agentManagers).set({ status: 'running', updatedAt: nowIso() }).where(eq(agentManagers.id, id));
@@ -249,9 +264,17 @@ managersRoute.post('/:id/trigger', async (c) => {
   const manager = await requireManagerOwnership(db, id, walletAddress);
   if (!manager) return c.json({ error: 'Manager not found' }, 404);
 
+  const config = JSON.parse(manager.config) as { decisionInterval?: string };
+  const decisionInterval = normalizeManagerDecisionInterval(config.decisionInterval);
   const doId = c.env.AGENT_MANAGER.idFromName(id);
   const stub = c.env.AGENT_MANAGER.get(doId);
-  const res = await stub.fetch(new Request('http://do/trigger', { method: 'POST' }));
+  const res = await stub.fetch(
+    new Request('http://do/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decisionInterval }),
+    }),
+  );
   const body = await res.json() as { ok?: boolean; error?: string };
 
   if (!res.ok) return c.json({ error: body.error ?? 'Failed to trigger' }, res.status as 400 | 409);
