@@ -3,6 +3,7 @@ import type { Env } from '../types/env.js';
 import { runManagerLoop } from './manager-loop.js';
 
 const VALID_DECISION_INTERVALS = new Set(['1h', '4h', '1d']);
+const VALID_SCHEDULER_INTERVALS = new Set(['15m', '1h', '4h', '1d']);
 
 function normalizeDecisionInterval(interval: unknown, fallback = '1h'): string {
   if (typeof interval === 'string') {
@@ -76,10 +77,14 @@ export class AgentManagerDO extends DurableObject<Env> {
     }
 
     if (url.pathname === '/start' && request.method === 'POST') {
-      const body = (await request.json()) as { managerId: string; decisionInterval?: string };
+      const body = (await request.json().catch(() => ({}))) as { managerId?: string; decisionInterval?: string };
+      if (typeof body.managerId !== 'string' || body.managerId.trim().length === 0) {
+        return Response.json({ error: 'managerId is required' }, { status: 400 });
+      }
+      const managerId = body.managerId.trim();
       const decisionInterval = normalizeDecisionInterval(body.decisionInterval, '1h');
 
-      await this.ctx.storage.put('managerId', body.managerId);
+      await this.ctx.storage.put('managerId', managerId);
       await this.ctx.storage.put('status', 'running');
       await this.ctx.storage.put('decisionInterval', decisionInterval);
 
@@ -160,6 +165,9 @@ export class AgentManagerDO extends DurableObject<Env> {
       const body = (await request.json().catch(() => ({}))) as { agentId?: string; interval?: string };
       if (!body.agentId || !body.interval) {
         return Response.json({ error: 'agentId and interval are required' }, { status: 400 });
+      }
+      if (!VALID_SCHEDULER_INTERVALS.has(body.interval)) {
+        return Response.json({ error: 'interval must be one of: 15m, 1h, 4h, 1d' }, { status: 400 });
       }
       const registry = await loadSchedulerAgents(this.ctx.storage);
       registry[body.agentId] = body.interval;

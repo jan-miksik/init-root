@@ -82,28 +82,32 @@ export class TradingAgentDO extends DurableObject<Env> {
       return Response.json({ agentId, status, balance, nextAlarmAt });
     }
 
-    if (url.pathname === '/start' && request.method === 'POST') {
-      const body = (await request.json()) as {
-        agentId: string;
-        paperBalance?: number;
-        slippageSimulation?: number;
-        analysisInterval?: string;
-        agentRow?: CachedAgentRow;  // optional: caller may pass to prime the DO cache
-      };
+	  if (url.pathname === '/start' && request.method === 'POST') {
+	      const body = (await request.json().catch(() => ({}))) as {
+	        agentId: string;
+	        paperBalance?: number;
+	        slippageSimulation?: number;
+	        analysisInterval?: string;
+	        agentRow?: CachedAgentRow;  // optional: caller may pass to prime the DO cache
+	      };
+	      if (typeof body.agentId !== 'string' || body.agentId.trim().length === 0) {
+	        return Response.json({ error: 'agentId is required' }, { status: 400 });
+	      }
+	      const safeAgentId = body.agentId.trim();
 
-      const currentAgentId = await this.ctx.storage.get<string>('agentId');
+	      const currentAgentId = await this.ctx.storage.get<string>('agentId');
 
-      // Initialize engine only on first start (preserve state on restart)
-      if (!currentAgentId || currentAgentId !== body.agentId) {
-        const balance = body.paperBalance ?? 10_000;
-        const slippage = body.slippageSimulation ?? 0.3;
-        const engine = new PaperEngine({ balance, slippage });
-        await this.ctx.storage.put('engineState', engine.serialize());
-      }
+	      // Initialize engine only on first start (preserve state on restart)
+	      if (!currentAgentId || currentAgentId !== safeAgentId) {
+	        const balance = body.paperBalance ?? 10_000;
+	        const slippage = body.slippageSimulation ?? 0.3;
+	        const engine = new PaperEngine({ balance, slippage });
+	        await this.ctx.storage.put('engineState', engine.serialize());
+	      }
 
-      await this.ctx.storage.put('agentId', body.agentId);
-      await this.ctx.storage.put('status', 'running');
-      await this.ctx.storage.put('analysisInterval', body.analysisInterval ?? '1h');
+	      await this.ctx.storage.put('agentId', safeAgentId);
+	      await this.ctx.storage.put('status', 'running');
+	      await this.ctx.storage.put('analysisInterval', body.analysisInterval ?? '1h');
 
       // Cache the full agent row so runAgentLoop can skip the D1 read on every tick.
       if (body.agentRow) {
@@ -382,11 +386,11 @@ export class TradingAgentDO extends DurableObject<Env> {
     // ── /receive-decision ─────────────────────────────────────────────────────
     // Called by the queue consumer after calling the LLM. Validates the jobId to
     // guard against stale retries, then executes the trade using the saved context.
-    if (url.pathname === '/receive-decision' && request.method === 'POST') {
-      const body = await request.json() as { jobId?: string; decision?: unknown };
-      if (!body.jobId || !body.decision) {
-        return Response.json({ error: 'jobId and decision are required' }, { status: 400 });
-      }
+	    if (url.pathname === '/receive-decision' && request.method === 'POST') {
+	      const body = (await request.json().catch(() => ({}))) as { jobId?: string; decision?: unknown };
+	      if (!body.jobId || !body.decision) {
+	        return Response.json({ error: 'jobId and decision are required' }, { status: 400 });
+	      }
 
       // Idempotency: reject stale results from retried queue messages
       const pendingJobId = await this.ctx.storage.get<string>('pendingLlmJobId');
