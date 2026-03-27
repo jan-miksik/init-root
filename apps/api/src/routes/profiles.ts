@@ -109,7 +109,12 @@ profilesRoute.patch('/:id', async (c) => {
   if (!existing) return c.json({ error: 'Profile not found' }, 404);
   if (existing.isPreset === 1) return c.json({ error: 'Cannot modify preset profiles' }, 403);
 
-  const body = await c.req.json() as Record<string, unknown>;
+  const bodyValue = await c.req.json().catch(() => null);
+  if (!bodyValue || typeof bodyValue !== 'object' || Array.isArray(bodyValue)) {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  const body = bodyValue as Record<string, unknown>;
+
   await db.update(behaviorProfiles).set({
     name: typeof body.name === 'string' ? body.name : existing.name,
     emoji: typeof body.emoji === 'string' ? body.emoji : existing.emoji,

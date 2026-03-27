@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc, sql, inArray } from 'drizzle-orm';
+import { and, eq, desc, sql, inArray } from 'drizzle-orm';
 import type { Env } from '../types/env.js';
 import type { AuthVariables } from '../lib/auth.js';
 import { agents, trades } from '../db/schema.js';
@@ -48,7 +48,11 @@ tradesRoute.get('/', async (c) => {
 
   const agentIds = ownedAgents.map((a) => a.id);
 
-  let baseQuery = db
+  const conditions = [inArray(trades.agentId, agentIds)];
+  if (query.status) conditions.push(eq(trades.status, query.status));
+  if (query.pair) conditions.push(eq(trades.pair, query.pair));
+
+  const results = await db
     .select({
       id: trades.id,
       agentId: trades.agentId,
@@ -73,14 +77,7 @@ tradesRoute.get('/', async (c) => {
     })
     .from(trades)
     .innerJoin(agents, eq(trades.agentId, agents.id))
-    .where(inArray(trades.agentId, agentIds))
-    .$dynamic();
-
-  if (query.status) {
-    baseQuery = baseQuery.where(eq(trades.status, query.status));
-  }
-
-  const results = await baseQuery
+    .where(and(...conditions))
     .orderBy(desc(trades.openedAt))
     .limit(query.limit);
 
