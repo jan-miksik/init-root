@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { DEFAULT_FREE_AGENT_MODEL } from './model-catalog.js';
+import { TRADING_INTERVALS } from './intervals.js';
 
 // ─── Behavior Config ────────────────────────────────────────────────────────
 
@@ -60,8 +62,8 @@ export const AgentConfigSchema = z.object({
   description: z.string().max(500).optional(),
 
   // LLM
-  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
-  llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmModel: z.string().default(DEFAULT_FREE_AGENT_MODEL),
+  llmFallback: z.string().default(DEFAULT_FREE_AGENT_MODEL),
   /** When true, if primary model fails we try the fallback model. No automatic fallbacks without consent. */
   allowFallback: z.boolean().default(false),
   maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
@@ -85,9 +87,7 @@ export const AgentConfigSchema = z.object({
   slippageSimulation: z.number().min(0).max(5).default(0.3),
 
   // Timeframe
-  analysisInterval: z
-    .enum(['1h', '4h', '1d'])
-    .default('1h'),
+  analysisInterval: z.enum(TRADING_INTERVALS).default('1h'),
 
   // Strategies
   strategies: z
@@ -129,8 +129,8 @@ export const TradeDecisionSchema = z.object({
 export const CreateAgentRequestSchema = z.object({
   name: EntityNameSchema,
   description: z.string().max(500).optional(),
-  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
-  llmFallback: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmModel: z.string().default(DEFAULT_FREE_AGENT_MODEL),
+  llmFallback: z.string().default(DEFAULT_FREE_AGENT_MODEL),
   allowFallback: z.boolean().default(false),
   maxLlmCallsPerHour: z.number().min(1).max(60).default(12),
   temperature: z.number().min(0).max(2).default(0.7),
@@ -149,9 +149,7 @@ export const CreateAgentRequestSchema = z.object({
   stopLossPct: z.number().min(0.5).max(50).default(5),
   takeProfitPct: z.number().min(0.5).max(100).default(7),
   slippageSimulation: z.number().min(0).max(5).default(0.3),
-  analysisInterval: z
-    .enum(['1h', '4h', '1d'])
-    .default('1h'),
+  analysisInterval: z.enum(TRADING_INTERVALS).default('1h'),
   strategies: z
     .array(
       z.enum([
@@ -184,17 +182,10 @@ export const ManagerRiskParamsSchema = z.object({
   maxCorrelatedPositions: z.number().min(1).max(10).default(3),
 });
 
-const FREE_MANAGER_MODELS = [
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'qwen/qwen3-coder:free',
-  'nvidia/nemotron-nano-9b-v2:free',
-  'arcee-ai/trinity-large-preview:free',
-] as const;
-
 export const ManagerConfigSchema = z.object({
-  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmModel: z.string().default(DEFAULT_FREE_AGENT_MODEL),
   temperature: z.number().min(0).max(2).default(0.7),
-  decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
+  decisionInterval: z.enum(TRADING_INTERVALS).default('1h'),
   riskParams: ManagerRiskParamsSchema.default({}),
 
   // Behavior (optional — falls back to defaults / profile)
@@ -207,9 +198,9 @@ export type ManagerConfig = z.infer<typeof ManagerConfigSchema>;
 export const CreateManagerRequestSchema = z.object({
   name: EntityNameSchema,
   description: z.string().max(500).optional(),
-  llmModel: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  llmModel: z.string().default(DEFAULT_FREE_AGENT_MODEL),
   temperature: z.number().min(0).max(2).default(0.7),
-  decisionInterval: z.enum(['1h', '4h', '1d']).default('1h'),
+  decisionInterval: z.enum(TRADING_INTERVALS).default('1h'),
   riskParams: ManagerRiskParamsSchema.optional(),
 
   // Behavior (optional — falls back to defaults / profile)

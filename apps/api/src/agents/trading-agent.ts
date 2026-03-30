@@ -8,6 +8,7 @@ import { runAgentLoop, executeTradeDecision, type PendingLlmContext, type Recent
 import { generateId, nowIso } from '../lib/utils.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { migrateStorage } from '../lib/do-storage-migration.js';
+import { intervalToMs, normalizeTradingInterval } from '@something-in-loop/shared';
 
 /**
  * Minimal agent row fields cached in DO storage.
@@ -23,34 +24,6 @@ export type CachedAgentRow = {
   profileId: string | null;
   personaMd: string | null;
 };
-
-/** Interval string → milliseconds */
-function normalizeAnalysisInterval(interval: unknown): string {
-  if (typeof interval !== 'string') return '1h';
-  const trimmed = interval.trim();
-  switch (trimmed) {
-    case '1m':
-    case '5m':
-    case '15m':
-    case '1h':
-      return '1h';
-    case '4h':
-    case '1d':
-      return trimmed;
-    default:
-      return '1h';
-  }
-}
-
-/** Interval string → milliseconds */
-function intervalToMs(interval: string): number {
-  switch (normalizeAnalysisInterval(interval)) {
-    case '1h':  return 60 * 60_000;
-    case '4h':  return 4 * 60 * 60_000;
-    case '1d':  return 24 * 60 * 60_000;
-    default:    return 60 * 60_000;
-  }
-}
 
 /**
  * TradingAgentDO — Durable Object managing a single trading agent instance.
@@ -122,7 +95,7 @@ export class TradingAgentDO extends DurableObject<Env> {
 
 	      await this.ctx.storage.put('agentId', safeAgentId);
 	      await this.ctx.storage.put('status', 'running');
-	      const analysisInterval = normalizeAnalysisInterval(body.analysisInterval ?? '1h');
+	      const analysisInterval = normalizeTradingInterval(body.analysisInterval ?? '1h');
 	      await this.ctx.storage.put('analysisInterval', analysisInterval);
 
       // Cache the full agent row so runAgentLoop can skip the D1 read on every tick.
@@ -160,7 +133,7 @@ export class TradingAgentDO extends DurableObject<Env> {
         const engine = new PaperEngine({ balance, slippage });
         await this.ctx.storage.put('agentId', agentId);
         await this.ctx.storage.put('engineState', engine.serialize());
-        const analysisInterval = normalizeAnalysisInterval(body.analysisInterval ?? '1h');
+        const analysisInterval = normalizeTradingInterval(body.analysisInterval ?? '1h');
         await this.ctx.storage.put('analysisInterval', analysisInterval);
         // Don't change status or schedule alarm — that only happens via /start
       }
@@ -169,7 +142,7 @@ export class TradingAgentDO extends DurableObject<Env> {
 
       // If the caller provides an interval, always sync it (so config edits take effect).
       if (typeof body.analysisInterval === 'string' && body.analysisInterval.trim()) {
-        await this.ctx.storage.put('analysisInterval', normalizeAnalysisInterval(body.analysisInterval));
+        await this.ctx.storage.put('analysisInterval', normalizeTradingInterval(body.analysisInterval));
       }
 
       // Prevent concurrent loop runs (e.g. manual trigger racing with scheduled alarm).
@@ -215,7 +188,7 @@ export class TradingAgentDO extends DurableObject<Env> {
     if (url.pathname === '/set-interval' && request.method === 'POST') {
       const body = (await request.json().catch(() => ({}))) as { analysisInterval?: string };
       const interval = typeof body.analysisInterval === 'string' && body.analysisInterval.trim()
-        ? normalizeAnalysisInterval(body.analysisInterval)
+        ? normalizeTradingInterval(body.analysisInterval)
         : null;
       if (!interval) return Response.json({ error: 'analysisInterval is required' }, { status: 400 });
 
@@ -247,7 +220,7 @@ export class TradingAgentDO extends DurableObject<Env> {
       }
 
       if (typeof body.analysisInterval === 'string' && body.analysisInterval.trim()) {
-        await this.ctx.storage.put('analysisInterval', normalizeAnalysisInterval(body.analysisInterval));
+        await this.ctx.storage.put('analysisInterval', normalizeTradingInterval(body.analysisInterval));
       }
 
       const balance = body.paperBalance ?? 10_000;

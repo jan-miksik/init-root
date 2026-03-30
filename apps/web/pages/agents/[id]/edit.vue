@@ -1,9 +1,10 @@
 <script setup lang="ts">
 definePageMeta({ ssr: false });
-import { parse as markedParse } from 'marked';
 import { buildBehaviorSection, buildConstraintsSection, BASE_AGENT_PROMPT, buildJsonSchemaInstruction, AGENT_ROLE_SECTION } from '@something-in-loop/shared';
 import type { CreateAgentPayload } from '~/composables/useAgents';
 import AgentConfigForm from '~/components/AgentConfigForm.vue';
+import { splitAgentPromptSections } from '~/lib/agent-prompt';
+import { escapeHtml, renderMarkdown } from '~/utils/markdown';
 
 const route = useRoute();
 const router = useRouter();
@@ -109,14 +110,6 @@ watch(setupChanged, (changed) => {
   if (!changed) showSetupDiff.value = false;
 });
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
 type DiffOp = 'equal' | 'insert' | 'delete';
 
 function diffLines(prev: string, next: string): Array<{ op: DiffOp; line: string }> {
@@ -188,36 +181,13 @@ const setupDiffHtml = computed(() => {
   return lines.join('\n');
 });
 
-function renderMarkdown(text: string): string {
-  try {
-    return markedParse(text, { async: false }) as string;
-  } catch {
-    return escapeHtml(text);
-  }
-}
-
 function parseApiSections(systemFull: string, userFull: string) {
   apiSystemPrompt.value = systemFull;
-
-  const portfolioIdx = userFull.indexOf('## Portfolio State');
-  const roleIdx = userFull.indexOf('## Your Role');
-  const behaviorIdx = userFull.indexOf('## Your Behavior Profile');
-  const personaIdx = userFull.indexOf('## Your Persona');
-  const constraintsIdx = userFull.indexOf('## Constraints');
-
-  const candidates = [roleIdx, behaviorIdx, personaIdx, constraintsIdx].filter(i => i >= 0);
-  const editableStart = candidates.length > 0 ? Math.min(...candidates) : -1;
-
-  if (portfolioIdx >= 0) {
-    const marketEnd = editableStart >= 0 ? editableStart : userFull.length;
-    apiMarketData.value = userFull.slice(portfolioIdx, marketEnd).trim();
-  }
-
-  if (editableStart >= 0) {
-    apiFallbackEditableSetup.value = userFull.slice(editableStart)
-      .replace(/\n\nBased on the above data, what is your trading decision\?$/, '')
-      .trim();
-  }
+  const sections = splitAgentPromptSections(userFull);
+  apiMarketData.value = sections.marketData;
+  apiFallbackEditableSetup.value = sections.editableSetup
+    .replace(/\n\nBased on the above data, what is your trading decision\?$/, '')
+    .trim();
 }
 
 onMounted(async () => {

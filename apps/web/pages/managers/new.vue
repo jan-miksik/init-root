@@ -29,6 +29,7 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
+const { createManager } = useManagers();
 const createError = ref('');
 const creating = ref(false);
 
@@ -36,14 +37,10 @@ async function handleCreate(form: Record<string, unknown>) {
   createError.value = '';
   creating.value = true;
   try {
-    await $fetch('/api/managers', {
-      method: 'POST',
-      body: form,
-      credentials: 'include',
-    });
+    await createManager(form);
     router.push('/managers');
-  } catch (err: any) {
-    createError.value = err?.data?.error ?? 'Failed to create manager';
+  } catch (err) {
+    createError.value = extractApiError(err);
   } finally {
     creating.value = false;
   }

@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { ENTITY_NAME_MAX_CHARS, getAgentPersonaTemplate, resolveAgentProfileId } from '@something-in-loop/shared';
+import {
+  AGENT_PAID_MODEL_ITEMS,
+  DEFAULT_FREE_AGENT_MODEL,
+  ENTITY_NAME_MAX_CHARS,
+  buildAgentModelCatalog,
+  getAgentPersonaTemplate,
+  resolveAgentProfileId,
+  type ModelCatalogItem,
+} from '@something-in-loop/shared';
 import type { CreateAgentPayload } from '~/composables/useAgents';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
@@ -7,36 +15,8 @@ import { useAuth } from '~/composables/useAuth';
 const { user } = useAuth();
 const isTester = computed(() => user.value?.role === 'tester');
 
-type ModelItem = {
-  id: string;
-  label: string;
-  ctx: string;
-  /** Display-only, e.g. "$0.20/$1.20" (in/out) */
-  price: string;
-  tier: 'free' | 'paid' | 'tester';
-  desc?: string;
-};
-
-const FREE_MODELS: ModelItem[] = [
-  { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 120B Super', ctx: '262K', price: '$0/$0', tier: 'free', desc: 'default free' },
-  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', ctx: '262K', price: '$0/$0', tier: 'free', desc: 'strong reasoning' },
-  { id: 'nvidia/nemotron-nano-9b-v2:free', label: 'Nemotron 9B', ctx: '128K', price: '$0/$0', tier: 'free' },
-  { id: 'arcee-ai/trinity-large-preview:free', label: 'Trinity-Large', ctx: '131K', price: '$0/$0', tier: 'free' },
-] as const;
-
-const PAID_MODELS = [
-  { id: 'minimax/minimax-m2.5',           label: 'MiniMax M2.5',          ctx: '196K', price: '$0.20/$1.20' },
-  { id: 'mistralai/mistral-small-2603',   label: 'Mistral Small 2603',    ctx: '262K', price: '$0.15/$0.60' },
-  { id: 'google/gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite', ctx: '1M', price: '$0.25/$1.50' },
-  { id: 'deepseek/deepseek-v3.2',         label: 'DeepSeek V3.2',         ctx: '164K', price: '$0.26/$0.38' },
-  { id: 'anthropic/claude-sonnet-4.6',    label: 'Claude Sonnet 4.6',     ctx: '1M',   price: '$3/$15' },
-  { id: 'google/gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro',        ctx: '2M',   price: '$2/$12' },
-  { id: 'openai/gpt-5.4',                 label: 'GPT-5.4',               ctx: '1M',   price: '$2.50/$15' },
-  { id: 'anthropic/claude-opus-4.6',      label: 'Claude Opus 4.6',       ctx: '200K', price: '$5/$25' },
-] as const;
-
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
-const dropdownModel = ref('nvidia/nemotron-3-super-120b-a12b:free');
+const dropdownModel = ref<string>(DEFAULT_FREE_AGENT_MODEL);
 const customModel = ref('');
 // Keep form.llmModel in sync: custom input overrides dropdown; clearing restores dropdown value.
 watch(dropdownModel, (val) => { form.llmModel = val; });
@@ -50,25 +30,19 @@ const modelPickerOpen = ref(false);
 const modelQuery = ref('');
 const modelPickerRef = ref<HTMLElement | null>(null);
 
-const MODEL_CATALOG = computed<ModelItem[]>(() => {
-  const paid = PAID_MODELS.map((m) => ({ ...m, tier: 'paid' as const }));
-  const tester: ModelItem[] = isTester.value
-    ? [
-        { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', ctx: '—', price: 'direct', tier: 'tester', desc: 'Anthropic direct' },
-        { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', ctx: '—', price: 'direct', tier: 'tester', desc: 'Anthropic direct' },
-      ]
-    : [];
-
-  // Paid models only visible if user has their own OpenRouter key.
-  return [...FREE_MODELS, ...(hasOwnKey.value ? paid : []), ...tester];
+const MODEL_CATALOG = computed<ModelCatalogItem[]>(() => {
+  return buildAgentModelCatalog({
+    hasOwnOpenRouterKey: hasOwnKey.value,
+    isTester: isTester.value,
+  });
 });
 
-const selectedModelMeta = computed<ModelItem | null>(() => {
+const selectedModelMeta = computed<ModelCatalogItem | null>(() => {
   const id = customModel.value.trim() || dropdownModel.value;
   return MODEL_CATALOG.value.find((m) => m.id === id) ?? null;
 });
 
-const filteredModels = computed<ModelItem[]>(() => {
+const filteredModels = computed<ModelCatalogItem[]>(() => {
   const q = modelQuery.value.trim().toLowerCase();
   if (!q) return MODEL_CATALOG.value;
   return MODEL_CATALOG.value.filter((m) =>
@@ -130,7 +104,7 @@ const form = reactive<CreateAgentPayload & { pairs: string[] }>({
   stopLossPct: 2,
   takeProfitPct: 3,
   maxOpenPositions: 3,
-  llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
+  llmModel: DEFAULT_FREE_AGENT_MODEL,
   allowFallback: false,
   temperature: 0.7,
 });
@@ -227,9 +201,9 @@ function togglePair(p: string) {
 }
 
 function shortModelName(m: string): string {
-  const PAID_MODEL_NAMES = Object.fromEntries(PAID_MODELS.map((p) => [p.id, p.label]));
+  const PAID_MODEL_NAMES = Object.fromEntries(AGENT_PAID_MODEL_ITEMS.map((p) => [p.id, p.label]));
   const n: Record<string, string> = {
-    'nvidia/nemotron-3-super-120b-a12b:free': 'Nemotron-120B',
+    [DEFAULT_FREE_AGENT_MODEL]: 'Nemotron-120B',
     'qwen/qwen3-coder:free': 'Qwen3-Coder',
     'nvidia/nemotron-nano-9b-v2:free': 'Nemotron-9B',
     'arcee-ai/trinity-large-preview:free': 'Trinity-Large',
@@ -243,7 +217,7 @@ function shortModelName(m: string): string {
 }
 
 function generateName(): string {
-  const model = shortModelName(form.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free');
+  const model = shortModelName(form.llmModel ?? DEFAULT_FREE_AGENT_MODEL);
   const pair = form.pairs.length === 1 ? form.pairs[0] : form.pairs.length > 1 ? `${form.pairs[0]} +${form.pairs.length - 1}` : 'Base';
   const style = isPersonaCustomized.value
     ? 'Custom'
@@ -321,7 +295,7 @@ onMounted(() => {
 function buildSubmitPayload(): CreateAgentPayload {
   return {
     ...form,
-    llmModel: form.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free',
+    llmModel: form.llmModel ?? DEFAULT_FREE_AGENT_MODEL,
     allowFallback: form.allowFallback ?? false,
     behavior: behavior.value,
     profileId: selectedProfileId.value ?? undefined,

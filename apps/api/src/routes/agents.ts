@@ -8,6 +8,7 @@ import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../agents/prompts.js';
 import { buildJsonSchemaInstruction } from '../services/llm-router.js';
 import {
   CreateAgentRequestSchema,
+  DEFAULT_FREE_AGENT_MODEL,
   DEFAULT_AGENT_PROFILE_ID,
   UpdateAgentRequestSchema,
   UpdatePersonaSchema,
@@ -19,6 +20,15 @@ import { validateBody, ValidationError } from '../lib/validation.js';
 import { generateId, nowIso } from '../lib/utils.js';
 import { normalizePairsForDex } from '../lib/pairs.js';
 import { resolveAgentPersonaMd } from '../agents/resolve-agent-persona.js';
+import {
+  pauseTradingAgentDo,
+  registerSchedulerAgent,
+  setTradingAgentIntervalDo,
+  startTradingAgentDo,
+  stopTradingAgentDo,
+  syncTradingAgentConfigDo,
+  unregisterSchedulerAgent,
+} from '../lib/do-clients.js';
 
 const agentsRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -32,16 +42,11 @@ async function notifyScheduler(
   interval?: string
 ): Promise<void> {
   try {
-    const stub = env.AGENT_MANAGER.get(env.AGENT_MANAGER.idFromName('scheduler'));
-    const path = `/scheduler/${action}`;
-    const body = action === 'register' ? { agentId, interval } : { agentId };
-    await stub.fetch(
-      new Request(`http://do${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-    );
+    if (action === 'register') {
+      await registerSchedulerAgent(env, { agentId, interval: interval ?? '1h' });
+    } else {
+      await unregisterSchedulerAgent(env, agentId);
+    }
   } catch (err) {
     console.warn(`[agents route] scheduler ${action} failed for ${agentId}:`, err);
   }
@@ -164,7 +169,7 @@ agentsRoute.patch('/:id', async (c) => {
   };
   if (body.name) updates.name = body.name;
   // Always sync llm_model column from merged config so the agent loop uses the selected model
-  updates.llmModel = (mergedConfig.llmModel ?? existing.llmModel) || 'nvidia/nemotron-3-super-120b-a12b:free';
+  updates.llmModel = (mergedConfig.llmModel ?? existing.llmModel) || DEFAULT_FREE_AGENT_MODEL;
   if (body.profileId !== undefined) {
     updates.profileId = typeof body.profileId === 'string' ? resolveAgentProfileId(body.profileId) : body.profileId ?? null;
   }
@@ -178,26 +183,16 @@ agentsRoute.patch('/:id', async (c) => {
   // immediately without waiting for the next cache miss.
   if (updated) {
     try {
-      const doId = c.env.TRADING_AGENT.idFromName(id);
-      const stub = c.env.TRADING_AGENT.get(doId);
-      await stub.fetch(
-        new Request('http://do/sync-config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agentRow: {
-              id: updated.id,
-              name: updated.name,
-              status: updated.status,
-              config: updated.config,
-              ownerAddress: updated.ownerAddress ?? null,
-              llmModel: updated.llmModel ?? null,
-              profileId: updated.profileId ?? null,
-              personaMd: updated.personaMd ?? null,
-            },
-          }),
-        })
-      );
+      await syncTradingAgentConfigDo(c.env, id, {
+        id: updated.id,
+        name: updated.name,
+        status: updated.status,
+        config: updated.config,
+        ownerAddress: updated.ownerAddress ?? null,
+        llmModel: updated.llmModel ?? null,
+        profileId: updated.profileId ?? null,
+        personaMd: updated.personaMd ?? null,
+      });
     } catch (err) {
       console.warn(`[agents route] Failed to push config to TRADING_AGENT DO cache for ${id}:`, err);
     }
@@ -206,15 +201,7 @@ agentsRoute.patch('/:id', async (c) => {
   // Best-effort: if the agent is currently running, sync the DO alarm interval immediately.
   if (intervalChanged && existing.status === 'running') {
     try {
-      const doId = c.env.TRADING_AGENT.idFromName(id);
-      const stub = c.env.TRADING_AGENT.get(doId);
-      await stub.fetch(
-        new Request('http://do/set-interval', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ analysisInterval: nextInterval }),
-        })
-      );
+      await setTradingAgentIntervalDo(c.env, id, String(nextInterval));
     } catch (err) {
       console.warn(`[agents route] Failed to sync analysisInterval to TRADING_AGENT DO for ${id}:`, err);
     }
@@ -238,9 +225,7 @@ agentsRoute.delete('/:id', async (c) => {
 
   if (existing.status === 'running' || existing.status === 'paused') {
     try {
-      const doId = c.env.TRADING_AGENT.idFromName(id);
-      const stub = c.env.TRADING_AGENT.get(doId);
-      await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
+      await stopTradingAgentDo(c.env, id);
     } catch (err) {
       console.error('[agents route] Failed to stop TRADING_AGENT DO before delete', err);
     }
@@ -275,31 +260,22 @@ agentsRoute.post('/:id/start', async (c) => {
     slippageSimulation: number;
     analysisInterval: string;
   };
-  const doId = c.env.TRADING_AGENT.idFromName(id);
-  const stub = c.env.TRADING_AGENT.get(doId);
-  await stub.fetch(
-    new Request('http://do/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agentId: id,
-        paperBalance: agentConfig.paperBalance,
-        slippageSimulation: agentConfig.slippageSimulation,
-        analysisInterval: agentConfig.analysisInterval,
-        // Pass full agent row so the DO can skip the D1 read on the first tick
-        agentRow: {
-          id: agent.id,
-          name: agent.name,
-          status: 'running',   // will be set running momentarily
-          config: agent.config,
-          ownerAddress: agent.ownerAddress ?? null,
-          llmModel: agent.llmModel ?? null,
-          profileId: agent.profileId ?? null,
-          personaMd: agent.personaMd ?? null,
-        },
-      }),
-    })
-  );
+  await startTradingAgentDo(c.env, {
+    agentId: id,
+    paperBalance: agentConfig.paperBalance,
+    slippageSimulation: agentConfig.slippageSimulation,
+    analysisInterval: agentConfig.analysisInterval,
+    agentRow: {
+      id: agent.id,
+      name: agent.name,
+      status: 'running', // will be set running momentarily
+      config: agent.config,
+      ownerAddress: agent.ownerAddress ?? null,
+      llmModel: agent.llmModel ?? null,
+      profileId: agent.profileId ?? null,
+      personaMd: agent.personaMd ?? null,
+    },
+  });
 
   await db.update(agents).set({ status: 'running', updatedAt: nowIso() }).where(eq(agents.id, id));
 
@@ -342,9 +318,7 @@ agentsRoute.post('/:id/stop', async (c) => {
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
 
-  const doId = c.env.TRADING_AGENT.idFromName(id);
-  const stub = c.env.TRADING_AGENT.get(doId);
-  await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
+  await stopTradingAgentDo(c.env, id);
   await db.update(agents).set({ status: 'stopped', updatedAt: nowIso() }).where(eq(agents.id, id));
 
   await notifyScheduler(c.env, 'unregister', id);
@@ -361,9 +335,7 @@ agentsRoute.post('/:id/pause', async (c) => {
   const agent = await requireOwnership(db, id, walletAddress);
   if (!agent) return c.json({ error: 'Agent not found' }, 404);
 
-  const doId = c.env.TRADING_AGENT.idFromName(id);
-  const stub = c.env.TRADING_AGENT.get(doId);
-  await stub.fetch(new Request('http://do/pause', { method: 'POST' }));
+  await pauseTradingAgentDo(c.env, id);
   await db.update(agents).set({ status: 'paused', updatedAt: nowIso() }).where(eq(agents.id, id));
 
   await notifyScheduler(c.env, 'unregister', id);

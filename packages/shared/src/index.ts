@@ -5,3 +5,5 @@ export * from './profiles/agent-profiles.js';
 export * from './profiles/manager-profiles.js';
 export * from './profiles/templates.js';
 export * from './prompts.js';
+export * from './model-catalog.js';
+export * from './intervals.js';

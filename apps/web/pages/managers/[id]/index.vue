@@ -249,43 +249,9 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getManagerProfile, DEFAULT_MANAGER_PROFILE_ID } from '@something-in-loop/shared';
-import { parse as markedParse } from 'marked';
+import { DEFAULT_MANAGER_PROFILE_ID, getManagerProfile, intervalToMs } from '@something-in-loop/shared';
 import { splitManagerPromptSections } from '~/lib/manager-prompt';
-
-type ManagerDoStatus = {
-  deciding?: boolean;
-  lastDecisionMs?: number | null;
-  decisionInterval?: string;
-  tickCount?: number;
-  nextAlarmAt?: number | null;
-};
-
-type ManagerDetail = {
-  id: string;
-  name: string;
-  status: 'running' | 'paused' | 'stopped' | string;
-  profileId?: string | null;
-  config?: {
-    llmModel?: string;
-    decisionInterval?: string;
-    profileId?: string;
-    riskParams?: {
-      maxTotalDrawdown?: number;
-      maxAgents?: number;
-    };
-  };
-  doStatus?: ManagerDoStatus;
-};
-
-type ManagedAgent = {
-  id: string;
-  name: string;
-  status: string;
-  config?: {
-    pairs?: string[];
-  };
-};
+import { sectionHtml } from '~/utils/markdown';
 
 type ManagerLogResult = {
   detail?: string;
@@ -294,29 +260,37 @@ type ManagerLogResult = {
   llmRawResponse?: string;
 };
 
-type ManagerLog = {
-  id: string;
-  action: string;
-  reasoning: string;
-  createdAt: string;
+type ManagerLog = import('~/composables/useManagers').ManagerLogEntry & {
   result?: ManagerLogResult | null;
-  llmPromptTokens?: number | null;
-  llmCompletionTokens?: number | null;
 };
+type ManagerDetail = import('~/composables/useManagers').ManagerDetail;
+type ManagedAgent = import('~/composables/useManagers').ManagedAgentSummary;
 
 const route = useRoute();
 const router = useRouter();
 const id = route.params.id as string;
+const {
+  deleteManager,
+  getManager,
+  getManagerAgents,
+  getManagerLogs,
+  getManagerTokenUsage,
+  startManager,
+  stopManager,
+  triggerManager,
+} = useManagers();
 
 const actionLoading = ref(false);
 const showDeleteModal = ref(false);
 const deleteAgentsChoice = ref<'detach' | 'delete'>('detach');
 
-const { data: managerData, pending, refresh } = await useFetch<ManagerDetail>(`/api/managers/${id}`, {
-  credentials: 'include',
-});
-const manager = computed(() => managerData.value ?? null);
+const pending = ref(true);
+const manager = ref<ManagerDetail | null>(null);
 const doStatus = computed(() => manager.value?.doStatus ?? null);
+
+async function refreshManager() {
+  manager.value = await getManager(id, { force: true });
+}
 
 const personaEmoji = computed(() => {
   const m = manager.value;
@@ -327,21 +301,36 @@ const personaEmoji = computed(() => {
   return profile?.emoji ?? '';
 });
 
-const { data: agentsData, refresh: refreshAgents } = await useFetch<{ agents: ManagedAgent[] }>(`/api/managers/${id}/agents`, {
-  credentials: 'include',
-});
-const managedAgents = computed(() => agentsData.value?.agents ?? []);
+const managedAgents = ref<ManagedAgent[]>([]);
+async function refreshAgents() {
+  managedAgents.value = await getManagerAgents(id, { force: true });
+}
 
-const { data: logsData, refresh: refreshLogs } = await useFetch<{ logs: ManagerLog[] }>(`/api/managers/${id}/logs`, {
-  credentials: 'include',
-});
-const logs = ref<ManagerLog[]>(logsData.value?.logs ?? []);
-const hasMoreLogs = ref((logsData.value?.logs?.length ?? 0) === 20);
+const logs = ref<ManagerLog[]>([]);
+const hasMoreLogs = ref(false);
+async function refreshLogsPage(page = 1, limit = 20) {
+  const next = await getManagerLogs(id, { page, limit, force: true });
+  if (page === 1) {
+    logs.value = (next.logs ?? []) as ManagerLog[];
+  } else {
+    logs.value.push(...((next.logs ?? []) as ManagerLog[]));
+  }
+  hasMoreLogs.value = (next.logs?.length ?? 0) === limit;
+}
 
-const { data: tokenUsageData } = await useFetch<{ totalTokens: number }>(`/api/managers/${id}/token-usage`, {
-  credentials: 'include',
-});
-const totalTokensUsed = computed(() => tokenUsageData.value?.totalTokens ?? 0);
+const totalTokensUsed = ref(0);
+async function refreshTokenUsage() {
+  totalTokensUsed.value = await getManagerTokenUsage(id, { force: true });
+}
+
+await Promise.all([
+  refreshManager(),
+  refreshAgents(),
+  refreshLogsPage(1, 20),
+  refreshTokenUsage(),
+]);
+pending.value = false;
+
 const showMdPreview = ref(false);
 const expandedSections = ref<Record<string, Set<string>>>({});
 
@@ -351,26 +340,6 @@ function toggleSection(logId: string, section: string) {
   if (next.has(section)) next.delete(section);
   else next.add(section);
   expandedSections.value = { ...expandedSections.value, [logId]: next };
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
-function renderMarkdown(text: string): string {
-  try {
-    return markedParse(text, { async: false }) as string;
-  } catch {
-    return escapeHtml(text);
-  }
-}
-
-function sectionHtml(text: string, md: boolean): string {
-  return md ? renderMarkdown(text) : escapeHtml(text);
 }
 
 function managerPrompt(promptText: string | undefined | null) {
@@ -400,21 +369,16 @@ let prevDeciding = doStatus.value?.deciding ?? false;
 
 const pollTimer = setInterval(async () => {
   if (manager.value?.status !== 'running') return;
-  await refresh();
+  await refreshManager();
   const nowDeciding = doStatus.value?.deciding ?? false;
   if (prevDeciding && !nowDeciding) {
     // Decision just finished — reload logs + agents
-    const fresh = await $fetch<{ logs: ManagerLog[] }>(`/api/managers/${id}/logs`, { credentials: 'include' });
-    logs.value = fresh.logs ?? [];
-    hasMoreLogs.value = (fresh.logs?.length ?? 0) === 20;
-    await refreshAgents();
+    await Promise.all([refreshLogsPage(1, 20), refreshAgents(), refreshTokenUsage()]);
   }
   prevDeciding = nowDeciding;
 }, 2000);
 
 // Countdown to next decision — updated directly by interval, not via reactive `now`
-const INTERVAL_MS: Record<string, number> = { '1h': 3600_000, '4h': 14400_000, '1d': 86400_000 };
-
 const nextDecisionLabel = ref<string | null>(null);
 const progressPct = ref(0);
 
@@ -444,7 +408,7 @@ function updateCountdown() {
     (doStatus.value?.decisionInterval as string | undefined) ??
     (manager.value?.config?.decisionInterval as string | undefined) ??
     '1h';
-  const intervalMs = INTERVAL_MS[effectiveInterval] ?? 3600_000;
+  const intervalMs = intervalToMs(effectiveInterval, '1h');
   const remaining = Math.max(0, nextAt - Date.now());
   const elapsed = intervalMs - remaining;
   progressPct.value = Math.min(100, Math.max(0, (elapsed / intervalMs) * 100));
@@ -488,8 +452,8 @@ function actionBadgeClass(action: string) {
 async function triggerDecision() {
   actionLoading.value = true;
   try {
-    await $fetch(`/api/managers/${id}/trigger`, { method: 'POST', credentials: 'include' });
-    await refresh();
+    await triggerManager(id);
+    await refreshManager();
   } catch (err) {
     console.error(err);
   } finally {
@@ -501,10 +465,7 @@ async function doDelete() {
   actionLoading.value = true;
   try {
     const deleteAgents = managedAgents.value.length > 0 && deleteAgentsChoice.value === 'delete';
-    await $fetch(`/api/managers/${id}${deleteAgents ? '?deleteAgents=true' : ''}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
+    await deleteManager(id, { deleteAgents });
     router.push('/managers');
   } catch (err) {
     console.error(err);
@@ -517,8 +478,12 @@ async function doDelete() {
 async function doAction(action: 'start' | 'stop') {
   actionLoading.value = true;
   try {
-    await $fetch(`/api/managers/${id}/${action}`, { method: 'POST', credentials: 'include' });
-    await refresh();
+    if (action === 'start') {
+      await startManager(id);
+    } else {
+      await stopManager(id);
+    }
+    await refreshManager();
     if (action === 'start') await refreshAgents();
   } catch (err) {
     console.error(err);
@@ -529,10 +494,7 @@ async function doAction(action: 'start' | 'stop') {
 
 async function loadMoreLogs() {
   const page = Math.ceil(logs.value.length / 20) + 1;
-  const next = await $fetch<{ logs: ManagerLog[] }>(`/api/managers/${id}/logs?page=${page}`, { credentials: 'include' });
-  const newLogs = next.logs ?? [];
-  logs.value.push(...newLogs);
-  hasMoreLogs.value = newLogs.length === 20;
+  await refreshLogsPage(page, 20);
 }
 
 // Persona editing is handled in the manager edit screen; inline persona editor removed here.

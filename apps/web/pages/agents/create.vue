@@ -1,9 +1,9 @@
 <script setup lang="ts">
 definePageMeta({ ssr: false });
-import { parse as markedParse } from 'marked';
 import { buildBehaviorSection, buildConstraintsSection, BASE_AGENT_PROMPT, buildJsonSchemaInstruction, AGENT_ROLE_SECTION } from '@something-in-loop/shared';
 import type { CreateAgentPayload } from '~/composables/useAgents';
 import AgentConfigForm from '~/components/AgentConfigForm.vue';
+import { renderMarkdown } from '~/utils/markdown';
 
 const router = useRouter();
 const { createAgent, startAgent } = useAgents();
@@ -75,22 +75,6 @@ const liveConstraintsSection = computed(() => {
 const isPersonaCustomized = computed(() => configFormRef.value?.isPersonaCustomized ?? false);
 const isBehaviorCustomized = computed(() => configFormRef.value?.isBehaviorCustomized ?? false);
 const isRoleCustomized = computed(() => configFormRef.value?.isRoleCustomized ?? false);
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
-function renderMarkdown(text: string): string {
-  try {
-    return markedParse(text, { async: false }) as string;
-  } catch {
-    return escapeHtml(text);
-  }
-}
 
 // ── Inline setup editing ────────────────────────────────────────────────
 

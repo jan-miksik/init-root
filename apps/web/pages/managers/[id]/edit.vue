@@ -43,30 +43,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
 const router = useRouter();
 const id = route.params.id as string;
+const { getManager, updateManager } = useManagers();
 const saveError = ref('');
 const saving = ref(false);
+const pending = ref(true);
+const manager = ref<any | null>(null);
 
-const { data, pending } = await useFetch<any>(`/api/managers/${id}`, { credentials: 'include' });
-const manager = computed(() => data.value ?? null);
+onMounted(async () => {
+  try {
+    manager.value = await getManager(id, { force: true });
+  } finally {
+    pending.value = false;
+  }
+});
 
 async function handleSave(form: Record<string, unknown>) {
   saveError.value = '';
   saving.value = true;
   try {
-    await $fetch(`/api/managers/${id}`, {
-      method: 'PATCH',
-      body: form,
-      credentials: 'include',
-    });
+    await updateManager(id, form);
     router.push(`/managers/${id}`);
-  } catch (err: any) {
-    saveError.value = err?.data?.error ?? 'Failed to save';
+  } catch (err) {
+    saveError.value = extractApiError(err);
   } finally {
     saving.value = false;
   }

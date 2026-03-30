@@ -1,26 +1,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env.js';
 import { runManagerLoop } from './manager-loop.js';
+import { TRADING_INTERVALS, intervalToMs, normalizeTradingInterval } from '@something-in-loop/shared';
 
-const VALID_DECISION_INTERVALS = new Set(['1h', '4h', '1d']);
-const VALID_SCHEDULER_INTERVALS = new Set(['1h', '4h', '1d']);
-
-function normalizeDecisionInterval(interval: unknown, fallback = '1h'): string {
-  if (typeof interval === 'string') {
-    const normalized = interval.trim();
-    if (VALID_DECISION_INTERVALS.has(normalized)) return normalized;
-  }
-  return fallback;
-}
-
-function intervalToMs(interval: string): number {
-  switch (interval) {
-    case '1h': return 60 * 60_000;
-    case '4h': return 4 * 60 * 60_000;
-    case '1d': return 24 * 60 * 60_000;
-    default:   return 60 * 60_000;
-  }
-}
+const VALID_DECISION_INTERVALS = new Set<string>(TRADING_INTERVALS);
+const VALID_SCHEDULER_INTERVALS = new Set<string>(TRADING_INTERVALS);
 
 /** Storage key for scheduler agent registry (map of agentId → interval) */
 const SCHEDULER_KEY = 'schedulerAgents';
@@ -82,7 +66,7 @@ export class AgentManagerDO extends DurableObject<Env> {
         return Response.json({ error: 'managerId is required' }, { status: 400 });
       }
       const managerId = body.managerId.trim();
-      const decisionInterval = normalizeDecisionInterval(body.decisionInterval, '1h');
+      const decisionInterval = normalizeTradingInterval(body.decisionInterval, '1h');
 
       await this.ctx.storage.put('managerId', managerId);
       await this.ctx.storage.put('status', 'running');

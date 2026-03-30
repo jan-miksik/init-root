@@ -76,31 +76,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { ref } from 'vue';
 import { getManagerProfile, DEFAULT_MANAGER_PROFILE_ID } from '@something-in-loop/shared';
+import type { ManagerSummary } from '~/composables/useManagers';
 
 definePageMeta({ ssr: false });
 
-const router = useRouter();
-
-type ManagerListItem = {
-  id: string;
-  name: string;
-  status: string;
-  profileId?: string | null;
-  agentCount?: number;
-  createdAt: string;
-  config: {
-    llmModel?: string;
-    decisionInterval?: string;
-    profileId?: string;
-  } | null;
-};
-
-const { data, pending, error } = await useFetch<{ managers: ManagerListItem[] }>('/api/managers', {
-  credentials: 'include',
-});
-const managers = computed(() => data.value?.managers ?? []);
+const { managers, loading: pending, error, fetchManagers } = useManagers();
+await fetchManagers();
 
 const viewMode = ref<'table' | 'grid'>('table');
 
@@ -134,7 +117,7 @@ const sortedManagers = computed(() => {
   });
 });
 
-function managerSortValue(manager: ManagerListItem, key: SortKey): string | number {
+function managerSortValue(manager: ManagerSummary, key: SortKey): string | number {
   switch (key) {
     case 'decisionInterval':
       return manager.config?.decisionInterval ?? '';
@@ -149,7 +132,7 @@ function managerSortValue(manager: ManagerListItem, key: SortKey): string | numb
   }
 }
 
-function managerEmoji(m: ManagerListItem) {
+function managerEmoji(m: ManagerSummary) {
   const configProfileId = m.config?.profileId;
   const profileId = m.profileId ?? configProfileId ?? DEFAULT_MANAGER_PROFILE_ID;
   return getManagerProfile(profileId)?.emoji ?? '🧠';

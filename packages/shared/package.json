@@ -1,1 +1,31 @@
-{"name":"@something-in-loop/shared","version":"0.0.1","private":true,"main":"./dist/index.js","types":"./dist/index.d.ts","scripts":{"build":"tsc","lint":"tsc --noEmit"},"dependencies":{"zod":"^3.22.4"},"devDependencies":{"typescript":"^5.4.0"}}
+{
+  "name": "@something-in-loop/shared",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./model-catalog": {
+      "types": "./dist/model-catalog.d.ts",
+      "import": "./dist/model-catalog.js"
+    },
+    "./intervals": {
+      "types": "./dist/intervals.d.ts",
+      "import": "./dist/intervals.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

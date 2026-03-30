@@ -1,9 +1,10 @@
 <script setup lang="ts">
 definePageMeta({ ssr: false });
-import { parse as markedParse } from 'marked';
 import type { Trade } from '~/composables/useTrades';
 import { pollUntilFutureAlarm } from '~/utils/statusPolling';
 import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@something-in-loop/shared';
+import { parseMarketPrices, splitAgentPromptSections } from '~/lib/agent-prompt';
+import { sectionHtml } from '~/utils/markdown';
 
 const route = useRoute();
 const id = computed(() => route.params.id as string);
@@ -125,44 +126,15 @@ function formatJson(text: string): string {
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
-function renderMarkdown(text: string): string {
-  try {
-    return markedParse(text, { async: false });
-  } catch {
-    return escapeHtml(text);
-  }
-}
-
 function decisionHtml(text: string, md: boolean): string {
-  return md ? renderMarkdown(text) : escapeHtml(text);
-}
-
-/** Extract pair → price map from a MARKET DATA section */
-function parseMarketPrices(marketData: string): Record<string, number> {
-  const prices: Record<string, number> = {};
-  let currentPair = '';
-  for (const line of marketData.split('\n')) {
-    const pairMatch = line.match(/^### (.+)$/);
-    if (pairMatch) currentPair = pairMatch[1]?.trim() ?? '';
-    const priceMatch = line.match(/^Price: \$([0-9.]+)/);
-    if (priceMatch && currentPair) prices[currentPair] = parseFloat(priceMatch[1] ?? '0');
-  }
-  return prices;
+  return sectionHtml(text, md);
 }
 
 /** Returns a compact inline diff of market prices vs previous cycle, e.g. "WETH +0.6% · USDC -0.1%" */
 function marketDiffSummary(dec: AgentDecision, prevDec: AgentDecision | undefined): string {
   if (!prevDec?.llmPromptText || !dec.llmPromptText) return '';
-  const curr = parseMarketPrices(parsePromptSections(dec.llmPromptText).marketData);
-  const prev = parseMarketPrices(parsePromptSections(prevDec.llmPromptText).marketData);
+  const curr = parseMarketPrices(splitAgentPromptSections(dec.llmPromptText).marketData);
+  const prev = parseMarketPrices(splitAgentPromptSections(prevDec.llmPromptText).marketData);
   const parts: string[] = [];
   for (const [pair, price] of Object.entries(curr)) {
     const p0 = prev[pair];
@@ -617,35 +589,6 @@ async function doResetPersona() {
 
 
 
-/** Split a stored llmPromptText into the three logical sections */
-function parsePromptSections(promptText: string | undefined): {
-  system: string;
-  marketData: string;
-  editableSetup: string;
-} {
-  if (!promptText) return { system: '', marketData: '', editableSetup: '' };
-
-  const portfolioIdx = promptText.indexOf('## Portfolio State');
-  const roleIdx      = promptText.indexOf('## Your Role');
-  const behaviorIdx  = promptText.indexOf('## Your Behavior Profile');
-  const personaIdx   = promptText.indexOf('## Your Persona');
-  const constraintsIdx = promptText.indexOf('## Constraints');
-
-  // SYSTEM: everything before ## Portfolio State
-  const system = portfolioIdx >= 0 ? promptText.slice(0, portfolioIdx).trim() : promptText.trim();
-
-  // EDITABLE SETUP: earliest editable section onwards (Role/Behavior/Persona/Constraints)
-  const candidates = [roleIdx, behaviorIdx, personaIdx, constraintsIdx].filter((i) => i >= 0);
-  const editableStart = candidates.length > 0 ? Math.min(...candidates) : -1;
-  const editableSetup = editableStart >= 0 ? promptText.slice(editableStart).trim() : '';
-
-  // MARKET DATA: between system and editableSetup
-  const marketEnd = editableStart >= 0 ? editableStart : promptText.length;
-  const marketData = portfolioIdx >= 0 ? promptText.slice(portfolioIdx, marketEnd).trim() : '';
-
-  return { system, marketData, editableSetup };
-}
-
 /** Rough token estimate: 1 token ≈ 4 characters */
 function countTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -658,8 +601,8 @@ function countTokens(text: string): number {
  */
 function hasEditedSetup(dec: AgentDecision, prevDec: AgentDecision | undefined): boolean {
   if (!prevDec || !dec.llmPromptText || !prevDec.llmPromptText) return false;
-  const curr = parsePromptSections(dec.llmPromptText).editableSetup;
-  const prev = parsePromptSections(prevDec.llmPromptText).editableSetup;
+  const curr = splitAgentPromptSections(dec.llmPromptText).editableSetup;
+  const prev = splitAgentPromptSections(prevDec.llmPromptText).editableSetup;
   return curr.length > 0 && prev.length > 0 && curr !== prev;
 }
 
@@ -955,13 +898,13 @@ function formatLatency(ms: number): string {
                 </button>
                 <div v-if="expandedSections[dec.id]?.has('system')" class="pill-content">
                   <pre v-if="!showMdPreview" class="dec-code-block">
-{{ parsePromptSections(dec.llmPromptText).system }}
+{{ splitAgentPromptSections(dec.llmPromptText).system }}
                   </pre>
                   <!-- eslint-disable-next-line vue/no-v-html -->
                   <div
                     v-else
                     class="dec-code-block chat-reasoning chat-reasoning--md"
-                    v-html="decisionHtml(parsePromptSections(dec.llmPromptText).system, true)"
+                    v-html="decisionHtml(splitAgentPromptSections(dec.llmPromptText).system, true)"
                   />
                 </div>
 
@@ -971,13 +914,13 @@ function formatLatency(ms: number): string {
                 </button>
                 <div v-if="expandedSections[dec.id]?.has('market')" class="pill-content">
                   <pre v-if="!showMdPreview" class="dec-code-block">
-{{ parsePromptSections(dec.llmPromptText).marketData }}
+{{ splitAgentPromptSections(dec.llmPromptText).marketData }}
                   </pre>
                   <!-- eslint-disable-next-line vue/no-v-html -->
                   <div
                     v-else
                     class="dec-code-block chat-reasoning chat-reasoning--md"
-                    v-html="decisionHtml(parsePromptSections(dec.llmPromptText).marketData, true)"
+                    v-html="decisionHtml(splitAgentPromptSections(dec.llmPromptText).marketData, true)"
                   />
                 </div>
 
@@ -987,13 +930,13 @@ function formatLatency(ms: number): string {
                 </button>
                 <div v-if="expandedSections[dec.id]?.has('setup')" class="pill-content">
                   <pre v-if="!showMdPreview" class="dec-code-block">
-{{ parsePromptSections(dec.llmPromptText).editableSetup }}
+{{ splitAgentPromptSections(dec.llmPromptText).editableSetup }}
                   </pre>
                   <!-- eslint-disable-next-line vue/no-v-html -->
                   <div
                     v-else
                     class="dec-code-block chat-reasoning chat-reasoning--md"
-                    v-html="decisionHtml(parsePromptSections(dec.llmPromptText).editableSetup, true)"
+                    v-html="decisionHtml(splitAgentPromptSections(dec.llmPromptText).editableSetup, true)"
                   />
                 </div>
               </div>

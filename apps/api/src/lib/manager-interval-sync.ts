@@ -1,19 +1,19 @@
 import type { Env } from '../types/env.js';
+import { TRADING_INTERVALS, normalizeTradingInterval, type TradingInterval } from '@something-in-loop/shared';
+import { setManagerIntervalDo } from './do-clients.js';
 
-export const VALID_MANAGER_DECISION_INTERVALS = ['1h', '4h', '1d'] as const;
+export const VALID_MANAGER_DECISION_INTERVALS = TRADING_INTERVALS;
 const VALID_MANAGER_DECISION_INTERVAL_SET = new Set<string>(VALID_MANAGER_DECISION_INTERVALS);
 
-export type ManagerDecisionInterval = typeof VALID_MANAGER_DECISION_INTERVALS[number];
+export type ManagerDecisionInterval = TradingInterval;
 
 export function normalizeManagerDecisionInterval(
   value: unknown,
   fallback: ManagerDecisionInterval = '1h',
 ): ManagerDecisionInterval {
-  if (typeof value === 'string') {
-    const normalized = value.trim();
-    if (VALID_MANAGER_DECISION_INTERVAL_SET.has(normalized)) {
-      return normalized as ManagerDecisionInterval;
-    }
+  const normalized = normalizeTradingInterval(value, fallback);
+  if (VALID_MANAGER_DECISION_INTERVAL_SET.has(normalized)) {
+    return normalized;
   }
   return fallback;
 }
@@ -37,22 +37,7 @@ export async function syncRunningManagerDecisionInterval(
   const nextNormalized = normalizeManagerDecisionInterval(nextInterval, previousNormalized);
   if (previousNormalized === nextNormalized) return false;
 
-  const doId = env.AGENT_MANAGER.idFromName(managerId);
-  const stub = env.AGENT_MANAGER.get(doId);
-  const res = await stub.fetch(
-    new Request('http://do/set-interval', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decisionInterval: nextNormalized }),
-    }),
-  );
-
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => '');
-    throw new Error(
-      `Failed to sync manager decisionInterval to DO for ${managerId} (status ${res.status})${errorText ? `: ${errorText}` : ''}`,
-    );
-  }
+  await setManagerIntervalDo(env, managerId, nextNormalized);
 
   return true;
 }

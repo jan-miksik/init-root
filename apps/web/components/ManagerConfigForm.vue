@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { AGENT_PROFILES, ENTITY_NAME_MAX_CHARS, SUPPORTED_BASE_PAIRS, getManagerPersonaTemplate } from '@something-in-loop/shared';
-import { parse as markedParse } from 'marked';
+import {
+  AGENT_PAID_MODEL_ITEMS,
+  AGENT_PROFILES,
+  DEFAULT_FREE_AGENT_MODEL,
+  ENTITY_NAME_MAX_CHARS,
+  SUPPORTED_BASE_PAIRS,
+  buildAgentModelCatalog,
+  getManagerAllowedAgentModelIds,
+  getManagerPersonaTemplate,
+  type ModelCatalogItem,
+} from '@something-in-loop/shared';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
 import { splitManagerPromptSections } from '~/lib/manager-prompt';
+import { renderMarkdown } from '~/utils/markdown';
 
 const props = defineProps<{
   initial?: {
@@ -37,35 +47,8 @@ const emit = defineEmits<{
 
 const { user } = useAuth();
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
-const dropdownModel = ref(props.initial?.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free');
+const dropdownModel = ref(props.initial?.llmModel ?? DEFAULT_FREE_AGENT_MODEL);
 const customModel = ref('');
-
-type ModelItem = {
-  id: string;
-  label: string;
-  ctx: string;
-  price: string;
-  tier: 'free' | 'paid';
-  desc?: string;
-};
-
-const FREE_MODELS: ModelItem[] = [
-  { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 120B Super', ctx: '262K', price: '$0/$0', tier: 'free', desc: 'default free' },
-  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', ctx: '262K', price: '$0/$0', tier: 'free', desc: 'strong reasoning' },
-  { id: 'nvidia/nemotron-nano-9b-v2:free', label: 'Nemotron 9B', ctx: '128K', price: '$0/$0', tier: 'free' },
-  { id: 'arcee-ai/trinity-large-preview:free', label: 'Trinity-Large', ctx: '131K', price: '$0/$0', tier: 'free' },
-] as const;
-
-const PAID_MODELS = [
-  { id: 'google/gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro',        ctx: '2M',   price: '$2/$12' },
-  { id: 'anthropic/claude-sonnet-4.6',    label: 'Claude Sonnet 4.6',     ctx: '1M',   price: '$3/$15' },
-  { id: 'google/gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite', ctx: '1M', price: '$0.25/$1.50' },
-  { id: 'openai/gpt-5.4',                 label: 'GPT-5.4',               ctx: '1M',   price: '$2.50/$15' },
-  { id: 'deepseek/deepseek-v3.2',         label: 'DeepSeek V3.2',         ctx: '164K', price: '$0.26/$0.38' },
-  { id: 'anthropic/claude-opus-4.6',      label: 'Claude Opus 4.6',       ctx: '200K', price: '$5/$25' },
-  { id: 'minimax/minimax-m2.5',           label: 'MiniMax M2.5',          ctx: '196K', price: '$0.20/$1.20' },
-  { id: 'mistralai/mistral-small-2603',   label: 'Mistral Small 2603',    ctx: '262K', price: '$0.15/$0.60' },
-] as const;
 
 // ─── Model picker (table dropdown) ───────────────────────────────────────────
 
@@ -73,17 +56,19 @@ const modelPickerOpen = ref(false);
 const modelQuery = ref('');
 const modelPickerRef = ref<HTMLElement | null>(null);
 
-const MODEL_CATALOG = computed<ModelItem[]>(() => {
-  const paid = PAID_MODELS.map((m) => ({ ...m, tier: 'paid' as const }));
-  return [...FREE_MODELS, ...(hasOwnKey.value ? paid : [])];
+const MODEL_CATALOG = computed<ModelCatalogItem[]>(() => {
+  return buildAgentModelCatalog({
+    hasOwnOpenRouterKey: hasOwnKey.value,
+    isTester: false,
+  }).filter((item) => item.tier !== 'tester');
 });
 
-const selectedModelMeta = computed<ModelItem | null>(() => {
+const selectedModelMeta = computed<ModelCatalogItem | null>(() => {
   const id = customModel.value.trim() || dropdownModel.value;
   return MODEL_CATALOG.value.find((m) => m.id === id) ?? null;
 });
 
-const filteredModels = computed<ModelItem[]>(() => {
+const filteredModels = computed<ModelCatalogItem[]>(() => {
   const q = modelQuery.value.trim().toLowerCase();
   if (!q) return MODEL_CATALOG.value;
   return MODEL_CATALOG.value.filter((m) =>
@@ -126,7 +111,7 @@ onBeforeUnmount(() => {
 
 const form = reactive({
   name: props.initial?.name ?? '',
-  llmModel: props.initial?.llmModel ?? 'nvidia/nemotron-3-super-120b-a12b:free',
+  llmModel: props.initial?.llmModel ?? DEFAULT_FREE_AGENT_MODEL,
   temperature: props.initial?.temperature ?? 0.7,
   decisionInterval: props.initial?.decisionInterval ?? '1h',
   riskParams: {
@@ -258,9 +243,9 @@ function restorePersona() {
 
 // ─── Name helpers ──────────────────────────────────────────────────────────
 
-const PAID_MODEL_NAMES = Object.fromEntries(PAID_MODELS.map((p) => [p.id, p.label]));
+const PAID_MODEL_NAMES = Object.fromEntries(AGENT_PAID_MODEL_ITEMS.map((p) => [p.id, p.label]));
 const MODEL_SHORT_NAMES: Record<string, string> = {
-  'nvidia/nemotron-3-super-120b-a12b:free': 'Nemotron-120B',
+  [DEFAULT_FREE_AGENT_MODEL]: 'Nemotron-120B',
   'qwen/qwen3-coder:free': 'Qwen3-Coder',
   'nvidia/nemotron-nano-9b-v2:free': 'Nemotron-9B',
   'arcee-ai/trinity-large-preview:free': 'Trinity-Large',
@@ -348,40 +333,7 @@ function handleSubmit() {
   }
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-}
-
-function renderMarkdown(text: string): string {
-  try {
-    return markedParse(text, { async: false }) as string;
-  } catch {
-    return escapeHtml(text);
-  }
-}
-
-const DEFAULT_FREE_AGENT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
-const FREE_AGENT_MODELS = [
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'qwen/qwen3-coder:free',
-  'nvidia/nemotron-nano-9b-v2:free',
-  'arcee-ai/trinity-large-preview:free',
-] as const;
-const PAID_CHEAP_AGENT_MODELS = [
-  'google/gemini-3.1-flash-lite-preview',
-  'deepseek/deepseek-v3.2',
-  'minimax/minimax-m2.5',
-  'mistralai/mistral-small-2603',
-] as const;
-
-const availableAgentModels = computed(() => hasOwnKey.value
-  ? [...FREE_AGENT_MODELS, ...PAID_CHEAP_AGENT_MODELS]
-  : [...FREE_AGENT_MODELS]
-);
+const availableAgentModels = computed(() => getManagerAllowedAgentModelIds(hasOwnKey.value));
 
 const liveSystemPrompt = computed(() => {
   const pairsAllowlist = SUPPORTED_BASE_PAIRS.map((p) => `- "${p}"`).join('\n');

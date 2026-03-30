@@ -8,6 +8,14 @@ import { CreateManagerRequestSchema, UpdateManagerRequestSchema, UpdatePersonaSc
 import { validateBody } from '../lib/validation.js';
 import { generateId, nowIso } from '../lib/utils.js';
 import { normalizeManagerDecisionInterval, syncRunningManagerDecisionInterval } from '../lib/manager-interval-sync.js';
+import {
+  DoRequestError,
+  pauseManagerDo,
+  startManagerDo,
+  stopManagerDo,
+  stopTradingAgentDo,
+  triggerManagerDo,
+} from '../lib/do-clients.js';
 
 const managersRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -82,13 +90,7 @@ managersRoute.post('/', async (c) => {
   // Automatically start the manager after creation so it is active by default
   const decisionInterval = config.decisionInterval ?? '1h';
   try {
-    const doId = c.env.AGENT_MANAGER.idFromName(id);
-    const stub = c.env.AGENT_MANAGER.get(doId);
-    await stub.fetch(new Request('http://do/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ managerId: id, decisionInterval }),
-    }));
+    await startManagerDo(c.env, { managerId: id, decisionInterval });
     await db.update(agentManagers).set({ status: 'running', updatedAt: nowIso() }).where(eq(agentManagers.id, id));
   } catch (err) {
     console.error('[managers] Failed to auto-start manager on create', err);
@@ -171,9 +173,7 @@ managersRoute.delete('/:id', async (c) => {
 
   // Stop the DO alarm if running
   if (existing.status === 'running' || existing.status === 'paused') {
-    const doId = c.env.AGENT_MANAGER.idFromName(id);
-    const stub = c.env.AGENT_MANAGER.get(doId);
-    await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
+    await stopManagerDo(c.env, id);
   }
 
   if (deleteAgents) {
@@ -184,9 +184,7 @@ managersRoute.delete('/:id', async (c) => {
       for (const agent of managedAgents) {
         if (agent.status === 'running' || agent.status === 'paused') {
           try {
-            const doId = c.env.TRADING_AGENT.idFromName(agent.id);
-            const stub = c.env.TRADING_AGENT.get(doId);
-            await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
+            await stopTradingAgentDo(c.env, agent.id);
           } catch { /* best-effort */ }
         }
       }
@@ -217,14 +215,7 @@ managersRoute.post('/:id/start', async (c) => {
 
   const config = JSON.parse(manager.config) as { decisionInterval?: string };
   const decisionInterval = normalizeManagerDecisionInterval(config.decisionInterval);
-  const doId = c.env.AGENT_MANAGER.idFromName(id);
-  const stub = c.env.AGENT_MANAGER.get(doId);
-
-  await stub.fetch(new Request('http://do/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ managerId: id, decisionInterval }),
-  }));
+  await startManagerDo(c.env, { managerId: id, decisionInterval });
 
   await db.update(agentManagers).set({ status: 'running', updatedAt: nowIso() }).where(eq(agentManagers.id, id));
   return c.json({ ok: true, status: 'running' });
@@ -239,9 +230,7 @@ managersRoute.post('/:id/stop', async (c) => {
   const manager = await requireManagerOwnership(db, id, walletAddress);
   if (!manager) return c.json({ error: 'Manager not found' }, 404);
 
-  const doId = c.env.AGENT_MANAGER.idFromName(id);
-  const stub = c.env.AGENT_MANAGER.get(doId);
-  await stub.fetch(new Request('http://do/stop', { method: 'POST' }));
+  await stopManagerDo(c.env, id);
 
   await db.update(agentManagers).set({ status: 'stopped', updatedAt: nowIso() }).where(eq(agentManagers.id, id));
   return c.json({ ok: true, status: 'stopped' });
@@ -256,9 +245,7 @@ managersRoute.post('/:id/pause', async (c) => {
   const manager = await requireManagerOwnership(db, id, walletAddress);
   if (!manager) return c.json({ error: 'Manager not found' }, 404);
 
-  const doId = c.env.AGENT_MANAGER.idFromName(id);
-  const stub = c.env.AGENT_MANAGER.get(doId);
-  await stub.fetch(new Request('http://do/pause', { method: 'POST' }));
+  await pauseManagerDo(c.env, id);
 
   await db.update(agentManagers).set({ status: 'paused', updatedAt: nowIso() }).where(eq(agentManagers.id, id));
   return c.json({ ok: true, status: 'paused' });
@@ -275,18 +262,14 @@ managersRoute.post('/:id/trigger', async (c) => {
 
   const config = JSON.parse(manager.config) as { decisionInterval?: string };
   const decisionInterval = normalizeManagerDecisionInterval(config.decisionInterval);
-  const doId = c.env.AGENT_MANAGER.idFromName(id);
-  const stub = c.env.AGENT_MANAGER.get(doId);
-  const res = await stub.fetch(
-    new Request('http://do/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decisionInterval }),
-    }),
-  );
-  const body = await res.json() as { ok?: boolean; error?: string };
-
-  if (!res.ok) return c.json({ error: body.error ?? 'Failed to trigger' }, res.status as 400 | 409);
+  try {
+    await triggerManagerDo(c.env, id, decisionInterval);
+  } catch (err) {
+    if (err instanceof DoRequestError) {
+      return c.json({ error: err.body || err.message }, err.status as 400 | 409 | 500);
+    }
+    return c.json({ error: err instanceof Error ? err.message : 'Failed to trigger' }, 409);
+  }
   return c.json({ ok: true });
 });
 
