@@ -93,8 +93,6 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 
 - `apps/api/wrangler.toml`:
   - `[triggers] crons = [...]` registers five schedules:
-    - `*/5 * * * *` (every 5 minutes)
-    - `*/15 * * * *` (every 15 minutes)
     - `0 * * * *` (hourly)
     - `0 */4 * * *` (every 4 hours)
     - `0 0 * * *` (daily)
