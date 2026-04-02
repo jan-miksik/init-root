@@ -44,6 +44,30 @@ const VerifySchema = z.object({
   avatarUrl: z.string().url().optional(),
 });
 
+const HackathonSessionSchema = z.object({
+  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  displayName: z.string().max(100).optional(),
+});
+
+function isLocalHostValue(value?: string | null): boolean {
+  if (!value) return false;
+  return /(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?/i.test(value);
+}
+
+function isHackathonBypassAllowed(c: { req: { url: string; header: (name: string) => string | undefined }; env: Env }): boolean {
+  if (c.env.HACKATHON_AUTH_BYPASS === 'true') return true;
+
+  const url = new URL(c.req.url);
+  const origin = c.req.header('origin');
+  const referer = c.req.header('referer');
+
+  return (
+    isLocalHostValue(url.host)
+    || isLocalHostValue(origin)
+    || isLocalHostValue(referer)
+  );
+}
+
 /** POST /api/auth/verify — verify SIWE, create session, set cookie, return user */
 authRoute.post('/verify', async (c) => {
   const body = await validateBody(c, VerifySchema);
@@ -81,6 +105,55 @@ authRoute.post('/verify', async (c) => {
     role: result.user.role,
     createdAt: result.user.createdAt,
     openRouterKeySet: !!result.user.openRouterKey,
+  });
+});
+
+/** POST /api/auth/hackathon-session — bootstrap a session from connected wallet in localhost/hackathon mode. */
+authRoute.post('/hackathon-session', async (c) => {
+  if (!isHackathonBypassAllowed(c)) {
+    return c.json({ error: 'Not Found' }, 404);
+  }
+
+  const body = await validateBody(c, HackathonSessionSchema);
+  const walletAddress = body.walletAddress.toLowerCase();
+  const orm = drizzle(c.env.DB);
+
+  let [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
+  if (!user) {
+    const userId = generateId('user');
+    await orm.insert(users).values({
+      id: userId,
+      walletAddress,
+      displayName: body.displayName ?? null,
+      authProvider: 'hackathon-wallet',
+      email: null,
+      avatarUrl: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+    [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
+  } else if (body.displayName && !user.displayName) {
+    await orm.update(users).set({
+      displayName: body.displayName,
+      updatedAt: nowIso(),
+    }).where(eq(users.id, user.id));
+    [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
+  }
+
+  const sessionToken = await createSession(c.env.CACHE, user.id, walletAddress, c.env.DB);
+  const isHttps = c.req.url.startsWith('https://');
+  c.header('Set-Cookie', buildSessionCookie(sessionToken, isHttps));
+
+  return c.json({
+    id: user.id,
+    walletAddress: user.walletAddress,
+    email: user.email,
+    displayName: user.displayName,
+    authProvider: user.authProvider,
+    avatarUrl: user.avatarUrl,
+    role: user.role,
+    createdAt: user.createdAt,
+    openRouterKeySet: !!user.openRouterKey,
   });
 });
 

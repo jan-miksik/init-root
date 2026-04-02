@@ -1,15 +1,13 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineNuxtConfig } from 'nuxt/config';
+
+const appRoot = fileURLToPath(new URL('.', import.meta.url));
+const workspaceRoot = resolve(appRoot, '..', '..');
 
 export default defineNuxtConfig({
   devtools: { enabled: false },
-
-  // Reown AppKit uses web components (w3m-*); tell Vue not to resolve them as Vue components
-  vue: {
-    compilerOptions: {
-      isCustomElement: (tag: string) => tag.startsWith('w3m-'),
-    },
-  },
 
   // SPA mode — all pages are client-rendered (API calls require browser context)
   ssr: false,
@@ -21,6 +19,13 @@ export default defineNuxtConfig({
   },
   vite: {
     base: '/',
+    server: {
+      fs: {
+        // Needed for pnpm workspace paths resolved through /_nuxt/@fs/...,
+        // including Nuxt's own runtime entry under workspace-level node_modules.
+        allow: [appRoot, workspaceRoot],
+      },
+    },
     build: {
       rollupOptions: {
         output: {
@@ -36,8 +41,18 @@ export default defineNuxtConfig({
     public: {
       // Client always uses same-origin /api (proxy). No public API URL.
       apiBase: '',
-      // Reown AppKit project ID — replace REOWN_PROJECT_ID in .env
-      reownProjectId: process.env.REOWN_PROJECT_ID || '',
+      // Initia MVP runtime config (used by connect page helpers)
+      initiaRollupChainId: process.env.NUXT_PUBLIC_INITIA_ROLLUP_CHAIN_ID || 'pillow-rollup',
+      initiaEvmChainId: process.env.NUXT_PUBLIC_INITIA_EVM_CHAIN_ID || '2178983797612220',
+      initiaContractAddress: process.env.NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS || '0x286D7241779329DB8c34995d3e8D3796e0d685D7',
+      initiaBridgeSrcChainId: process.env.NUXT_PUBLIC_INITIA_BRIDGE_SRC_CHAIN_ID || 'initiation-2',
+      initiaBridgeSrcDenom: process.env.NUXT_PUBLIC_INITIA_BRIDGE_SRC_DENOM || 'uinit',
+      initiaBridgeUrl: process.env.NUXT_PUBLIC_INITIA_BRIDGE_URL || 'https://bridge.testnet.initia.xyz',
+      initiaEvmRpc: process.env.NUXT_PUBLIC_INITIA_EVM_RPC || 'http://localhost:8545',
+      initiaRestUrl: process.env.NUXT_PUBLIC_INITIA_REST_URL || 'http://localhost:1317',
+      initiaRpcUrl: process.env.NUXT_PUBLIC_INITIA_RPC_URL || 'http://localhost:26657',
+      initiaIndexerUrl: process.env.NUXT_PUBLIC_INITIA_INDEXER_URL || 'http://localhost:8080',
+      initiaWebUrl: process.env.NUXT_PUBLIC_INITIA_WEB_URL || 'http://localhost:5173',
     },
     // Server-only: upstream for API proxy when Service Binding is not present (e.g. local dev)
     apiUpstream: process.env.API_BASE_URL || 'http://localhost:8787',
@@ -66,7 +81,7 @@ export default defineNuxtConfig({
     head: {
       title: 'Something in loop',
       meta: [
-        { name: 'description', content: 'AI-powered paper trading agents on Base chain DEXes' },
+        { name: 'description', content: 'AI-powered paper trading agents with Initia MVP integration' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       ],
       link: [

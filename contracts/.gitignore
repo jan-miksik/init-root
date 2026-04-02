@@ -1,0 +1,5 @@
+out/
+cache/
+.env.contracts
+.DS_Store
+lib/.DS_Store

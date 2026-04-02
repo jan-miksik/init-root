@@ -1,17 +1,13 @@
 /**
  * useAuth — authentication state + SIWE sign-in/out.
  *
- * Uses ONLY @wagmi/core actions (signMessage, disconnect, getConnection) — these call the
- * wagmi config directly and do NOT require Vue's inject() context.
- * Safe to call from plugins, middleware, and components alike.
- *
- * Wallet connection state for components should come from useAccount() in @wagmi/vue.
+ * Uses Interwoven wallet provider for message signing (SIWE) and hackathon
+ * session bootstrap. Safe to call from plugins, middleware, and components alike.
  */
 import { ref, computed } from 'vue';
-import { signMessage, disconnect, getConnection } from '@wagmi/core';
 import { createSiweMessage } from 'viem/siwe';
 import { navigateTo } from '#app';
-import { getWagmiConfig } from '~/utils/wagmi-config';
+import { useInterwovenWallet } from './useInterwovenWallet';
 
 // ─── Module-level auth state ──────────────────────────────────────────────────
 // Using module scope (not useState) so the ref is the same instance across
@@ -35,12 +31,11 @@ const authResolved = ref(false);
 let fetchMePromise: Promise<void> | null = null;
 
 // ─── Auto-disconnect hook ─────────────────────────────────────────────────────
-// Called by the reown plugin when wagmi reports the wallet has disconnected.
-// Signs out from the backend without calling disconnect() again (already done).
+// Called when Interwoven wallet becomes disconnected.
 
 export async function handleWalletDisconnect(): Promise<boolean> {
   if (!authUser.value) return false; // nothing to sign out of
-  // Dev/test sessions have no wagmi wallet connection — don't sign them out on disconnect
+  // Dev/test sessions have no wallet connection — don't sign them out on disconnect
   if (authUser.value.authProvider === 'playwright') return false;
   authUser.value = null;
   try {
@@ -54,6 +49,8 @@ export async function handleWalletDisconnect(): Promise<boolean> {
 // ─── Composable ───────────────────────────────────────────────────────────────
 
 export function useAuth() {
+  const wallet = useInterwovenWallet();
+  const runtimeConfig = useRuntimeConfig();
   const isAuthenticated = computed(() => !!authUser.value);
 
   /** Restore session from the HttpOnly session cookie. Deduplicates concurrent calls. */
@@ -86,7 +83,7 @@ export function useAuth() {
    * SIWE sign-in flow:
    *  1. Fetch one-time nonce from backend
    *  2. Build EIP-4361 message
-   *  3. Sign with wagmi (@wagmi/core — no Vue context needed)
+   *  3. Sign with Interwoven wallet provider
    *  4. Verify with backend → session cookie is set in the response
    *
    * Optional: pass profile fields from email/social logins so they're
@@ -97,18 +94,23 @@ export function useAuth() {
     displayName?: string;
     avatarUrl?: string;
   }): Promise<void> {
-    const { address: addr } = getConnection(getWagmiConfig());
+    let addr = wallet.walletAddress.value;
+    if (!addr) {
+      addr = await wallet.connectWallet();
+    }
     if (!addr) throw new Error('No wallet connected');
 
     authLoading.value = true;
     try {
       // 1. Get a fresh nonce from the backend
       const { nonce } = await $fetch<{ nonce: string }>('/api/auth/nonce');
+      const chainId = await wallet.getChainId();
+      const fallbackChainId = Number(runtimeConfig.public.initiaEvmChainId || 2178983797612220);
 
       // 2. Build SIWE message
       const message = createSiweMessage({
-        address: addr,
-        chainId: 8453, // Base mainnet
+        address: addr as `0x${string}`,
+        chainId: chainId || fallbackChainId,
         domain: window.location.host,
         nonce,
         uri: window.location.origin,
@@ -116,23 +118,46 @@ export function useAuth() {
         statement: 'Sign in to Something in loop',
       });
 
-      // 3. Sign with @wagmi/core — no Vue inject() needed
-      const signature = await signMessage(getWagmiConfig(), { message });
+      // 3. Sign with Interwoven provider.
+      const signature = await wallet.signPersonalMessage(message, addr);
 
       // 4. Send to backend; response sets the session cookie
       const user = await $fetch<AuthUser>('/api/auth/verify', {
         method: 'POST',
-        body: { message, signature, authProvider: 'wallet', ...opts },
+        body: { message, signature, authProvider: 'interwoven-wallet', ...opts },
         credentials: 'include',
       });
 
       authUser.value = user;
+      authResolved.value = true;
     } finally {
       authLoading.value = false;
     }
   }
 
-  /** Sign out: invalidate server session + disconnect wallet. */
+  /** Hackathon sign-in flow: create session directly from connected wallet. */
+  async function signInHackathon(): Promise<void> {
+    let addr = wallet.walletAddress.value;
+    if (!addr) {
+      addr = await wallet.connectWallet();
+    }
+    if (!addr) throw new Error('No wallet connected');
+
+    authLoading.value = true;
+    try {
+      const user = await $fetch<AuthUser>('/api/auth/hackathon-session', {
+        method: 'POST',
+        body: { walletAddress: addr },
+        credentials: 'include',
+      });
+      authUser.value = user;
+      authResolved.value = true;
+    } finally {
+      authLoading.value = false;
+    }
+  }
+
+  /** Sign out: invalidate server session + clear local wallet state cache. */
   async function signOut(): Promise<void> {
     try {
       await $fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -140,11 +165,7 @@ export function useAuth() {
       // Still clear local state even if server call fails
     }
     authUser.value = null;
-    try {
-      await disconnect(getWagmiConfig());
-    } catch {
-      // Ignore disconnect errors
-    }
+    wallet.clearWalletState();
     if (import.meta.client) {
       await navigateTo('/connect');
     }
@@ -157,6 +178,7 @@ export function useAuth() {
     authResolved,
     fetchMe,
     signIn,
+    signInHackathon,
     signOut,
   };
 }

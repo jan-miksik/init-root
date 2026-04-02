@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { useAppKit } from '@reown/appkit/vue';
-import { useAccount } from '@wagmi/vue';
+import { computed, onMounted, ref } from 'vue';
 
 // Feature flag — set to false to remove the beta badge sitewide
 const IS_BETA = true;
 
 const { user, isAuthenticated, authResolved } = useAuth();
-const { open: openAppKit } = useAppKit();
-const { isConnected, address } = useAccount();
+const {
+  state: initiaState,
+  openConnect: openInitiaConnect,
+  openWallet: openInitiaWallet,
+  refresh: refreshInitia,
+} = useInitiaBridge();
+const walletActionError = ref<string | null>(null);
+const walletConnected = computed(() => !!initiaState.value.initiaAddress);
+const walletDisplayAddress = computed(() => {
+  if (initiaState.value.initiaAddress) return initiaState.value.initiaAddress;
+  if (isAuthenticated.value && user.value?.walletAddress) return user.value.walletAddress;
+  return '';
+});
+const route = useRoute();
+const isConnectRoute = computed(() => route.path === '/connect');
 
 useHead({
   htmlAttrs: { lang: 'en' },
@@ -17,11 +29,76 @@ function truncate(addr: string): string {
   if (!addr) return '';
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
+
+onMounted(() => {
+  void refreshInitia().catch(() => undefined);
+});
+
+async function handleWalletClick() {
+  walletActionError.value = null;
+
+  const openPreferred = () => {
+    if (initiaState.value.initiaAddress) {
+      return openInitiaWallet();
+    }
+    return openInitiaConnect();
+  };
+
+  try {
+    await openPreferred();
+    return;
+  } catch (err: unknown) {
+    walletActionError.value = (err as Error)?.message ?? 'Failed to open Initia wallet connector.';
+  }
+
+  try {
+    await refreshInitia();
+    await openPreferred();
+  } catch (err: unknown) {
+    walletActionError.value = (err as Error)?.message ?? walletActionError.value ?? 'Failed to open Initia wallet connector.';
+    if (route.path !== '/connect') {
+      await navigateTo('/connect');
+    }
+  }
+}
 </script>
 
 <template>
   <div>
-    <nav class="navbar">
+    <header v-if="isConnectRoute" class="shellbar shellbar--connect">
+      <NuxtLink to="/connect" class="shellbar-brand">
+        <span class="shellbar-dot" />
+        <span>HEPPY MARKET</span>
+        <span class="shellbar-sep">·</span>
+        <span>INITIA</span>
+        <span class="shellbar-dot shellbar-dot--inline" />
+        <span class="shellbar-status">chain online</span>
+        <span v-if="IS_BETA" class="beta-badge">Beta</span>
+      </NuxtLink>
+      <div class="shellbar-auth">
+        <span class="shellbar-session">{{ isAuthenticated ? 'session ready' : 'session missing' }}</span>
+        <button
+          type="button"
+          class="wallet-trigger wallet-trigger--shell"
+          @click="handleWalletClick"
+        >
+          <span
+            class="wallet-dot"
+            :class="{ 'wallet-dot--disconnected': !walletConnected }"
+          />
+          <span v-if="isAuthenticated && user">
+            {{ truncate(user.walletAddress) }}
+          </span>
+          <span v-else-if="walletDisplayAddress">
+            {{ truncate(walletDisplayAddress) }}
+          </span>
+          <span v-else>
+            Connect
+          </span>
+        </button>
+      </div>
+    </header>
+    <nav v-else class="navbar">
       <NuxtLink to="/agents" class="navbar-brand">
         <span class="dot" />
         Something in loop
@@ -45,7 +122,7 @@ function truncate(addr: string): string {
           <button
             type="button"
             class="wallet-trigger"
-            @click="openAppKit({ view: 'Account' })"
+            @click="handleWalletClick"
           >
             <span class="wallet-dot" />
             {{ truncate(user.walletAddress) }}
@@ -60,14 +137,14 @@ function truncate(addr: string): string {
           <button
             type="button"
             class="wallet-trigger"
-            @click="openAppKit(isConnected ? { view: 'Account' } : undefined)"
+            @click="handleWalletClick"
           >
             <span
               class="wallet-dot"
-              :class="{ 'wallet-dot--disconnected': !isConnected }"
+              :class="{ 'wallet-dot--disconnected': !walletConnected }"
             />
-            <span v-if="isConnected && address">
-              {{ truncate(address) }}
+            <span v-if="walletDisplayAddress">
+              {{ truncate(walletDisplayAddress) }}
             </span>
             <span v-else>
               Connect
@@ -77,6 +154,14 @@ function truncate(addr: string): string {
       </div>
     </nav>
     <main class="app-main">
+      <div
+        v-if="walletActionError || initiaState.error"
+        class="wallet-error-banner"
+        role="status"
+        aria-live="polite"
+      >
+        {{ walletActionError || initiaState.error }}
+      </div>
       <NuxtPage />
       <div v-if="!authResolved" class="app-loading-overlay" aria-live="polite" aria-busy="true">
         <div class="init-loader">
@@ -105,18 +190,18 @@ function truncate(addr: string): string {
   align-items: center;
   justify-content: space-between;
   background: var(--bg-card);
-  border-bottom: 2px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 0 var(--space-lg);
-  height: 52px;
+  height: 56px;
 }
 
 .navbar-brand {
-  flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: -0.01em;
   color: var(--text);
   display: flex;
   align-items: center;
@@ -135,10 +220,10 @@ function truncate(addr: string): string {
 
 .navbar-nav a {
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-transform: none;
   color: var(--text-muted);
   text-decoration: none;
   padding: 5px 10px;
@@ -261,15 +346,94 @@ function truncate(addr: string): string {
 
 .app-main {
   position: relative;
+  background: black;
+}
+
+.wallet-error-banner {
+  margin: 10px auto 0;
+  width: min(1100px, calc(100vw - 32px));
+  border: 1px solid #7a2d2d;
+  background: #2a1616;
+  color: #ffb4b4;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 10px;
 }
 
 .app-loading-overlay {
   position: fixed;
-  inset: 52px 0 0;
+  inset: 56px 0 0;
   z-index: 110;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.shellbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 16px;
+  background: #171717;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.shellbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.shellbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+.shellbar-dot--inline {
+  margin-left: 4px;
+}
+
+.shellbar-sep,
+.shellbar-status,
+.shellbar-session {
+  color: var(--text-muted);
+}
+
+.shellbar-auth {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shellbar-session {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.wallet-trigger--shell {
+  padding: 7px 12px;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wallet-trigger--shell:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
 }
 </style>

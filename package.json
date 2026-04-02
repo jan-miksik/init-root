@@ -9,7 +9,6 @@
   "scripts": {
     "dev:api": "pnpm --filter @something-in-loop/api dev",
     "dev:web": "pnpm --filter @something-in-loop/web dev",
-    "dev:initia": "pnpm --filter @something-in-loop/initia-web dev",
     "build": "turbo run build",
     "build:worker": "npm run build --workspace=@something-in-loop/shared && node_modules/esbuild/bin/esbuild apps/api/src/index.ts --bundle --minify --outfile=apps/api/dist/worker.js --platform=browser --format=esm --external:cloudflare:workers",
     "test": "turbo run test",

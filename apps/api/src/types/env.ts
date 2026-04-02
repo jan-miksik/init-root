@@ -22,10 +22,14 @@ export interface Env {
   CORS_ORIGINS?: string;
   /** Optional Base RPC URL for ERC-1271/ERC-6492 smart account signature verification. Falls back to public Base RPC. */
   BASE_RPC_URL?: string;
+  /** Optional Initia EVM RPC URL for SIWE or other EVM verification on the rollup. */
+  INITIA_EVM_RPC?: string;
   /** 64-char hex (32 bytes). Used to AES-GCM encrypt user API keys at rest. If absent, keys stored plain (dev only). */
   KEY_ENCRYPTION_SECRET?: string;
   /** Dev/test only. When set, enables POST /api/auth/dev-session for Playwright. Never set in production. */
   PLAYWRIGHT_SECRET?: string;
+  /** Hackathon/dev only. When true, allows wallet-address session bootstrap without SIWE. */
+  HACKATHON_AUTH_BYPASS?: string;
   /** Optional debug flag to log full LLM prompts/responses. Keep unset/false in production. */
   LOG_LLM_DEBUG?: string;
 }
