@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { handleWalletDisconnect } from '~/composables/useAuth';
 
 // Feature flag — set to false to remove the beta badge sitewide
 const IS_BETA = true;
 
-const { user, isAuthenticated, authResolved } = useAuth();
+const { user, isAuthenticated } = useAuth();
 const {
   state: initiaState,
   openConnect: openInitiaConnect,
@@ -12,11 +13,10 @@ const {
   refresh: refreshInitia,
 } = useInitiaBridge();
 const walletActionError = ref<string | null>(null);
-const walletConnected = computed(() => !!initiaState.value.initiaAddress);
-const walletDisplayAddress = computed(() => {
-  if (initiaState.value.initiaAddress) return initiaState.value.initiaAddress;
-  if (isAuthenticated.value && user.value?.walletAddress) return user.value.walletAddress;
-  return '';
+const walletConnected = computed(() => !!(initiaState.value.initiaAddress || initiaState.value.evmAddress));
+const shouldEnforceWalletSession = computed(() => {
+  if (!isAuthenticated.value || !user.value) return false;
+  return user.value.authProvider !== 'playwright';
 });
 const route = useRoute();
 const isConnectRoute = computed(() => route.path === '/connect');
@@ -33,6 +33,18 @@ function truncate(addr: string): string {
 onMounted(() => {
   void refreshInitia().catch(() => undefined);
 });
+
+watch(
+  [() => initiaState.value.ready, walletConnected, shouldEnforceWalletSession],
+  async ([ready, connected, enforce]) => {
+    if (!ready || connected || !enforce) return;
+    await handleWalletDisconnect();
+    if (route.path !== '/connect') {
+      await navigateTo('/connect', { replace: true });
+    }
+  },
+  { immediate: true },
+);
 
 async function handleWalletClick() {
   walletActionError.value = null;
@@ -71,12 +83,9 @@ async function handleWalletClick() {
         <span>HEPPY MARKET</span>
         <span class="shellbar-sep">·</span>
         <span>INITIA</span>
-        <span class="shellbar-dot shellbar-dot--inline" />
-        <span class="shellbar-status">chain online</span>
         <span v-if="IS_BETA" class="beta-badge">Beta</span>
       </NuxtLink>
       <div class="shellbar-auth">
-        <span class="shellbar-session">{{ isAuthenticated ? 'session ready' : 'session missing' }}</span>
         <button
           type="button"
           class="wallet-trigger wallet-trigger--shell"
@@ -86,15 +95,8 @@ async function handleWalletClick() {
             class="wallet-dot"
             :class="{ 'wallet-dot--disconnected': !walletConnected }"
           />
-          <span v-if="isAuthenticated && user">
-            {{ truncate(user.walletAddress) }}
-          </span>
-          <span v-else-if="walletDisplayAddress">
-            {{ truncate(walletDisplayAddress) }}
-          </span>
-          <span v-else>
-            Connect
-          </span>
+          <span v-if="user && walletConnected">{{ truncate(user.walletAddress) }}</span>
+          <span v-else>Connect</span>
         </button>
       </div>
     </header>
@@ -105,14 +107,14 @@ async function handleWalletClick() {
         <span v-if="IS_BETA" class="beta-badge">Beta</span>
       </NuxtLink>
       <div class="navbar-nav">
-        <template v-if="isAuthenticated">
+        <template v-if="isAuthenticated && walletConnected">
           <NuxtLink to="/agents">Agents</NuxtLink>
           <NuxtLink to="/managers">Managers</NuxtLink>
           <NuxtLink to="/trades">Trades</NuxtLink>
         </template>
       </div>
       <div class="navbar-auth">
-        <template v-if="isAuthenticated && user">
+        <template v-if="isAuthenticated && user && walletConnected">
           <NuxtLink to="/settings" class="settings-icon-btn" title="Settings">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -143,12 +145,7 @@ async function handleWalletClick() {
               class="wallet-dot"
               :class="{ 'wallet-dot--disconnected': !walletConnected }"
             />
-            <span v-if="walletDisplayAddress">
-              {{ truncate(walletDisplayAddress) }}
-            </span>
-            <span v-else>
-              Connect
-            </span>
+            <span>Connect</span>
           </button>
         </template>
       </div>
@@ -163,20 +160,6 @@ async function handleWalletClick() {
         {{ walletActionError || initiaState.error }}
       </div>
       <NuxtPage />
-      <div v-if="!authResolved" class="app-loading-overlay" aria-live="polite" aria-busy="true">
-        <div class="init-loader">
-          <div class="init-beacon" />
-          <div class="init-bars">
-            <span class="init-bar" />
-            <span class="init-bar" />
-            <span class="init-bar" />
-            <span class="init-bar" />
-            <span class="init-bar" />
-          </div>
-          <span class="init-label">Initializing</span>
-          <span class="init-sub">restoring session · checking auth</span>
-        </div>
-      </div>
     </main>
   </div>
 </template>

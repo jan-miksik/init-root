@@ -17,6 +17,7 @@ import { getSession, parseCookieValue } from './lib/auth.js';
 import comparisonRoute from './routes/comparison.js';
 import managersRoute from './routes/managers.js';
 import profilesRoute from './routes/profiles.js';
+import { ValidationError } from './lib/validation.js';
 
 // Export Durable Object class (required for Workers runtime to register it)
 export { TradingAgentDO } from './agents/trading-agent.js';
@@ -190,6 +191,15 @@ app.get('/', (c) =>
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 
 app.onError((err, c) => {
+  if (err instanceof ValidationError) {
+    return c.json(
+      {
+        error: err.message,
+        fieldErrors: err.fieldErrors ?? {},
+      },
+      400
+    );
+  }
   console.error('Unhandled error:', err);
   return c.json({ error: 'Internal Server Error' }, 500);
 });

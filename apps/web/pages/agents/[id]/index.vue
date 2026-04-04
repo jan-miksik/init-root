@@ -207,13 +207,24 @@ const now = ref(Date.now());
 let countdownInterval: ReturnType<typeof setInterval> | null = null;
 let cancelStatusPoll: (() => void) | null = null;
 
+// Three-dot menu
+const menuOpen = ref(false);
+const menuRef = ref<HTMLElement | null>(null);
+function onDocClick(e: MouseEvent) {
+  if (menuRef.value && !menuRef.value.contains(e.target as Node)) {
+    menuOpen.value = false;
+  }
+}
+
 onMounted(() => {
   countdownInterval = setInterval(() => { now.value = Date.now(); }, 1000);
+  document.addEventListener('click', onDocClick);
 });
 onUnmounted(() => {
   if (countdownInterval) clearInterval(countdownInterval);
   if (cancelStatusPoll) cancelStatusPoll();
   stopAnalyzeTimer();
+  document.removeEventListener('click', onDocClick);
 });
 
 async function loadAll() {
@@ -742,19 +753,19 @@ function formatLatency(ms: number): string {
           >
             {{ autoSignIntentLabel }}
           </button>
-          <NuxtLink :to="`/agents/${id}/edit`" class="btn btn-ghost btn-sm">✎ Edit</NuxtLink>
-          <button v-if="agent.status !== 'running'" class="btn btn-success" @click="handleStart">
+          <button v-if="agent.status !== 'running'" class="btn btn-success btn-sm" @click="handleStart">
             ▶ Start
           </button>
-          <button v-else class="btn btn-ghost" @click="handleStop">■ Stop</button>
-          <button
-            class="btn btn-ghost btn-sm"
-            :disabled="clearingHistory"
-            @click="handleClearHistory"
-          >
-            {{ clearingHistory ? 'Clearing…' : 'Clear history' }}
-          </button>
-          <button class="btn btn-danger btn-sm" @click="handleDelete">Delete</button>
+          <div ref="menuRef" style="position: relative;">
+            <button class="btn btn-ghost btn-sm" @click.stop="menuOpen = !menuOpen" title="More actions">•••</button>
+            <div v-if="menuOpen" class="agent-dot-menu">
+              <NuxtLink :to="`/agents/${id}/edit`" class="agent-dot-menu-item" @click="menuOpen = false">✎ Edit</NuxtLink>
+              <button v-if="agent.status === 'running'" class="agent-dot-menu-item" @click="handleStop(); menuOpen = false">■ Stop</button>
+              <button class="agent-dot-menu-item" :disabled="clearingHistory" @click="handleClearHistory(); menuOpen = false">{{ clearingHistory ? 'Clearing…' : 'Clear history' }}</button>
+              <div class="agent-dot-menu-sep" />
+              <button class="agent-dot-menu-item agent-dot-menu-item--danger" @click="handleDelete(); menuOpen = false">Delete</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1246,6 +1257,62 @@ function formatLatency(ms: number): string {
 </template>
 
 <style scoped>
+/* ── Three-dot menu ─────────────────────────────────────────────── */
+
+.agent-dot-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  min-width: 148px;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-dot-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--t-snap), color var(--t-snap);
+}
+
+.agent-dot-menu-item:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.agent-dot-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.agent-dot-menu-item--danger {
+  color: var(--red);
+}
+
+.agent-dot-menu-item--danger:hover:not(:disabled) {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+.agent-dot-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
 /* ── Analyze button active state ────────────────────────────────── */
 
 .btn-analyze-active {
@@ -1335,6 +1402,7 @@ function formatLatency(ms: number): string {
 }
 
 .dec-details-btn {
+  display: block;
   background: transparent;
   border: none;
   padding: 0;
@@ -1401,6 +1469,7 @@ function formatLatency(ms: number): string {
 
 .prompt-pill {
   display: flex;
+  justify-content: flex-start;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;

@@ -3,7 +3,15 @@
  * When the API binding is present (production on Pages), requests stay internal.
  * When absent (local dev), falls back to the configured apiBase URL.
  */
-import { createError, getRequestURL, getRequestHeaders, readRawBody, setResponseStatus, setResponseHeaders } from 'h3';
+import {
+  appendResponseHeader,
+  createError,
+  getRequestHeaders,
+  getRequestURL,
+  readRawBody,
+  setResponseHeaders,
+  setResponseStatus,
+} from 'h3';
 
 /** Service binding: fetch(request) → response (Worker is not exposed publicly). */
 interface CloudflareEnv {
@@ -14,15 +22,28 @@ interface CloudflareEnv {
 async function proxyResponse(event: Parameters<typeof defineEventHandler>[0] extends (e: infer E) => unknown ? E : never, res: Response) {
   setResponseStatus(event, res.status, res.statusText);
 
+  // Set-Cookie needs explicit forwarding via appendResponseHeader.
+  // Some runtimes expose multi-value cookies through Headers.getSetCookie().
+  const getSetCookie = (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  const setCookies = typeof getSetCookie === 'function'
+    ? getSetCookie.call(res.headers).filter(Boolean)
+    : (() => {
+        const single = res.headers.get('set-cookie');
+        return single ? [single] : [];
+      })();
+
   // Forward response headers
   const headers: Record<string, string> = {};
   res.headers.forEach((value, key) => {
     // Skip headers that h3/nitro manages itself
-    if (!['content-encoding', 'transfer-encoding', 'content-length'].includes(key.toLowerCase())) {
+    if (!['content-encoding', 'transfer-encoding', 'content-length', 'set-cookie'].includes(key.toLowerCase())) {
       headers[key] = value;
     }
   });
   setResponseHeaders(event, headers);
+  for (const cookie of setCookies) {
+    appendResponseHeader(event, 'set-cookie', cookie);
+  }
 
   // Return the body as text so h3 can handle encoding
   return res.text();

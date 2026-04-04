@@ -7,38 +7,52 @@ const {
 const { isAuthenticated, fetchMe } = useAuth();
 const connecting = ref(false);
 const connectError = ref<string | null>(null);
-
+const walletConnected = computed(() => !!(initiaState.value.initiaAddress || initiaState.value.evmAddress));
 const visibleError = computed(() => connectError.value ?? initiaState.value.error);
 
-async function handleConnect() {
-  connectError.value = null;
+// When wallet connects (bridge state updates), trigger hackathon auth + redirect.
+// openConnect() is fire-and-forget — the modal resolves async via bridge state events,
+// so we watch the result rather than awaiting it directly.
+watch(walletConnected, async (connected) => {
+  if (!connected || isAuthenticated.value) return;
+
   connecting.value = true;
+  connectError.value = null;
   try {
-    await openInitiaConnect();
-    await refreshInitia();
-    const walletAddress = initiaState.value.evmAddress;
-    if (!isAuthenticated.value && walletAddress) {
-      await $fetch('/api/auth/hackathon-session', {
-        method: 'POST',
-        credentials: 'include',
-        body: { walletAddress },
-      });
-      await fetchMe();
+    const addr = initiaState.value.evmAddress ?? initiaState.value.initiaAddress;
+    if (!addr) return;
+
+    await $fetch('/api/auth/hackathon-session', {
+      method: 'POST',
+      credentials: 'include',
+      body: { walletAddress: addr },
+    });
+    await fetchMe();
+
+    if (isAuthenticated.value) {
+      await navigateTo('/agents', { replace: true });
+    } else {
+      connectError.value = 'Authentication was not completed. Please try again.';
     }
-    await navigateTo('/agents', { replace: true });
   } catch (err: unknown) {
-    connectError.value = (err as Error)?.message ?? 'Failed to connect wallet.';
+    connectError.value = (err as Error)?.message ?? 'Failed to authenticate.';
   } finally {
     connecting.value = false;
   }
-}
+});
 
 onMounted(async () => {
-  await refreshInitia().catch(() => undefined);
-  if (isAuthenticated.value) {
+  await Promise.allSettled([refreshInitia(), fetchMe()]);
+  if (isAuthenticated.value && walletConnected.value) {
     await navigateTo('/agents', { replace: true });
   }
 });
+
+function handleConnect() {
+  openInitiaConnect().catch((err: unknown) => {
+    connectError.value = (err as Error)?.message ?? 'Failed to open wallet connector.';
+  });
+}
 </script>
 
 <template>

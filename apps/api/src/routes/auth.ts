@@ -45,7 +45,8 @@ const VerifySchema = z.object({
 });
 
 const HackathonSessionSchema = z.object({
-  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  // Accept both EVM 0x addresses and Initia bech32 (init1...) addresses
+  walletAddress: z.string().min(4).max(128),
   displayName: z.string().max(100).optional(),
 });
 
@@ -125,7 +126,7 @@ authRoute.post('/hackathon-session', async (c) => {
       id: userId,
       walletAddress,
       displayName: body.displayName ?? null,
-      authProvider: 'hackathon-wallet',
+      authProvider: 'wallet',
       email: null,
       avatarUrl: null,
       createdAt: nowIso(),

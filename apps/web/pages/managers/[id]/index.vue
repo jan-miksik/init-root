@@ -623,6 +623,7 @@ async function loadMoreLogs() {
 .prompt-pills { display: flex; flex-direction: column; gap: 4px; }
 .prompt-pill {
   display: flex;
+  justify-content: flex-start;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;

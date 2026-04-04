@@ -142,6 +142,18 @@ function extractTxHash(tx: unknown): string | null {
   return candidate?.txhash ?? candidate?.txHash ?? candidate?.tx_hash ?? candidate?.transactionHash ?? null;
 }
 
+function normalizeInitiaAddress(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  return value.length > 0 ? value : null;
+}
+
+function normalizeEvmAddress(raw: string | null | undefined): `0x${string}` | null {
+  if (!raw) return null;
+  const value = raw.trim().toLowerCase();
+  return /^0x[a-f0-9]{40}$/.test(value) ? (value as `0x${string}`) : null;
+}
+
 function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: ReturnType<typeof defineChain> }) {
   const { options, evmChain } = props;
   const {
@@ -152,6 +164,8 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
     requestTxBlock,
     autoSign,
   } = useInterwovenKit();
+  const normalizedInitiaAddress = useMemo(() => normalizeInitiaAddress(initiaAddress), [initiaAddress]);
+  const normalizedEvmAddress = useMemo(() => normalizeEvmAddress(evmAddress), [evmAddress]);
 
   const publicClient = useMemo(() => createPublicClient({
     chain: evmChain,
@@ -177,13 +191,13 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
       setChainOk(false);
     }
 
-    if (evmAddress) {
+    if (normalizedEvmAddress) {
       try {
         const [metadata, balance, exists, autoSignEnabled] = await publicClient.readContract({
           address: options.contractAddress as `0x${string}`,
           abi: AGENT_ABI,
           functionName: 'getAgent',
-          args: [evmAddress as `0x${string}`],
+          args: [normalizedEvmAddress],
         });
         void metadata;
         setAgentState({
@@ -200,7 +214,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
       }
 
       try {
-        const walletBalance = await publicClient.getBalance({ address: evmAddress as `0x${string}` });
+        const walletBalance = await publicClient.getBalance({ address: normalizedEvmAddress });
         setWalletBalanceWei(walletBalance.toString());
       } catch {
         setWalletBalanceWei(null);
@@ -213,7 +227,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
       });
       setWalletBalanceWei(null);
     }
-  }, [evmAddress, options.contractAddress, publicClient]);
+  }, [normalizedEvmAddress, options.contractAddress, publicClient]);
 
   useEffect(() => {
     void refresh();
@@ -239,13 +253,13 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
   }, [openConnect, openWallet, refresh]);
 
   const doTx = useCallback(async (action: string, input: string, valueWeiHex?: string) => {
-    if (!initiaAddress) throw new Error('Connect wallet first.');
+    if (!normalizedInitiaAddress) throw new Error('Connect wallet first.');
     setBusyAction(action);
     setError(null);
     try {
       const tx = await requestTxBlock({
         chainId: options.chainId,
-        messages: [buildMsgCall(initiaAddress, options.contractAddress, input, valueWeiHex ?? '0x0')],
+        messages: [buildMsgCall(normalizedInitiaAddress, options.contractAddress, input, valueWeiHex ?? '0x0')],
       });
       const txHash = extractTxHash(tx);
       setLastTxHash(txHash);
@@ -254,7 +268,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
     } finally {
       setBusyAction(null);
     }
-  }, [initiaAddress, options.chainId, options.contractAddress, refresh, requestTxBlock]);
+  }, [normalizedInitiaAddress, options.chainId, options.contractAddress, refresh, requestTxBlock]);
 
   useEffect(() => {
     const onAction = (event: Event) => {
@@ -299,14 +313,14 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             return { txHash };
           }
           case 'enableAutoSign': {
-            if (!initiaAddress) throw new Error('Connect wallet first.');
+            if (!normalizedInitiaAddress) throw new Error('Connect wallet first.');
             setBusyAction('enableAutoSign');
             try {
               await (autoSign as any)?.enable?.(options.chainId, { permissions: ['/minievm.evm.v1.MsgCall'] });
               const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'enableAutoSign', args: [] });
               const tx = await requestTxBlock({
                 chainId: options.chainId,
-                messages: [buildMsgCall(initiaAddress, options.contractAddress, input)],
+                messages: [buildMsgCall(normalizedInitiaAddress, options.contractAddress, input)],
               });
               const txHash = extractTxHash(tx);
               setLastTxHash(txHash);
@@ -317,14 +331,14 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             }
           }
           case 'disableAutoSign': {
-            if (!initiaAddress) throw new Error('Connect wallet first.');
+            if (!normalizedInitiaAddress) throw new Error('Connect wallet first.');
             setBusyAction('disableAutoSign');
             try {
               await (autoSign as any)?.disable?.(options.chainId);
               const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'disableAutoSign', args: [] });
               const tx = await requestTxBlock({
                 chainId: options.chainId,
-                messages: [buildMsgCall(initiaAddress, options.contractAddress, input)],
+                messages: [buildMsgCall(normalizedInitiaAddress, options.contractAddress, input)],
               });
               const txHash = extractTxHash(tx);
               setLastTxHash(txHash);
@@ -335,14 +349,14 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             }
           }
           case 'executeTick': {
-            if (!initiaAddress) throw new Error('Connect wallet first.');
+            if (!normalizedInitiaAddress) throw new Error('Connect wallet first.');
             setBusyAction('executeTick');
             try {
               const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'executeTick', args: [] });
               const tx = await requestTxBlock({
                 chainId: options.chainId,
                 autoSign: agentState.autoSignEnabled || !!(autoSign as any)?.isEnabledByChain?.[options.chainId],
-                messages: [buildMsgCall(initiaAddress, options.contractAddress, input)],
+                messages: [buildMsgCall(normalizedInitiaAddress, options.contractAddress, input)],
               } as any);
               const txHash = extractTxHash(tx);
               setLastTxHash(txHash);
@@ -376,7 +390,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
     agentState.autoSignEnabled,
     autoSign,
     doTx,
-    initiaAddress,
+    normalizedInitiaAddress,
     openConnect,
     openWallet,
     options.chainId,
@@ -389,8 +403,8 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
     const state: InitiaBridgeState = {
       ready: true,
       chainOk,
-      initiaAddress: initiaAddress ?? null,
-      evmAddress: evmAddress ?? null,
+      initiaAddress: normalizedInitiaAddress,
+      evmAddress: normalizedEvmAddress,
       walletBalanceWei,
       vaultBalanceWei: agentState.balance.toString(),
       agentExists: agentState.exists,
@@ -408,8 +422,8 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
     busyAction,
     chainOk,
     error,
-    evmAddress,
-    initiaAddress,
+    normalizedEvmAddress,
+    normalizedInitiaAddress,
     lastTxHash,
     options.chainId,
     walletBalanceWei,
