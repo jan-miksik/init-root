@@ -3,8 +3,8 @@
  * Runs on every route navigation in the SPA.
  */
 export default defineNuxtRouteMiddleware(async (to) => {
-  // Always allow the connect page
-  if (to.path === '/connect') return;
+  // Always allow public pages
+  if (to.path === '/connect' || to.path === '/about') return;
 
   const { isAuthenticated, authResolved, fetchMe } = useAuth();
 
