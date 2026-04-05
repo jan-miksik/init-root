@@ -63,7 +63,7 @@ async function handleBridge() {
         <span class="about-section-label">network</span>
         <div class="about-net-rows">
           <div class="about-net-row">
-            <span class="about-net-key">contract</span>
+            <span class="about-net-key">app contract</span>
             <span class="about-net-val">{{ contract }}</span>
             <button
               class="copy-btn"

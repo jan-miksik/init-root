@@ -14,6 +14,13 @@ const { fetchAgentTrades, closeTrade, pnlClass } = useTrades();
 const { request } = useApi();
 const { getAgentPersona, updateAgentPersona, resetAgentPersona } = useProfiles();
 const router = useRouter();
+const {
+  state: initiaState,
+  openConnect,
+  refresh: refreshInitiaState,
+  enableAutoSign,
+  disableAutoSign,
+} = useInitiaBridge();
 
 const closingTrades = ref<Set<string>>(new Set());
 
@@ -161,6 +168,10 @@ const analyzeError = ref<string | null>(null);
 const personaMd = ref('');
 const personaSaving = ref(false);
 const clearingHistory = ref(false);
+const autoSignBusy = ref<'enable' | 'disable' | null>(null);
+const autoSignError = ref<string | null>(null);
+const WALLET_STATE_TIMEOUT_MS = 30_000;
+const WALLET_STATE_POLL_MS = 250;
 
 const personaEmoji = computed(() => {
   if (!agent.value) return '';
@@ -168,6 +179,46 @@ const personaEmoji = computed(() => {
   const profileId = agent.value.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
   const profile = getAgentProfile(profileId);
   return profile?.emoji ?? '';
+});
+
+const isInitiaAgent = computed(() => agent.value?.chain === 'initia');
+
+const persistedInitiaState = computed<Record<string, unknown> | null>(() => {
+  const raw = (agent.value as { initiaSyncState?: unknown } | null)?.initiaSyncState;
+  return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+});
+
+const linkedOnchainAgentId = computed(() => {
+  const raw = persistedInitiaState.value?.onchainAgentId;
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
+});
+
+const activeOnchainAgentId = computed(() => initiaState.value.onchainAgentId);
+
+const autoSignMismatch = computed(() => {
+  if (!linkedOnchainAgentId.value || !activeOnchainAgentId.value) return false;
+  return linkedOnchainAgentId.value !== activeOnchainAgentId.value;
+});
+
+const autoSignEnabled = computed(() => {
+  if (initiaState.value.initiaAddress) return initiaState.value.autoSignEnabled;
+  const persisted = persistedInitiaState.value?.autoSignEnabled;
+  return typeof persisted === 'boolean' ? persisted : initiaState.value.autoSignEnabled;
+});
+
+const autoSignButtonLabel = computed(() => {
+  if (autoSignBusy.value === 'enable') return 'Enabling…';
+  if (autoSignBusy.value === 'disable') return 'Disabling…';
+  return autoSignEnabled.value ? 'Auto-Sign ON' : 'Auto-Sign OFF';
+});
+
+const autoSignButtonTitle = computed(() => {
+  if (autoSignMismatch.value) {
+    return `Connected wallet points to onchain agent ${activeOnchainAgentId.value}, but this page is linked to ${linkedOnchainAgentId.value}.`;
+  }
+  return autoSignEnabled.value
+    ? 'Disable auto-sign for executor transactions.'
+    : 'Enable auto-sign for executor transactions.';
 });
 
 /** True when the analysis failed because the selected model is unavailable (no automatic fallback) */
@@ -230,6 +281,9 @@ async function loadAll() {
       const personaData = await getAgentPersona(id.value);
       personaMd.value = personaData.personaMd ?? '';
     } catch { /* ignore */ }
+    if (a.chain === 'initia') {
+      await refreshInitiaState();
+    }
     fetchModifications(id.value).catch(() => { /* non-critical */ });
   } catch (err) {
     loadError.value = extractApiError(err);
@@ -496,6 +550,89 @@ async function handleStop() {
   agent.value.status = 'stopped';
   doStatus.value = null;
 }
+
+async function syncInitiaStateToApi(trigger: string) {
+  if (!isInitiaAgent.value || !agent.value || !initiaState.value.initiaAddress) return;
+
+  const mergedState = {
+    ...(persistedInitiaState.value ?? {}),
+    walletAddress: initiaState.value.initiaAddress,
+    evmAddress: initiaState.value.evmAddress ?? undefined,
+    onchainAgentId: initiaState.value.onchainAgentId ?? undefined,
+    chainOk: initiaState.value.chainOk,
+    existsOnchain: initiaState.value.agentExists,
+    autoSignEnabled: initiaState.value.autoSignEnabled,
+    executorAuthorized: initiaState.value.executorAuthorized,
+    walletBalanceWei: initiaState.value.walletBalanceWei ?? undefined,
+    vaultBalanceWei: initiaState.value.vaultBalanceWei ?? undefined,
+    walletShowcaseTokenBalanceWei: initiaState.value.walletShowcaseTokenBalanceWei ?? undefined,
+    showcaseTokenBalanceWei: initiaState.value.showcaseTokenBalanceWei ?? undefined,
+    lastTxHash: initiaState.value.lastTxHash ?? undefined,
+    syncTrigger: trigger,
+  };
+
+  try {
+    await request(`/api/agents/${id.value}/initia/sync`, {
+      method: 'POST',
+      body: { state: mergedState },
+      silent: true,
+    });
+  } catch (err) {
+    console.warn('[agent-detail] failed to sync initia state', err);
+  } finally {
+    (agent.value as { initiaSyncState?: Record<string, unknown> | null }).initiaSyncState = mergedState;
+  }
+}
+
+async function ensureInitiaWalletConnected() {
+  await refreshInitiaState();
+  if (initiaState.value.initiaAddress) return;
+
+  await openConnect();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+    await refreshInitiaState();
+    if (initiaState.value.initiaAddress) return;
+    await sleep(WALLET_STATE_POLL_MS);
+  }
+
+  throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
+}
+
+async function handleToggleAutoSign() {
+  if (!isInitiaAgent.value) return;
+  autoSignError.value = null;
+  const enabling = !autoSignEnabled.value;
+  autoSignBusy.value = enabling ? 'enable' : 'disable';
+
+  try {
+    await ensureInitiaWalletConnected();
+    await refreshInitiaState();
+
+    if (!initiaState.value.chainOk) {
+      throw new Error('Local rollup chain is not reachable. Ensure the chain is running at the configured RPC endpoint.');
+    }
+    if (autoSignMismatch.value) {
+      throw new Error(`Connected wallet is focused on onchain agent ${activeOnchainAgentId.value}, but this page is linked to ${linkedOnchainAgentId.value}.`);
+    }
+    if (!initiaState.value.agentExists) {
+      throw new Error('No onchain agent found for the connected wallet.');
+    }
+
+    if (enabling) {
+      await enableAutoSign();
+    } else {
+      await disableAutoSign();
+    }
+    await refreshInitiaState();
+    await syncInitiaStateToApi(enabling ? 'detail-enable-autosign' : 'detail-disable-autosign');
+  } catch (err) {
+    autoSignError.value = extractApiError(err);
+  } finally {
+    autoSignBusy.value = null;
+  }
+}
+
 async function handleAnalyze() {
   if (isAnalyzing.value) return;
   isAnalyzing.value = true;
@@ -711,9 +848,11 @@ function formatLatency(ms: number): string {
             {{ agent.llmModel.split('/')[1] ?? agent.llmModel }} · {{ formatInterval(agent.config.analysisInterval) }} interval · temp {{ (agent.config.temperature ?? 0.7).toFixed(1) }}
             <span v-if="livePricesLoading" class="mono" style="opacity: 0.7;"> · fetching live prices…</span>
             <span v-else-if="livePricesError" class="mono" style="opacity: 0.7;"> · live price unavailable</span>
+            <span v-if="isInitiaAgent" class="mono" style="opacity: 0.75;"> · auto-sign {{ autoSignEnabled ? 'on' : 'off' }}</span>
           </p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
+          <AgentFundPanel :agent-id="agent.id" :current-balance="agent.config.paperBalance" @done="(bal) => { if (agent) agent.config.paperBalance = bal; }" />
           <button
             class="btn btn-sm"
             :class="isAnalyzing ? 'btn-analyze-active' : 'btn-ghost'"
@@ -724,6 +863,17 @@ function formatLatency(ms: number): string {
             <span v-if="isAnalyzing" class="analyze-pulse" />
             <span v-if="isAnalyzing" class="analyze-status-text">{{ analyzeStatusText }}</span>
             <template v-else>⚡ Run Analysis</template>
+          </button>
+          <button
+            v-if="isInitiaAgent"
+            class="btn btn-sm"
+            :class="autoSignEnabled ? 'btn-autosign-on' : 'btn-ghost'"
+            :disabled="autoSignBusy !== null || (Boolean(initiaState.initiaAddress) && autoSignMismatch)"
+            :title="autoSignButtonTitle"
+            @click="handleToggleAutoSign"
+          >
+            <span v-if="autoSignBusy" class="spinner" style="width:11px;height:11px;border-color:#fff3;border-top-color:currentColor;" />
+            {{ autoSignButtonLabel }}
           </button>
           <button v-if="agent.status !== 'running'" class="btn btn-success btn-sm" @click="handleStart">
             ▶ Start
@@ -762,14 +912,21 @@ function formatLatency(ms: number): string {
           <button class="btn btn-ghost btn-sm" @click="analyzeError = null" aria-label="Dismiss">✕</button>
         </div>
       </div>
-
-      <AgentFundPanel :agent-id="agent.id" :current-balance="agent.config.paperBalance" @done="(bal) => { if (agent) agent.config.paperBalance = bal; }" />
+      <div v-if="autoSignError" class="api-error-banner" style="margin-bottom: 16px; align-items: flex-start;">
+        <span class="error-icon" style="margin-top: 1px;">!</span>
+        <div style="flex: 1; min-width: 0;">
+          {{ autoSignError }}
+        </div>
+        <button class="btn btn-ghost btn-sm" @click="autoSignError = null" aria-label="Dismiss">✕</button>
+      </div>
 
       <!-- Stats row -->
       <div class="stats-grid" style="margin-bottom: 8px;">
         <div class="stat-card">
           <div class="stat-label">Balance</div>
-          <div class="stat-value">${{ displayedBalance.toLocaleString('en', { maximumFractionDigits: 0 }) }}</div>
+          <div class="stat-value">
+            ${{ displayedBalance.toLocaleString('en', { maximumFractionDigits: 0 }) }}
+          </div>
           <div class="stat-change">
             started at ${{ agent.config.paperBalance.toLocaleString() }}
             · in positions {{ formatUsdNoNegativeZero(inPositionsUsd, 0) }}

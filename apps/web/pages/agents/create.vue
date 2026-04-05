@@ -7,7 +7,8 @@ import { renderMarkdown } from '~/utils/markdown';
 
 const router = useRouter();
 const { request } = useApi();
-const { createAgent, updateAgent } = useAgents();
+const { createAgent, updateAgent, startAgent } = useAgents();
+const { showNotification, clearNotification } = useNotification();
 const {
   state: initiaState,
   openConnect,
@@ -17,21 +18,24 @@ const {
   createAgentOnchain,
   deposit,
   withdraw,
+  enableAutoSign,
+  disableAutoSign,
 } = useInitiaBridge();
 
 // ── Step state ──────────────────────────────────────────────────────────────
 const step = ref<1 | 2>(1);
-const fundAmount = ref('10000');
+const fundAmount = ref('1000');
 const createdAgentId = ref<string | null>(null);
 const currentPaperBalance = ref(0);
 const funding = ref(false);
 const withdrawing = ref(false);
 const bridging = ref(false);
-const fundingError = ref('');
-const fundingSuccess = ref('');
+const autoSignBusy = ref<'enable' | 'disable' | null>(null);
+const autoSignStatusSinceMs = ref<number | null>(null);
+const autoSignNowMs = ref(Date.now());
+let autoSignStatusTimer: ReturnType<typeof setInterval> | null = null;
 
 const creating = ref(false);
-const createError = ref('');
 const onchainStatus = ref('');
 
 const showMdPreview = ref(false);
@@ -69,6 +73,53 @@ function formatWei(wei: string | null | undefined): string | null {
 }
 
 const walletDisplay = computed(() => formatWei(initiaState.value.walletBalanceWei));
+
+function formatElapsedShort(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  return `${Math.floor(hr / 24)}d`;
+}
+
+const autoSignStatusBadgeText = computed(() => {
+  const status = initiaState.value.autoSignEnabled ? 'enabled' : 'disabled';
+  const sinceMs = autoSignStatusSinceMs.value;
+  if (sinceMs === null) return status;
+  return `${status} · ${formatElapsedShort(Math.max(0, autoSignNowMs.value - sinceMs))}`;
+});
+
+watch(
+  [() => initiaState.value.ready, () => initiaState.value.autoSignEnabled],
+  ([ready, enabled], previous) => {
+    if (!ready) return;
+
+    if (autoSignStatusSinceMs.value === null) {
+      autoSignStatusSinceMs.value = Date.now();
+      return;
+    }
+
+    const prevReady = previous?.[0] ?? false;
+    const prevEnabled = previous?.[1];
+    if (prevReady && prevEnabled !== enabled) {
+      autoSignStatusSinceMs.value = Date.now();
+    }
+  },
+);
+
+onMounted(() => {
+  autoSignStatusTimer = setInterval(() => {
+    autoSignNowMs.value = Date.now();
+  }, 1_000);
+});
+
+onUnmounted(() => {
+  if (autoSignStatusTimer) {
+    clearInterval(autoSignStatusTimer);
+  }
+});
 
 // Live system prompt
 const liveSystemPrompt = computed(() => BASE_AGENT_PROMPT + buildJsonSchemaInstruction());
@@ -161,7 +212,6 @@ function resetRole() {
 
 function goToStep(s: 1 | 2) {
   if (s === 2 && !createdAgentId.value) return;
-  createError.value = '';
   step.value = s;
 }
 
@@ -169,7 +219,6 @@ function goToStep(s: 1 | 2) {
 
 async function handleNext(payload: Partial<CreateAgentPayload>) {
   creating.value = true;
-  createError.value = '';
   try {
     await ensureWalletConnected();
 
@@ -187,8 +236,18 @@ async function handleNext(payload: Partial<CreateAgentPayload>) {
     await refresh();
     await syncInitiaState('create-step-onchain');
     step.value = 2;
+    showNotification({
+      type: 'success',
+      title: 'Agent Created',
+      message: 'Agent setup was created successfully. Continue with funding in step 2.',
+    });
   } catch (e) {
-    createError.value = extractApiError(e);
+    showNotification({
+      type: 'error',
+      title: 'Agent Creation Failed',
+      message: extractApiError(e),
+      durationMs: 8_000,
+    });
   } finally {
     creating.value = false;
     onchainStatus.value = '';
@@ -222,8 +281,7 @@ function toCreateAgentPayload(payload: Partial<CreateAgentPayload>): CreateAgent
 }
 
 function clearFundingFeedback() {
-  fundingError.value = '';
-  fundingSuccess.value = '';
+  clearNotification();
 }
 
 function buildMetadataPointer() {
@@ -294,10 +352,20 @@ async function ensureOnchainAgent(opts?: { forceCreate?: boolean }) {
 
   const metadataPointer = buildMetadataPointer();
   onchainStatus.value = 'Waiting for block confirmation…';
-  // createAgentOnchain blocks until the agent is confirmed on-chain (polls internally
-  // via EVM JSON-RPC for up to 45s), so Vue state is current when it resolves.
-  const { txHash } = await createAgentOnchain(metadataPointer);
-  onchainStatus.value = 'Agent confirmed onchain';
+  const { txHash, onchainAgentId } = await createAgentOnchain(metadataPointer);
+
+  if (onchainAgentId) {
+    onchainStatus.value = 'Agent confirmed onchain';
+  } else {
+    // tx submitted but EVM RPC didn't confirm within polling window — do one final check
+    onchainStatus.value = 'Confirming transaction…';
+    await new Promise(r => setTimeout(r, 1_500));
+    await refresh();
+    if (!initiaState.value.agentExists) {
+      throw new Error('Transaction submitted but agent not yet confirmed. Please check your wallet and try again.');
+    }
+    onchainStatus.value = 'Agent confirmed onchain';
+  }
 
   if (createdAgentId.value && initiaState.value.initiaAddress && txHash) {
     try {
@@ -321,12 +389,17 @@ async function handleDeposit() {
   if (!createdAgentId.value) return;
   const amt = Number(fundAmount.value);
   if (!Number.isFinite(amt) || amt <= 0) {
-    fundingError.value = 'Enter a valid amount greater than zero.';
+    showNotification({
+      type: 'error',
+      title: 'Invalid Amount',
+      message: 'Enter a valid amount greater than zero.',
+    });
     return;
   }
   clearFundingFeedback();
   funding.value = true;
   try {
+    const balanceBeforeDeposit = currentPaperBalance.value;
     await ensureWalletConnected();
     await ensureOnchainAgent();
     const result = await deposit(String(amt));
@@ -334,9 +407,46 @@ async function handleDeposit() {
     currentPaperBalance.value += amt;
     await updateAgent(createdAgentId.value, { paperBalance: currentPaperBalance.value });
     await syncInitiaState('create-step-deposit');
-    fundingSuccess.value = `Deposited ${amt.toLocaleString()} GAS.${result.txHash ? ` tx: ${result.txHash}` : ''}`;
+    const shouldAutoStart = balanceBeforeDeposit <= 0 && currentPaperBalance.value > 0;
+    let autoStartError: string | null = null;
+
+    if (shouldAutoStart) {
+      try {
+        await startAgent(createdAgentId.value);
+      } catch (err) {
+        autoStartError = `Deposit succeeded, but auto-start failed: ${extractApiError(err)}`;
+      }
+      if (!autoStartError) {
+        try {
+          await request(`/api/agents/${createdAgentId.value}/analyze`, { method: 'POST', silent: true, timeout: 90_000 });
+        } catch (err) {
+          autoStartError = `Agent started, but the initial analysis failed: ${extractApiError(err)}`;
+        }
+      }
+    }
+
+    const txSuffix = result.txHash ? ` tx: ${result.txHash}` : '';
+    if (autoStartError) {
+      showNotification({
+        type: 'error',
+        title: 'Deposit Completed With Warning',
+        message: `Deposited ${amt.toLocaleString()} GAS.${txSuffix}\n${autoStartError}`,
+        durationMs: 8_500,
+      });
+    } else {
+      showNotification({
+        type: 'success',
+        title: 'Deposit Successful',
+        message: `Deposited ${amt.toLocaleString()} GAS.${txSuffix}${shouldAutoStart ? ' Agent started and first analysis triggered.' : ''}`,
+      });
+    }
   } catch (e) {
-    fundingError.value = extractApiError(e);
+    showNotification({
+      type: 'error',
+      title: 'Deposit Failed',
+      message: extractApiError(e),
+      durationMs: 8_000,
+    });
   } finally {
     funding.value = false;
   }
@@ -346,7 +456,11 @@ async function handleWithdraw() {
   if (!createdAgentId.value) return;
   const amt = Number(fundAmount.value);
   if (!Number.isFinite(amt) || amt <= 0) {
-    fundingError.value = 'Enter a valid amount greater than zero.';
+    showNotification({
+      type: 'error',
+      title: 'Invalid Amount',
+      message: 'Enter a valid amount greater than zero.',
+    });
     return;
   }
   clearFundingFeedback();
@@ -359,9 +473,18 @@ async function handleWithdraw() {
     currentPaperBalance.value = Math.max(0, currentPaperBalance.value - amt);
     await updateAgent(createdAgentId.value, { paperBalance: currentPaperBalance.value });
     await syncInitiaState('create-step-withdraw');
-    fundingSuccess.value = `Withdrew ${amt.toLocaleString()} GAS.${result.txHash ? ` tx: ${result.txHash}` : ''}`;
+    showNotification({
+      type: 'success',
+      title: 'Withdraw Successful',
+      message: `Withdrew ${amt.toLocaleString()} GAS.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+    });
   } catch (e) {
-    fundingError.value = extractApiError(e);
+    showNotification({
+      type: 'error',
+      title: 'Withdraw Failed',
+      message: extractApiError(e),
+      durationMs: 8_000,
+    });
   } finally {
     withdrawing.value = false;
   }
@@ -373,10 +496,48 @@ async function handleBridge() {
   try {
     await ensureWalletConnected();
     await openBridge({ srcChainId: BRIDGE_SRC_CHAIN_ID, srcDenom: BRIDGE_SRC_DENOM, quantity: '0' });
+    showNotification({
+      type: 'success',
+      title: 'Bridge Opened',
+      message: 'Bridge dialog opened. Continue the transfer flow in your wallet.',
+    });
   } catch (e) {
-    fundingError.value = extractApiError(e);
+    showNotification({
+      type: 'error',
+      title: 'Bridge Failed',
+      message: extractApiError(e),
+      durationMs: 8_000,
+    });
   } finally {
     bridging.value = false;
+  }
+}
+
+async function handleToggleAutoSign() {
+  if (!createdAgentId.value) return;
+  const enabling = !initiaState.value.autoSignEnabled;
+  clearFundingFeedback();
+  autoSignBusy.value = enabling ? 'enable' : 'disable';
+  try {
+    await ensureWalletConnected();
+    await ensureOnchainAgent();
+    const result = enabling ? await enableAutoSign() : await disableAutoSign();
+    await refresh();
+    await syncInitiaState(enabling ? 'create-step-enable-autosign' : 'create-step-disable-autosign');
+    showNotification({
+      type: 'success',
+      title: enabling ? 'Auto-Sign Enabled' : 'Auto-Sign Disabled',
+      message: `${enabling ? 'Enabled' : 'Disabled'} auto-sign for this agent.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+    });
+  } catch (e) {
+    showNotification({
+      type: 'error',
+      title: enabling ? 'Enable Auto-Sign Failed' : 'Disable Auto-Sign Failed',
+      message: extractApiError(e),
+      durationMs: 8_000,
+    });
+  } finally {
+    autoSignBusy.value = null;
   }
 }
 
@@ -429,9 +590,6 @@ function handleOpenAgent() {
         </template>
       </div>
     </div>
-
-    <div v-if="createError" class="edit-error">{{ createError }}</div>
-    <div v-if="onchainStatus && !createError" class="edit-onchain-status">{{ onchainStatus }}</div>
 
     <!-- ── Step 1: Config form + prompt preview (v-show keeps form mounted) ── -->
     <div v-show="step === 1" class="edit-page__body">
@@ -559,8 +717,8 @@ function handleOpenAgent() {
             min="0.0001"
             step="0.0001"
             class="fund-step__input"
-            placeholder="10"
-            :disabled="funding || withdrawing || bridging"
+            placeholder="1000"
+            :disabled="funding || withdrawing || bridging || autoSignBusy !== null"
             @focus="clearFundingFeedback"
           >
           <span class="fund-step__currency">GAS</span>
@@ -569,7 +727,7 @@ function handleOpenAgent() {
         <div class="fund-step__actions">
           <button
             class="fund-step__btn fund-step__btn--primary"
-            :disabled="funding || withdrawing || bridging"
+            :disabled="funding || withdrawing || bridging || autoSignBusy !== null"
             @click="handleDeposit"
           >
             <span v-if="funding" class="spinner" style="width:12px;height:12px;border-color:#0003;border-top-color:#0a0a0a" />
@@ -577,7 +735,7 @@ function handleOpenAgent() {
           </button>
           <button
             class="fund-step__btn fund-step__btn--ghost"
-            :disabled="funding || withdrawing || bridging"
+            :disabled="funding || withdrawing || bridging || autoSignBusy !== null"
             @click="handleWithdraw"
           >
             <span v-if="withdrawing" class="spinner" style="width:12px;height:12px;" />
@@ -585,7 +743,7 @@ function handleOpenAgent() {
           </button>
           <button
             class="fund-step__btn fund-step__btn--bridge"
-            :disabled="funding || withdrawing || bridging"
+            :disabled="funding || withdrawing || bridging || autoSignBusy !== null"
             @click="handleBridge"
           >
             <span v-if="bridging" class="spinner" style="width:12px;height:12px;" />
@@ -593,14 +751,29 @@ function handleOpenAgent() {
           </button>
         </div>
 
-        <div class="fund-step__meta">
-          <span class="fund-step__meta-item">○ auto-sign — placeholder</span>
-          <span class="fund-step__meta-sep">·</span>
-          <span class="fund-step__meta-item">GAS → iUSD (demo only)</span>
+        <div class="fund-step__autosign">
+          <div class="fund-step__autosign-copy">
+            <div class="fund-step__autosign-title-row">
+              <div class="fund-step__autosign-title">Auto-sign</div>
+              <span
+                class="fund-step__autosign-badge"
+                :class="initiaState.autoSignEnabled ? 'fund-step__autosign-badge--on' : 'fund-step__autosign-badge--off'"
+              >
+                {{ autoSignStatusBadgeText }}
+              </span>
+            </div>
+            <div class="fund-step__autosign-desc">Allow execute tick transactions without manual confirmation each time.</div>
+          </div>
+          <button
+            class="fund-step__btn fund-step__btn--autosign"
+            :class="{ 'fund-step__btn--autosign-on': initiaState.autoSignEnabled }"
+            :disabled="funding || withdrawing || bridging || autoSignBusy !== null"
+            @click="handleToggleAutoSign"
+          >
+            <span v-if="autoSignBusy" class="spinner" style="width:12px;height:12px;" />
+            {{ autoSignBusy ? (initiaState.autoSignEnabled ? 'Disabling…' : 'Enabling…') : (initiaState.autoSignEnabled ? 'Disable Auto-Sign' : 'Enable Auto-Sign') }}
+          </button>
         </div>
-
-        <div v-if="fundingSuccess" class="fund-step__success">{{ fundingSuccess }}</div>
-        <div v-if="fundingError" class="fund-step__error">{{ fundingError }}</div>
 
         <div class="fund-step__bridge-note">
           <div class="fund-step__bridge-note-title">Hackathon bridge note</div>
@@ -778,28 +951,6 @@ function handleOpenAgent() {
 .edit-bar__save:hover { background: #fff; }
 .edit-bar__save:disabled { opacity: 0.35; cursor: not-allowed; }
 
-.edit-error {
-  padding: 10px 14px;
-  background: color-mix(in srgb, #e55 10%, transparent);
-  border: 1px solid color-mix(in srgb, #e55 30%, transparent);
-  border-radius: 4px;
-  font-size: 12px;
-  color: #e55;
-}
-
-.edit-onchain-status {
-  padding: 10px 14px;
-  background: color-mix(in srgb, #7c6af7 10%, transparent);
-  border: 1px solid color-mix(in srgb, #7c6af7 30%, transparent);
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: 'JetBrains Mono', monospace;
-  color: #a89ff7;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* ── Step 1 body ────────────────────────────────────────────────── */
 .edit-page__body {
   display: flex;
@@ -976,6 +1127,85 @@ function handleOpenAgent() {
   background: color-mix(in srgb, #f59e0b 10%, transparent);
 }
 
+.fund-step__autosign {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--border, #2a2a2a) 12%, transparent);
+  padding: 10px;
+}
+
+.fund-step__autosign-copy {
+  min-width: 0;
+}
+
+.fund-step__autosign-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #777);
+}
+
+.fund-step__autosign-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fund-step__autosign-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a2a2a);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.fund-step__autosign-badge--on {
+  color: #4ade80;
+  border-color: color-mix(in srgb, #4ade80 45%, var(--border, #2a2a2a));
+  background: color-mix(in srgb, #4ade80 12%, transparent);
+}
+
+.fund-step__autosign-badge--off {
+  color: var(--text-muted, #999);
+  border-color: color-mix(in srgb, #999 38%, var(--border, #2a2a2a));
+  background: color-mix(in srgb, #999 8%, transparent);
+}
+
+.fund-step__autosign-desc {
+  margin-top: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted, #9a9a9a);
+}
+
+.fund-step__btn--autosign {
+  flex: 0 0 auto;
+  min-width: 168px;
+}
+
+.fund-step__btn--autosign:not(:disabled):hover {
+  border-color: #555;
+  color: #fff;
+}
+
+.fund-step__btn--autosign-on {
+  border-color: color-mix(in srgb, #4ade80 45%, var(--border, #2a2a2a));
+  color: #4ade80;
+}
+
 .fund-step__meta {
   display: flex;
   align-items: center;
@@ -991,23 +1221,6 @@ function handleOpenAgent() {
 .fund-step__meta-sep {
   color: var(--border, #333);
   font-size: 10px;
-}
-
-.fund-step__success {
-  margin-top: -2px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #22c55e;
-  line-height: 1.5;
-  word-break: break-all;
-}
-
-.fund-step__error {
-  margin-top: -2px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: #ef4444;
-  line-height: 1.5;
 }
 
 .fund-step__bridge-note {

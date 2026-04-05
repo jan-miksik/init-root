@@ -284,6 +284,40 @@ function normalizeEvmOptionAddress(raw: string | null | undefined): `0x${string}
   return normalizeEvmAddress(raw);
 }
 
+/** Minimal bech32 decode → 0x-prefixed 20-byte hex. Returns null on any failure.
+ *  Used as a fallback when InterwovenKit's `address` field is unavailable (Cosmos-only wallet). */
+function bech32ToEvmHex(bech32Addr: string | null | undefined): `0x${string}` | null {
+  if (!bech32Addr) return null;
+  try {
+    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const lower = bech32Addr.toLowerCase();
+    const sep = lower.lastIndexOf('1');
+    if (sep < 1) return null;
+    const dataStr = lower.slice(sep + 1);
+    if (dataStr.length < 7) return null;
+    const values: number[] = [];
+    for (let i = 0; i < dataStr.length - 6; i++) {
+      const v = CHARSET.indexOf(dataStr.charAt(i));
+      if (v === -1) return null;
+      values.push(v);
+    }
+    const bytes: number[] = [];
+    let acc = 0, bits = 0;
+    for (const val of values) {
+      acc = (acc << 5) | val;
+      bits += 5;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes.push((acc >> bits) & 0xff);
+      }
+    }
+    if (bytes.length !== 20) return null;
+    return `0x${bytes.map(b => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeBridgeParam(raw: unknown, fallback: string): string {
   if (typeof raw !== 'string') return fallback;
   const value = raw.trim();
@@ -618,31 +652,37 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
               args: [toHex(metadataBytes)],
             });
             const txHash = await doAgentTx('createAgentOnchain', input);
-            // requestTxSync returns after mempool acceptance only — poll until the agent
-            // actually exists on-chain (block confirmed) before resolving to Vue.
-            // fetchLatestAgentId reads ownerAgentIds via EVM JSON-RPC directly, so this
-            // poll is independent of the event bus and has no Vue-side timeout risk.
-            let latestAgentId: bigint | null = evmAddressRef.current
-              ? await fetchLatestAgentId(evmAddressRef.current).catch(() => null)
-              : null;
-            if (latestAgentId === null && evmAddressRef.current) {
-              const evmAddr = evmAddressRef.current;
-              const POLL_INTERVAL_MS = 1_500;
-              const CONFIRM_TIMEOUT_MS = 45_000;
-              const startedAt = Date.now();
-              while (latestAgentId === null && Date.now() - startedAt < CONFIRM_TIMEOUT_MS) {
-                await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-                latestAgentId = await fetchLatestAgentId(evmAddr).catch(() => null);
+            // doContractTx's finally cleared busyAction — re-set it for the polling phase
+            // so Vue keeps showing the loading state while we wait for block confirmation.
+            setBusyAction('createAgentOnchain');
+            try {
+              // Derive EVM addr: prefer direct field, fall back to bech32→hex so wallets
+              // that only expose initiaAddress (Cosmos-only) still work.
+              const pollAddr: `0x${string}` | null =
+                evmAddressRef.current ?? bech32ToEvmHex(initiaAddressRef.current);
+
+              let latestAgentId: bigint | null = pollAddr
+                ? await fetchLatestAgentId(pollAddr).catch(() => null)
+                : null;
+
+              if (latestAgentId === null && pollAddr) {
+                const POLL_INTERVAL_MS = 1_500;
+                const CONFIRM_TIMEOUT_MS = 45_000;
+                const startedAt = Date.now();
+                while (latestAgentId === null && Date.now() - startedAt < CONFIRM_TIMEOUT_MS) {
+                  await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+                  latestAgentId = await fetchLatestAgentId(pollAddr).catch(() => null);
+                }
               }
+
+              await refresh();
+              return {
+                txHash,
+                onchainAgentId: latestAgentId?.toString() ?? null,
+              };
+            } finally {
+              setBusyAction(null);
             }
-            if (latestAgentId === null) {
-              throw new Error('Agent not confirmed on-chain within 45 seconds. Check your wallet for transaction status.');
-            }
-            await refresh();
-            return {
-              txHash,
-              onchainAgentId: latestAgentId.toString(),
-            };
           }
           case 'deposit': {
             const agentId = requireAgentId();
@@ -653,7 +693,8 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             return { txHash, onchainAgentId: agentId.toString() };
           }
           case 'withdraw': {
-            const currentEvmAddrForWithdraw = evmAddressRef.current;
+            const currentEvmAddrForWithdraw =
+              evmAddressRef.current ?? bech32ToEvmHex(initiaAddressRef.current);
             if (!currentEvmAddrForWithdraw) throw new Error('Connect wallet first.');
             const agentId = requireAgentId();
             const amount = String(params?.amount ?? '0');

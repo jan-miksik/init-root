@@ -746,4 +746,8 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 .stat-pnl-breakdown .positive { color: var(--success, #4ade80); }
 .stat-pnl-breakdown .negative { color: var(--danger, #f87171); }
 .pnl-sep { color: var(--text-dim); }
+input[type='checkbox'] {
+  width: auto;
+  height: unset;
+}
 </style>
