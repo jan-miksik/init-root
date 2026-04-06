@@ -13,11 +13,11 @@
   --text-dim:     #c2c8d1;
   --text-muted:   #8e96a3;
 
-  /* ── Accent (amber) ───────────────────────────────────────── */
-  --accent:       #f4b942;
-  --accent-hover: #f7c862;
-  --accent-dim:   #2b2414;
-  --accent-rgb:   244, 185, 66;
+  /* ── Accent (green) ───────────────────────────────────────── */
+  --accent:       #74d38a;
+  --accent-hover: #8fe1a3;
+  --accent-dim:   #13241a;
+  --accent-rgb:   116, 211, 138;
 
   /* ── Semantic ─────────────────────────────────────────────── */
   --green:        #74d38a;
