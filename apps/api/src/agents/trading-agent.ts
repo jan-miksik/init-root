@@ -56,6 +56,13 @@ export class TradingAgentDO extends DurableObject<Env> {
       const engineState = await this.ctx.storage.get<ReturnType<PaperEngine['serialize']>>('engineState');
       const balance = engineState?.balance ?? null;
       let nextAlarmAt = (await this.ctx.storage.get<number>('nextAlarmAt')) ?? null;
+      const loopRunningAt = (await this.ctx.storage.get<number>('isLoopRunning')) ?? null;
+      const pendingLlmJobId = (await this.ctx.storage.get<string>('pendingLlmJobId')) ?? null;
+      const pendingLlmJobAt = (await this.ctx.storage.get<number>('pendingLlmJobAt')) ?? null;
+      const pendingLlmAgeMs = pendingLlmJobAt ? Math.max(0, Date.now() - pendingLlmJobAt) : null;
+
+      const analysisState: 'idle' | 'running' | 'awaiting_llm' =
+        loopRunningAt ? 'running' : pendingLlmJobId ? 'awaiting_llm' : 'idle';
 
       // Auto-heal: if running but the alarm is more than 10s overdue, it was likely
       // lost (Wrangler restart in dev, DO eviction). Reschedule in 5s to self-recover.
@@ -67,7 +74,18 @@ export class TradingAgentDO extends DurableObject<Env> {
         console.log(`[TradingAgentDO] ${agentId}: alarm was overdue — rescheduled in 5s`);
       }
 
-      return Response.json({ agentId, status, balance, nextAlarmAt });
+      return Response.json({
+        agentId,
+        status,
+        balance,
+        nextAlarmAt,
+        analysisState,
+        isLoopRunning: !!loopRunningAt,
+        loopRunningAt,
+        pendingLlmJobId,
+        pendingLlmJobAt,
+        pendingLlmAgeMs,
+      });
     }
 
 	  if (url.pathname === '/start' && request.method === 'POST') {

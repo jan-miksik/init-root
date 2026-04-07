@@ -30,6 +30,7 @@ export interface ManagerDetail extends ManagerSummary {
   personaMd?: string | null;
   doStatus?: {
     deciding?: boolean;
+    lastDecisionAt?: number | null;
     lastDecisionMs?: number | null;
     decisionInterval?: string;
     tickCount?: number;

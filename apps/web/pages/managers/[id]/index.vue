@@ -362,20 +362,27 @@ async function maybeLoadMore() {
 }
 
 // Polling: refresh manager (for doStatus) every 2s when running.
-// Reload logs+agents when `deciding` transitions true→false (decision just finished).
+// Reload logs+agents when a cycle completes.
 // NOTE: tickCount increments at the START of alarm(), before runManagerLoop writes logs,
-// so tracking tickCount would reload before the log entry exists. Track `deciding` instead.
+// so completion is detected via `deciding` true→false or `lastDecisionAt` change.
 let prevDeciding = doStatus.value?.deciding ?? false;
+let prevLastDecisionAt = doStatus.value?.lastDecisionAt ?? null;
 
 const pollTimer = setInterval(async () => {
   if (manager.value?.status !== 'running') return;
   await refreshManager();
   const nowDeciding = doStatus.value?.deciding ?? false;
-  if (prevDeciding && !nowDeciding) {
+  const nowLastDecisionAt = doStatus.value?.lastDecisionAt ?? null;
+  const cycleCompleted = (prevDeciding && !nowDeciding) || (
+    nowLastDecisionAt !== null
+    && nowLastDecisionAt !== prevLastDecisionAt
+  );
+  if (cycleCompleted) {
     // Decision just finished — reload logs + agents
     await Promise.all([refreshLogsPage(1, 20), refreshAgents(), refreshTokenUsage()]);
   }
   prevDeciding = nowDeciding;
+  prevLastDecisionAt = nowLastDecisionAt;
 }, 2000);
 
 // Countdown to next decision — updated directly by interval, not via reactive `now`

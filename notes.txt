@@ -56,11 +56,6 @@ Start with Phase 1 now.
 
 ## Future Extensions (Not MVP)
 
-1. **x402 monetization**: Paywall your agent's signals/trade history
-2. **AP2 + ERC-8004**: Give agents on-chain identities, let them transact with other agents
-3. **Real trading**: Move from paper to real via viem + wallet signing (Base only)
-4. **Multi-chain**: Extend beyond Base to Arbitrum, Optimism
-5. **Backtesting**: Replay historical data through agent strategies
 6. **Social signals**: Scrape Farcaster/X for sentiment analysis
 7. **Agent marketplace**: Users share/sell their best-performing agent configs
 8. **Telegram bot**: Real-time trade alerts and agent control

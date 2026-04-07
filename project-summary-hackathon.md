@@ -1,7 +1,7 @@
 # initRoot – Hackathon Project Summary
 
 ## One-liner
-initRoot is an edge-native, AI-assisted paper trading platform for DEX markets on Base, where autonomous agents analyze market data, make structured decisions, and simulate trades with strong safety and auditability.
+initRoot is an edge-native, AI-assisted trading platform for DEX markets, where autonomous agents analyze market data, make structured decisions, and simulate trades with strong safety and auditability.
 
 ## What the project does
 - Users create and manage AI trading agents with configurable strategy, risk limits, and persona.

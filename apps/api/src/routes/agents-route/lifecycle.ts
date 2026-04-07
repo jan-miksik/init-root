@@ -193,6 +193,12 @@ export function registerAgentLifecycleRoutes(agentsRoute: AgentsRoute): void {
         status: string;
         balance: number | null;
         nextAlarmAt: number | null;
+        analysisState?: 'idle' | 'running' | 'awaiting_llm';
+        isLoopRunning?: boolean;
+        loopRunningAt?: number | null;
+        pendingLlmJobId?: string | null;
+        pendingLlmJobAt?: number | null;
+        pendingLlmAgeMs?: number | null;
       }>();
       return c.json(doStatus);
     });

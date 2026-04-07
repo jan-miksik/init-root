@@ -79,6 +79,12 @@ interface DoStatus {
   status: string;
   balance: number | null;
   nextAlarmAt: number | null;
+  analysisState?: 'idle' | 'running' | 'awaiting_llm';
+  isLoopRunning?: boolean;
+  loopRunningAt?: number | null;
+  pendingLlmJobId?: string | null;
+  pendingLlmJobAt?: number | null;
+  pendingLlmAgeMs?: number | null;
 }
 
 const agent = ref<Awaited<ReturnType<typeof getAgent>> | null>(null);
@@ -124,6 +130,9 @@ const ANALYZE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const ANALYZE_RESULT_WAIT_MS = 25_000;
 const ANALYZE_RESULT_WAIT_ON_PENDING_MS = 90_000;
 const ANALYZE_RESULT_POLL_MS = 1_500;
+const ANALYZE_BACKGROUND_WAIT_MS = 3 * 60_000;
+const ANALYZE_BACKGROUND_POLL_MS = 2_000;
+let analyzeWatchToken = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -249,11 +258,21 @@ function onDocClick(e: MouseEvent) {
   }
 }
 
+function logAnalyzeTrace(stage: string, payload?: Record<string, unknown>) {
+  const logPayload = { at: new Date().toISOString(), stage, ...(payload ?? {}) };
+  console.log('[analyze-trace]', logPayload);
+}
+
+function cancelBackgroundAnalyzeWatch() {
+  analyzeWatchToken += 1;
+}
+
 onMounted(() => {
   countdownInterval = setInterval(() => { now.value = Date.now(); }, 1000);
   document.addEventListener('click', onDocClick);
 });
 onUnmounted(() => {
+  cancelBackgroundAnalyzeWatch();
   if (countdownInterval) clearInterval(countdownInterval);
   if (cancelStatusPoll) cancelStatusPoll();
   stopAnalyzeTimer();
@@ -336,26 +355,120 @@ async function refreshAnalysisOutputs() {
   snapshots.value = p.snapshots;
 }
 
-async function waitForDecisionChange(previousDecisionId: string | null, timeoutMs: number): Promise<boolean> {
+async function waitForDecisionChange(
+  previousDecisionIds: Set<string>,
+  timeoutMs: number,
+  options?: {
+    pollMs?: number;
+    stage?: 'foreground' | 'background';
+    shouldStop?: () => boolean;
+  },
+): Promise<boolean> {
+  const stage = options?.stage ?? 'foreground';
+  const pollMs = options?.pollMs ?? ANALYZE_RESULT_POLL_MS;
   const deadline = Date.now() + timeoutMs;
+  let polls = 0;
   while (Date.now() < deadline) {
+    if (options?.shouldStop?.()) {
+      logAnalyzeTrace('poll_canceled', { stage, polls });
+      return false;
+    }
+
+    polls += 1;
     try {
-      const res = await request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`, {
-        timeout: 30_000,
-        silent: true,
-        fresh: true,
-      });
+      const [res, status] = await Promise.all([
+        request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`, {
+          timeout: 30_000,
+          silent: true,
+          fresh: true,
+        }),
+        request<DoStatus>(`/api/agents/${id.value}/status`, {
+          timeout: 30_000,
+          silent: true,
+          fresh: true,
+        }),
+      ]);
       decisions.value = res.decisions;
-      const latestDecisionId = res.decisions[0]?.id ?? null;
-      if (latestDecisionId && latestDecisionId !== previousDecisionId) {
+      doStatus.value = status;
+      const hasAnyNewDecision = res.decisions.some((d) => !previousDecisionIds.has(d.id));
+      const latest = res.decisions[0];
+      logAnalyzeTrace('poll', {
+        stage,
+        polls,
+        hasAnyNewDecision,
+        decisionCount: res.decisions.length,
+        latestDecisionId: latest?.id ?? null,
+        latestDecisionAt: latest?.createdAt ?? null,
+        analysisState: status.analysisState ?? 'idle',
+        pendingLlmAgeMs: status.pendingLlmAgeMs ?? null,
+      });
+      if (hasAnyNewDecision) {
+        logAnalyzeTrace('poll_new_decision_detected', {
+          stage,
+          polls,
+          latestDecisionId: latest?.id ?? null,
+          latestDecisionAt: latest?.createdAt ?? null,
+        });
         return true;
       }
-    } catch {
+    } catch (err) {
+      logAnalyzeTrace('poll_error', {
+        stage,
+        polls,
+        error: extractApiError(err),
+      });
       // Keep polling; this is best-effort and should not interrupt analyze flow.
     }
-    await sleep(ANALYZE_RESULT_POLL_MS);
+    await sleep(pollMs);
   }
+  logAnalyzeTrace('poll_timeout', { stage, polls, timeoutMs });
   return false;
+}
+
+async function startBackgroundDecisionWatch(previousDecisionIds: Set<string>) {
+  const watchToken = ++analyzeWatchToken;
+  logAnalyzeTrace('background_watch_start', {
+    watchToken,
+    waitMs: ANALYZE_BACKGROUND_WAIT_MS,
+    pollMs: ANALYZE_BACKGROUND_POLL_MS,
+  });
+
+  const hasNewDecision = await waitForDecisionChange(previousDecisionIds, ANALYZE_BACKGROUND_WAIT_MS, {
+    stage: 'background',
+    pollMs: ANALYZE_BACKGROUND_POLL_MS,
+    shouldStop: () => watchToken !== analyzeWatchToken,
+  });
+
+  if (watchToken !== analyzeWatchToken) {
+    return;
+  }
+
+  if (!hasNewDecision) {
+    logAnalyzeTrace('background_watch_end_no_new_decision', { watchToken });
+    return;
+  }
+
+  try {
+    await refreshAnalysisOutputs();
+    await Promise.all([refreshDoStatus(), fetchLivePrices()]);
+    if (
+      analyzeError.value?.includes('No new decision yet') ||
+      analyzeError.value?.includes('still running in the background')
+    ) {
+      analyzeError.value = null;
+    }
+    const latest = decisions.value[0];
+    logAnalyzeTrace('background_watch_applied', {
+      watchToken,
+      latestDecisionId: latest?.id ?? null,
+      latestDecisionAt: latest?.createdAt ?? null,
+    });
+  } catch (err) {
+    logAnalyzeTrace('background_watch_apply_error', {
+      watchToken,
+      error: extractApiError(err),
+    });
+  }
 }
 
 function extractAnalyzeError(err: unknown): string {
@@ -432,7 +545,7 @@ watch(secondsUntilNextAction, (val) => {
       async () => {
         const [t, d] = await Promise.all([
           fetchAgentTrades(id.value),
-          request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`),
+          request<{ decisions: AgentDecision[] }>(`/api/agents/${id.value}/decisions`, { fresh: true }),
         ]);
         trades.value = t;
         decisions.value = d.decisions;
@@ -635,12 +748,19 @@ async function handleToggleAutoSign() {
 
 async function handleAnalyze() {
   if (isAnalyzing.value) return;
+  cancelBackgroundAnalyzeWatch();
   isAnalyzing.value = true;
   analyzePhase.value = 'request';
   analyzeError.value = null;
   startAnalyzeTimer();
-  const previousDecisionId = decisions.value[0]?.id ?? null;
+  const previousDecisionIds = new Set(decisions.value.map((d) => d.id));
+  const analyzeStartedAt = Date.now();
   let pendingRun = false;
+  logAnalyzeTrace('analyze_start', {
+    previousDecisionCount: previousDecisionIds.size,
+    currentLatestDecisionId: decisions.value[0]?.id ?? null,
+    currentLatestDecisionAt: decisions.value[0]?.createdAt ?? null,
+  });
 
   try {
     try {
@@ -648,12 +768,17 @@ async function handleAnalyze() {
         method: 'POST',
         timeout: ANALYZE_REQUEST_TIMEOUT_MS,
       });
+      logAnalyzeTrace('analyze_request_ok', { elapsedMs: Date.now() - analyzeStartedAt });
     } catch (err: unknown) {
       const msg = extractAnalyzeError(err).toLowerCase();
       const isAlreadyRunning = msg.includes('already in progress');
       const isTimeout = msg.includes('request timed out') || msg.includes('timed out') || msg.includes('aborted');
       if (isAlreadyRunning || isTimeout) {
         pendingRun = true;
+        logAnalyzeTrace('analyze_request_pending', {
+          reason: isAlreadyRunning ? 'already_in_progress' : 'request_timeout',
+          elapsedMs: Date.now() - analyzeStartedAt,
+        });
       } else {
         throw err;
       }
@@ -661,16 +786,27 @@ async function handleAnalyze() {
 
     analyzePhase.value = 'polling';
     const hasNewDecision = await waitForDecisionChange(
-      previousDecisionId,
+      previousDecisionIds,
       pendingRun ? ANALYZE_RESULT_WAIT_ON_PENDING_MS : ANALYZE_RESULT_WAIT_MS,
     );
 
     analyzePhase.value = 'refreshing';
     await refreshAnalysisOutputs();
     await Promise.all([refreshDoStatus(), fetchLivePrices()]);
+    logAnalyzeTrace('analyze_refresh_done', {
+      elapsedMs: Date.now() - analyzeStartedAt,
+      hasNewDecision,
+      latestDecisionId: decisions.value[0]?.id ?? null,
+      latestDecisionAt: decisions.value[0]?.createdAt ?? null,
+      analysisState: doStatus.value?.analysisState ?? 'idle',
+      pendingLlmAgeMs: doStatus.value?.pendingLlmAgeMs ?? null,
+    });
 
-    if (pendingRun && !hasNewDecision) {
-      analyzeError.value = 'Analysis is still running in the background. No new decision yet — try again in a few seconds.';
+    if (!hasNewDecision) {
+      analyzeError.value = pendingRun
+        ? 'Analysis is still running in the background. No new decision yet — try again in a few seconds.'
+        : 'No new decision yet — analysis may still be running. Try again in a few seconds.';
+      void startBackgroundDecisionWatch(previousDecisionIds);
     }
 
     const latest = decisions.value[0];
@@ -682,9 +818,17 @@ async function handleAnalyze() {
     const msg = extractAnalyzeError(err);
     analyzeError.value = msg;
     console.error('[analyze] failed:', msg, err);
+    logAnalyzeTrace('analyze_failed', {
+      elapsedMs: Date.now() - analyzeStartedAt,
+      error: msg,
+    });
   } finally {
     stopAnalyzeTimer();
     isAnalyzing.value = false;
+    logAnalyzeTrace('analyze_end', {
+      elapsedMs: Date.now() - analyzeStartedAt,
+      errorShown: analyzeError.value ?? null,
+    });
   }
 }
 async function handleDelete() {
