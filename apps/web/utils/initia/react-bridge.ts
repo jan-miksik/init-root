@@ -795,7 +795,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             if (showcaseTargetAddress) {
               const whitelistInput = encodeFunctionData({
                 abi: AGENT_ABI,
-                functionName: 'setAllowedTarget',
+                functionName: 'setAllowedPerpDex',
                 args: [agentId, showcaseTargetAddress, true],
               });
               whitelistTxHash = await doAgentTx('authorizeExecutorTarget', whitelistInput, undefined, params?.autoSign === true);
@@ -815,7 +815,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             setBusyAction('enableAutoSign');
             try {
               await (autoSign as any)?.enable?.(options.chainId, { permissions: ['/minievm.evm.v1.MsgCall'] });
-              const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'setAutoSignEnabled', args: [agentId, true] });
+              const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'setDelegatedExecutionEnabled', args: [agentId, true] });
               const txHash = await doAgentTx('enableAutoSign', input);
               return { txHash, onchainAgentId: agentId.toString() };
             } finally {
@@ -828,7 +828,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: Ret
             setBusyAction('disableAutoSign');
             try {
               await (autoSign as any)?.disable?.(options.chainId);
-              const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'setAutoSignEnabled', args: [agentId, false] });
+              const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'setDelegatedExecutionEnabled', args: [agentId, false] });
               const txHash = await doAgentTx('disableAutoSign', input);
               return { txHash, onchainAgentId: agentId.toString() };
             } finally {

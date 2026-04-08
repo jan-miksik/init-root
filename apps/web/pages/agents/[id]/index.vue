@@ -231,8 +231,8 @@ const autoSignButtonTitle = computed(() => {
     return `Connected wallet points to onchain agent ${activeOnchainAgentId.value}, but this page is linked to ${linkedOnchainAgentId.value}.`;
   }
   return autoSignEnabled.value
-    ? 'Disable auto-sign for executor transactions.'
-    : 'Enable auto-sign for executor transactions.';
+    ? 'Disable auto-sign for all supported on-chain actions.'
+    : 'Enable auto-sign for all supported on-chain actions.';
 });
 
 /** True when the analysis failed because the selected model is unavailable (no automatic fallback) */

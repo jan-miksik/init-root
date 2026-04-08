@@ -11,7 +11,6 @@ const refreshing = ref(false);
 const overviewError = computed(() => tradesError.value);
 const runningCount = computed(() => agents.value.filter((a) => a.status === 'running').length);
 
-const userAgents = computed(() => agents.value.filter((a) => !a.managerId));
 const managedAgents = computed(() => agents.value.filter((a) => !!a.managerId));
 
 const editingAgent = ref<(typeof agents.value)[0] | null>(null);
@@ -19,8 +18,6 @@ const showEditModal = ref(false);
 const saving = ref(false);
 const saveError = ref('');
 
-// View mode: table (default) or grid
-const viewMode = ref<'table' | 'grid'>('table');
 
 // Column visibility for table view
 type ColumnKey =
@@ -34,17 +31,21 @@ type ColumnKey =
   | 'totalPnl'
   | 'actions';
 
-const visibleColumns = ref<Record<ColumnKey, boolean>>({
+const STORAGE_KEY = 'heppy:agents:visibleColumns';
+
+const defaultVisibleColumns: Record<ColumnKey, boolean> = {
   status: true,
-  pairs: false, // hidden by default
-  model: false, // hidden by default
+  pairs: false,
+  model: false,
   analysisInterval: true,
   paperBalance: true,
-  maxPositionSizePct: true,
-  slTp: true,
+  maxPositionSizePct: false,
+  slTp: false,
   totalPnl: true,
   actions: true,
-});
+};
+
+const visibleColumns = ref<Record<ColumnKey, boolean>>({ ...defaultVisibleColumns });
 
 const showColumnMenu = ref(false);
 const columnMenuRef = ref<HTMLElement | null>(null);
@@ -64,6 +65,16 @@ type SortKey =
 type SortDir = 'asc' | 'desc';
 const sortKey = ref<SortKey>('name');
 const sortDir = ref<SortDir>('asc');
+
+watch(
+  visibleColumns,
+  (val) => {
+    if (import.meta.client) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(val));
+    }
+  },
+  { deep: true },
+);
 
 function toggleSort(key: SortKey) {
   if (sortKey.value === key) {
@@ -212,6 +223,18 @@ function handleGlobalClick(e: MouseEvent) {
 }
 
 onMounted(() => {
+  if (import.meta.client) {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        visibleColumns.value = { ...defaultVisibleColumns, ...parsed };
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+  }
+
   refreshOverview(false);
   document.addEventListener('click', handleGlobalClick);
 });
@@ -274,11 +297,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
         </p>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="btn btn-ghost btn-sm" :disabled="refreshing" @click="refreshOverview(true)">
-          <span v-if="refreshing" class="spinner" />
-          <span v-else>↻</span>
-          Refresh
-        </button>
         <!-- Column visibility menu -->
         <div style="position: relative;" ref="columnMenuButtonRef">
           <button
@@ -327,11 +345,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               </label>
             </div>
           </div>
-        </div>
-        <!-- View toggle -->
-        <div class="view-toggle">
-          <button :class="['toggle-btn', { active: viewMode === 'table' }]" title="Table view" @click="viewMode = 'table'">☰</button>
-          <button :class="['toggle-btn', { active: viewMode === 'grid' }]" title="Grid view" @click="viewMode = 'grid'">⊞</button>
         </div>
         <button class="btn btn-primary" @click="$router.push('/agents/create')">
           + New Agent
@@ -388,7 +401,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
     </div>
 
     <!-- TABLE VIEW -->
-    <div v-else-if="viewMode === 'table'">
+    <div v-else>
       <div class="table-wrap" style="overflow: visible;">
         <table>
           <thead>
@@ -531,42 +544,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
       </div>
     </div>
 
-    <!-- GRID VIEW -->
-    <div v-else>
-      <div v-if="userAgents.length > 0">
-        <div v-if="managedAgents.length > 0" class="section-header">Your agents</div>
-        <div class="agents-grid">
-          <AgentCard
-            v-for="agent in userAgents"
-            :key="agent.id"
-            :agent="agent"
-            @click="$router.push(`/agents/${agent.id}`)"
-            @start="startAgent"
-            @stop="stopAgent"
-            @delete="handleDelete"
-            @edit="handleEditClick"
-          />
-        </div>
-      </div>
-      <div v-if="managedAgents.length > 0" :style="userAgents.length > 0 ? 'margin-top: 28px;' : ''">
-        <div class="section-header">
-          <span>Managed by Agent Manager</span>
-          <span class="section-count">{{ managedAgents.length }}</span>
-        </div>
-        <div class="agents-grid">
-          <AgentCard
-            v-for="agent in managedAgents"
-            :key="agent.id"
-            :agent="agent"
-            @click="$router.push(`/agents/${agent.id}`)"
-            @start="startAgent"
-            @stop="stopAgent"
-            @delete="handleDelete"
-            @edit="handleEditClick"
-          />
-        </div>
-      </div>
-    </div>
 
     <!-- Edit Modal -->
     <Teleport to="body">
@@ -605,55 +582,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 </template>
 
 <style scoped>
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 12px;
-}
-.section-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-.view-toggle {
-  display: flex;
-  gap: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 2px;
-}
-.toggle-btn {
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: background 0.15s, color 0.15s;
-}
-.toggle-btn.active {
-  background: var(--accent);
-  color: #000;
-}
 .agent-table-row {
   cursor: pointer;
   transition: background 0.12s;

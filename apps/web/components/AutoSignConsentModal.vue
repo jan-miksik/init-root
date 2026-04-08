@@ -1,16 +1,14 @@
 <script setup lang="ts">
 const props = defineProps<{
   open: boolean;
-  actionKey: string;
-  actionLabel: string;
 }>();
 
 const emit = defineEmits<{
-  proceed: [useAutoSign: boolean];
+  proceed: [useAutoSign: boolean, dontShowAgain: boolean];
   cancel: [];
 }>();
 
-const enableForAction = ref(true);
+const enableForAction = ref(false);
 const dontShowAgain = ref(false);
 
 // Reset local state each time the modal opens
@@ -18,14 +16,15 @@ watch(
   () => props.open,
   (val) => {
     if (val) {
-      enableForAction.value = true;
+      enableForAction.value = false;
       dontShowAgain.value = false;
     }
   },
 );
 
-function handleContinue() {
-  emit('proceed', enableForAction.value);
+function handleEnable() {
+  enableForAction.value = true;
+  emit('proceed', enableForAction.value, dontShowAgain.value);
 }
 </script>
 
@@ -39,26 +38,18 @@ function handleContinue() {
         </div>
         <div class="modal-body">
           <p class="autosign-desc">
-            Signing this transaction automatically lets you skip wallet popups
-            for <strong>{{ actionLabel }}</strong> in the future. A session key
-            will be registered on-chain once and can be revoked at any time in
-            Settings.
-          </p>
-          <label class="autosign-check-row">
-            <input v-model="enableForAction" type="checkbox" class="autosign-checkbox" />
-            <span>Enable auto-sign for <strong>{{ actionLabel }}</strong></span>
-          </label>
-          <label class="autosign-check-row">
-            <input v-model="dontShowAgain" type="checkbox" class="autosign-checkbox" />
-            <span>Don't show this again for {{ actionLabel }}</span>
-          </label>
-          <p class="autosign-note">
-            You can always change auto-sign preferences in Settings → Auto-Sign.
+            With auto-sign, you only approve actions once in Interwoven, no need to confirm again in your wallet. <br><br>You can edit Auto-Sign also in settings.
           </p>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost btn-sm" @click="emit('cancel')">Cancel</button>
-          <button class="btn btn-primary btn-sm" @click="handleContinue">Continue</button>
+          <label class="autosign-check-row autosign-check-row-footer">
+            <input v-model="dontShowAgain" type="checkbox" class="autosign-checkbox" />
+            <span>Don&apos;t show this again</span>
+          </label>
+          <div class="autosign-actions">
+            <button class="btn btn-ghost btn-sm" @click="emit('cancel')">Cancel</button>
+            <button class="btn btn-primary btn-sm" @click="handleEnable">Enable</button>
+          </div>
         </div>
       </div>
     </div>
@@ -71,6 +62,11 @@ function handleContinue() {
   width: calc(100vw - 48px);
 }
 
+.autosign-consent-modal .modal-header,
+.autosign-consent-modal .modal-footer {
+  border: none;
+}
+
 .autosign-desc {
   font-size: 13px;
   color: var(--text-dim);
@@ -79,33 +75,37 @@ function handleContinue() {
 }
 
 .autosign-check-row {
-  display: flex;
-  align-items: flex-start;
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
-  padding: 10px 0;
   cursor: pointer;
   font-size: 13px;
   color: var(--text);
-  border-top: 1px solid var(--border);
-}
-
-.autosign-check-row:last-of-type {
-  border-bottom: 1px solid var(--border);
+  user-select: none;
 }
 
 .autosign-checkbox {
   flex-shrink: 0;
-  margin-top: 2px;
   accent-color: var(--accent);
   width: 14px;
   height: 14px;
   cursor: pointer;
 }
 
-.autosign-note {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-top: var(--space-sm);
-  line-height: 1.5;
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.autosign-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.autosign-check-row-footer {
+  flex-shrink: 0;
 }
 </style>

@@ -27,26 +27,24 @@ const autoSignMgr = useAutoSign();
 // ── Consent modal ────────────────────────────────────────────────────────────
 const consentModalOpen = ref(false);
 const consentActionKey = ref('');
-const consentActionLabel = ref('');
 let pendingAction: (() => Promise<void>) | null = null;
 
-async function withAutoSignCheck(key: string, label: string, fn: () => Promise<void>) {
+async function withAutoSignCheck(key: string, fn: () => Promise<void>) {
   if (consentModalOpen.value) return;
-  if (!autoSignMgr.isDismissed(key)) {
+  if (!autoSignMgr.chainAutoSignEnabled.value || !autoSignMgr.isDismissed(key)) {
     pendingAction = fn;
     consentActionKey.value = key;
-    consentActionLabel.value = label;
     consentModalOpen.value = true;
     return;
   }
   await fn();
 }
 
-async function onConsentProceed(useAutoSignChoice: boolean) {
+async function onConsentProceed(useAutoSignChoice: boolean, dontShowAgain: boolean) {
   const key = consentActionKey.value;
   consentModalOpen.value = false;
   autoSignMgr.setEnabled(key, useAutoSignChoice);
-  autoSignMgr.setDismissed(key, true);
+  autoSignMgr.setDismissed(key, dontShowAgain);
   if (useAutoSignChoice && !autoSignMgr.chainAutoSignEnabled.value) {
     try { await enableAutoSign(); } catch { /* fall back to no auto-sign */ }
   }
@@ -259,7 +257,7 @@ function goToStep(s: 1 | 2) {
 // ── Step 1: capture config ─────────────────────────────────────────────────
 
 async function handleNext(payload: Partial<CreateAgentPayload>) {
-  await withAutoSignCheck('createAgentOnchain', 'Create Agent', async () => {
+  await withAutoSignCheck('createAgentOnchain', async () => {
     creating.value = true;
     try {
       await ensureWalletConnected();
@@ -778,12 +776,8 @@ function handleOpenAgent() {
           <span class="fund-step__title">Fund agent vault</span>
         </div>
 
-        <p class="fund-step__desc">
-          Agents start with a zero balance. Deposit funds from your wallet to continue.
-        </p>
-
         <div class="fund-step__wallet-row">
-          <span class="fund-step__bal-key">agent paper balance</span>
+          <span class="fund-step__bal-key">agent balance</span>
           <span class="fund-step__bal-val">{{ currentPaperBalance.toLocaleString() }} iUSD-demo</span>
         </div>
 
@@ -872,8 +866,6 @@ function handleOpenAgent() {
 
   <AutoSignConsentModal
     :open="consentModalOpen"
-    :action-key="consentActionKey"
-    :action-label="consentActionLabel"
     @proceed="onConsentProceed"
     @cancel="onConsentCancel"
   />

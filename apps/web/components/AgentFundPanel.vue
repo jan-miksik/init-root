@@ -228,7 +228,7 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
             </div>
 
             <div class="fund-step__wallet-row">
-              <span class="fund-step__bal-key">agent paper balance</span>
+              <span class="fund-step__bal-key">agent balance</span>
               <span class="fund-step__bal-val">{{ (currentBalance ?? 0).toLocaleString() }} iUSD-demo</span>
             </div>
 

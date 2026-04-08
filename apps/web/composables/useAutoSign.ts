@@ -1,18 +1,9 @@
 import { computed, ref } from 'vue';
 
-export const ON_CHAIN_ACTIONS = [
-  { key: 'createAgentOnchain', label: 'Create Agent', description: 'Deploy your agent contract on-chain' },
-  { key: 'mintShowcaseToken', label: 'Mint iUSD-demo', description: 'Mint iUSD-demo tokens from the faucet' },
-  { key: 'depositShowcaseToken', label: 'Deposit iUSD-demo', description: 'Deposit iUSD-demo tokens into the vault' },
-  { key: 'withdrawShowcaseToken', label: 'Withdraw iUSD-demo', description: 'Withdraw iUSD-demo tokens from the vault' },
-  { key: 'authorizeExecutor', label: 'Authorize Executor', description: 'Grant execution permissions to the executor' },
-  { key: 'executeTick', label: 'Execute Tick', description: 'Manually trigger agent analysis cycle' },
-] as const satisfies { key: string; label: string; description: string }[];
-
-export type OnChainActionKey = (typeof ON_CHAIN_ACTIONS)[number]['key'];
-
 const PREFS_KEY = 'heppy:autosign:prefs';
 const DISMISSED_KEY = 'heppy:autosign:dismissed';
+const ENABLED_FIELD = 'enabled';
+const DISMISSED_FIELD = 'dismissed';
 
 function readStorage(key: string): Record<string, boolean> {
   if (!import.meta.client) return {};
@@ -38,35 +29,32 @@ export function useAutoSign() {
 
   const chainAutoSignEnabled = computed(() => state.value.autoSignEnabled);
 
-  const anyEnabled = computed(() =>
-    ON_CHAIN_ACTIONS.some(a => prefs.value[a.key] === true),
-  );
+  const anyEnabled = computed(() => prefs.value[ENABLED_FIELD] === true);
 
-  function isEnabled(actionKey: string): boolean {
-    return prefs.value[actionKey] === true;
+  function isEnabled(_actionKey: string): boolean {
+    return prefs.value[ENABLED_FIELD] === true;
   }
 
-  function setEnabled(actionKey: string, val: boolean): void {
-    prefs.value = { ...prefs.value, [actionKey]: val };
+  function setEnabled(_actionKey: string, val: boolean): void {
+    prefs.value = { ...prefs.value, [ENABLED_FIELD]: val };
     writeStorage(PREFS_KEY, prefs.value);
-    // Reset dismissed so the consent modal re-appears if user later clicks the action
+    // Reset dismissed so the consent modal re-appears if user later opts out.
     if (!val) {
-      dismissed.value = { ...dismissed.value, [actionKey]: false };
+      dismissed.value = { ...dismissed.value, [DISMISSED_FIELD]: false };
       writeStorage(DISMISSED_KEY, dismissed.value);
     }
   }
 
-  function isDismissed(actionKey: string): boolean {
-    return dismissed.value[actionKey] === true;
+  function isDismissed(_actionKey: string): boolean {
+    return dismissed.value[DISMISSED_FIELD] === true;
   }
 
-  function setDismissed(actionKey: string, val: boolean): void {
-    dismissed.value = { ...dismissed.value, [actionKey]: val };
+  function setDismissed(_actionKey: string, val: boolean): void {
+    dismissed.value = { ...dismissed.value, [DISMISSED_FIELD]: val };
     writeStorage(DISMISSED_KEY, dismissed.value);
   }
 
   return {
-    ON_CHAIN_ACTIONS,
     isEnabled,
     setEnabled,
     isDismissed,
