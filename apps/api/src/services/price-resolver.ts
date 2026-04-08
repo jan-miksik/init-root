@@ -1,7 +1,11 @@
 import type { Env } from '../types/env.js';
 import { createDexDataService, getPriceUsd } from './dex-data.js';
 import { createGeckoTerminalService } from './gecko-terminal.js';
-import { resolveCoinGeckoSpotUsdForPair } from './coingecko-price.js';
+import {
+  resolveCoinGeckoSpotUsdForPair,
+  resolveCoinPaprikaSpotUsdForPair,
+  resolveDemoFallbackSpotUsdForPair,
+} from './coingecko-price.js';
 
 /** "WETH/USDC" → "WETH USDC" */
 function pairToSearchQuery(pairName: string): string {
@@ -39,9 +43,13 @@ export async function resolveCurrentPriceUsd(env: Env, pairName: string): Promis
   const dexSvc = createDexDataService(env.CACHE);
   const query = pairToSearchQuery(pairName);
 
-  // Direct CoinGecko spot fallback for supported symbols (e.g. INIT/USDC).
+  // Direct CoinGecko spot fallback for supported symbols (e.g. INIT/USD).
   const coinGeckoSpot = await resolveCoinGeckoSpotUsdForPair(env, pairName);
   if (coinGeckoSpot > 0) return coinGeckoSpot;
+
+  // CoinPaprika spot fallback for supported symbols (e.g. INIT/USD).
+  const coinPaprikaSpot = await resolveCoinPaprikaSpotUsdForPair(env, pairName);
+  if (coinPaprikaSpot > 0) return coinPaprikaSpot;
 
   // GeckoTerminal first (network=base)
   try {
@@ -85,6 +93,9 @@ export async function resolveCurrentPriceUsd(env: Env, pairName: string): Promis
       // fallthrough
     }
   }
+
+  const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
+  if (demoSpot > 0) return demoSpot;
 
   return 0;
 }

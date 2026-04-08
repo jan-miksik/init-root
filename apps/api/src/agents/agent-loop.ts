@@ -490,7 +490,7 @@ export async function runAgentLoop(
        executionNote = `Execution: skipped (${plan.skip})`;
        if (paperErrorStr) executionNote += ` | Paper error: ${paperErrorStr}`;
        else if (paperCloseReason) executionNote += ` | Paper skip: ${paperCloseReason}`;
-       else if (executedPaperTrade) executionNote += ` | Paper trade: OK`;
+       else if (executedPaperTrade && plan.skip !== 'no_balance') executionNote += ` | Paper trade: OK`;
     } else {
        executionNote = `Execution: ${perpDecision.action} ${targetPair} via ${plan.perpDexPlatformId}`;
     }

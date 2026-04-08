@@ -14,7 +14,8 @@ const emit = defineEmits<{
 }>();
 
 const { updateAgent } = useAgents();
-const { state: initiaState, openConnect, openBridge, refresh, mintShowcaseToken } = useInitiaBridge();
+const { state: initiaState, openConnect, openBridge, refresh, mintShowcaseToken, depositShowcaseToken, withdrawShowcaseToken } = useInitiaBridge();
+const { request } = useApi();
 const BRIDGE_SRC_CHAIN_ID = 'initiation-2';
 const BRIDGE_SRC_DENOM = 'uinit';
 
@@ -63,18 +64,61 @@ function clearMessages() {
   successMsg.value = '';
 }
 
+const WALLET_STATE_TIMEOUT_MS = 30_000;
+const WALLET_STATE_POLL_MS = 250;
+
+async function ensureWalletConnected() {
+  await refresh();
+  if (initiaState.value.initiaAddress) return;
+
+  await openConnect();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+    await refresh();
+    if (initiaState.value.initiaAddress) return;
+    await new Promise((resolve) => setTimeout(resolve, WALLET_STATE_POLL_MS));
+  }
+  throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
+}
+
 async function handleFund() {
   const amt = Number(amount.value);
-  if (!Number.isFinite(amt) || amt < 0) {
-    error.value = 'Enter a valid amount (0 or higher).';
+  if (!Number.isFinite(amt) || amt <= 0) {
+    error.value = 'Enter a valid amount greater than zero.';
     return;
   }
   clearMessages();
   funding.value = true;
   try {
-    await updateAgent(props.agentId, { paperBalance: amt });
-    successMsg.value = `Funded — balance set to ${amt.toLocaleString()} iUSD-demo`;
-    emit('done', amt);
+    await ensureWalletConnected();
+    const result = await depositShowcaseToken(String(amt));
+    
+    const newBalance = (props.currentBalance ?? 0) + amt;
+    await updateAgent(props.agentId, { paperBalance: newBalance });
+    
+    await request(`/api/agents/${props.agentId}/initia/sync`, {
+      method: 'POST',
+      body: {
+        state: {
+          walletAddress: initiaState.value.initiaAddress,
+          evmAddress: initiaState.value.evmAddress ?? undefined,
+          onchainAgentId: initiaState.value.onchainAgentId ?? undefined,
+          chainOk: initiaState.value.chainOk,
+          existsOnchain: initiaState.value.agentExists,
+          autoSignEnabled: initiaState.value.autoSignEnabled,
+          walletBalanceWei: initiaState.value.walletBalanceWei ?? undefined,
+          walletShowcaseTokenBalanceWei: initiaState.value.walletShowcaseTokenBalanceWei ?? undefined,
+          showcaseTokenBalanceWei: initiaState.value.showcaseTokenBalanceWei ?? undefined,
+          vaultBalanceWei: initiaState.value.vaultBalanceWei ?? undefined,
+          lastTxHash: initiaState.value.lastTxHash ?? undefined,
+          syncTrigger: 'detail-step-deposit',
+        },
+      },
+      silent: true,
+    }).catch(console.warn);
+
+    successMsg.value = `Deposited ${amt.toLocaleString()} iUSD-demo.${result.txHash ? ` tx: ${result.txHash}` : ''}`;
+    emit('done', newBalance);
   } catch (e) {
     error.value = extractApiError(e);
   } finally {
@@ -85,15 +129,40 @@ async function handleFund() {
 async function handleWithdraw() {
   const amt = Number(amount.value);
   if (!Number.isFinite(amt) || amt <= 0) {
-    error.value = 'Enter a valid amount.';
+    error.value = 'Enter a valid amount greater than zero.';
     return;
   }
   const newBalance = Math.max(0, (props.currentBalance ?? 0) - amt);
   clearMessages();
   withdrawing.value = true;
   try {
+    await ensureWalletConnected();
+    const result = await withdrawShowcaseToken(String(amt));
+    
     await updateAgent(props.agentId, { paperBalance: newBalance });
-    successMsg.value = `Withdrew ${amt.toLocaleString()} iUSD-demo`;
+    
+    await request(`/api/agents/${props.agentId}/initia/sync`, {
+      method: 'POST',
+      body: {
+        state: {
+          walletAddress: initiaState.value.initiaAddress,
+          evmAddress: initiaState.value.evmAddress ?? undefined,
+          onchainAgentId: initiaState.value.onchainAgentId ?? undefined,
+          chainOk: initiaState.value.chainOk,
+          existsOnchain: initiaState.value.agentExists,
+          autoSignEnabled: initiaState.value.autoSignEnabled,
+          walletBalanceWei: initiaState.value.walletBalanceWei ?? undefined,
+          walletShowcaseTokenBalanceWei: initiaState.value.walletShowcaseTokenBalanceWei ?? undefined,
+          showcaseTokenBalanceWei: initiaState.value.showcaseTokenBalanceWei ?? undefined,
+          vaultBalanceWei: initiaState.value.vaultBalanceWei ?? undefined,
+          lastTxHash: initiaState.value.lastTxHash ?? undefined,
+          syncTrigger: 'detail-step-withdraw',
+        },
+      },
+      silent: true,
+    }).catch(console.warn);
+
+    successMsg.value = `Withdrew ${amt.toLocaleString()} iUSD-demo.${result.txHash ? ` tx: ${result.txHash}` : ''}`;
     emit('done', newBalance);
   } catch (e) {
     error.value = extractApiError(e);
@@ -173,31 +242,6 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
             </div>
           </div>
 
-          <div class="fund-modal__faucet">
-            <div class="fund-modal__faucet-title">iUSD-demo faucet</div>
-            <div class="fund-modal__input-row">
-              <input
-                v-model="faucetAmount"
-                type="number"
-                min="0.0001"
-                step="0.0001"
-                class="fund-modal__input"
-                placeholder="1000"
-                :disabled="busy"
-                @focus="clearMessages"
-              >
-              <span class="fund-modal__currency">iUSD-demo</span>
-            </div>
-            <button
-              class="fund-modal__btn fund-modal__btn--faucet"
-              :disabled="busy"
-              @click="handleMintFaucet"
-            >
-              <span v-if="mintingFaucet" class="spinner" style="width:11px;height:11px;" />
-              {{ mintingFaucet ? 'Minting…' : 'Mint Faucet Tokens' }}
-            </button>
-          </div>
-
           <!-- Tab toggle -->
           <div class="fund-modal__tabs">
             <button
@@ -225,17 +269,6 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
               @focus="clearMessages"
             >
             <span class="fund-modal__currency">iUSD-demo</span>
-          </div>
-
-          <!-- Quick presets -->
-          <div class="fund-modal__presets">
-            <button
-              v-for="preset in [500, 1000, 5000, 10000]"
-              :key="preset"
-              class="fund-modal__preset"
-              :disabled="busy"
-              @click="amount = String(preset)"
-            >{{ preset >= 1000 ? `${preset / 1000}k` : preset }}</button>
           </div>
 
           <!-- Feedback -->
@@ -280,6 +313,31 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
               token route may not render. Bridge stays in this flow to demonstrate the hackathon path: bridge assets
               from L1 to appchain, then deposit into the agent vault.
             </p>
+          </div>
+
+          <div class="fund-modal__faucet">
+            <div class="fund-modal__faucet-title">iUSD-demo faucet</div>
+            <div class="fund-modal__input-row">
+              <input
+                v-model="faucetAmount"
+                type="number"
+                min="0.0001"
+                step="0.0001"
+                class="fund-modal__input"
+                placeholder="1000"
+                :disabled="busy"
+                @focus="clearMessages"
+              >
+              <span class="fund-modal__currency">iUSD-demo</span>
+            </div>
+            <button
+              class="fund-modal__btn fund-modal__btn--faucet"
+              :disabled="busy"
+              @click="handleMintFaucet"
+            >
+              <span v-if="mintingFaucet" class="spinner" style="width:11px;height:11px;" />
+              {{ mintingFaucet ? 'Minting…' : 'Mint Faucet Tokens' }}
+            </button>
           </div>
 
         </div>

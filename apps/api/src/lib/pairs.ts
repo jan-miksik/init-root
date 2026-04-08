@@ -8,10 +8,10 @@ const CEX_TO_DEX_PAIRS: Record<string, string> = {
   'ETH/USD': 'WETH/USDC',
   'BTC-USD': 'cbBTC/USDC',
   'BTC/USD': 'cbBTC/USDC',
-  'INIT-USD': 'INIT/USDC',
-  'INIT/USD': 'INIT/USDC',
-  'INITIA-USD': 'INIT/USDC',
-  'INITIA/USD': 'INIT/USDC',
+  'INIT-USD': 'INIT/USD',
+  'INIT/USD': 'INIT/USD',
+  'INITIA-USD': 'INIT/USD',
+  'INITIA/USD': 'INIT/USD',
   'AERO-USD': 'AERO/USDC',
   'AERO/USD': 'AERO/USDC',
   'DEGEN-USD': 'DEGEN/USDC',
@@ -28,6 +28,17 @@ function normalizeSymbolAlias(symbol: string): string {
   return SYMBOL_ALIASES[trimmed.toUpperCase()] ?? trimmed;
 }
 
+function normalizeInitStablePair(left: string, right: string): string | null {
+  const l = left.toUpperCase();
+  const r = right.toUpperCase();
+  const isInitBase = l === 'INIT';
+  const isInitQuote = r === 'INIT';
+  const stable = new Set(['USD', 'USDC', 'USDBC', 'USDT', 'DAI']);
+  if (isInitBase && stable.has(r)) return 'INIT/USD';
+  if (isInitQuote && stable.has(l)) return 'INIT/USD';
+  return null;
+}
+
 /**
  * Returns the Dex-style pair name (e.g. "WETH/USDC") for GeckoTerminal/DexScreener.
  * If the input already contains "/", it is returned trimmed. Otherwise CEX-style
@@ -40,6 +51,8 @@ export function normalizePairForDex(pair: string): string {
     if (rest.length === 0 && leftRaw && rightRaw) {
       const left = normalizeSymbolAlias(leftRaw);
       const right = normalizeSymbolAlias(rightRaw);
+      const normalizedInit = normalizeInitStablePair(left, right);
+      if (normalizedInit) return normalizedInit;
       return `${left}/${right}`;
     }
     return trimmed;

@@ -6,12 +6,18 @@ import {
   filterBaseChainPairs,
 } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
+import {
+  resolveCoinGeckoMarketContextForPair,
+  resolveCoinPaprikaMarketContextForPair,
+  resolveDemoMarketContextForPair,
+} from '../services/coingecko-price.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { validateQuery } from '../lib/validation.js';
 import { ValidationError } from '../lib/validation.js';
 import { normalizePairForDex } from '../lib/pairs.js';
 
 const pairs = new Hono<{ Bindings: Env }>();
+type OhlcvSource = 'coingecko' | 'coinpaprika' | 'geckoterminal' | 'demo' | 'none';
 
 /**
  * GET /api/pairs/gecko-search?q=WETH+USDC
@@ -100,6 +106,65 @@ pairs.post('/prices', async (c) => {
 });
 
 /**
+ * GET /api/pairs/ohlcv?pair=INIT/USD&timeframe=1h
+ * Pair-name based fallback OHLCV for pairs without on-chain pairAddress.
+ */
+pairs.get('/ohlcv', async (c) => {
+  const query = validateQuery(
+    c,
+    z.object({
+      pair: z.string().min(1),
+      timeframe: z.enum(['1h', '4h', '1d']).default('1h'),
+    }),
+  );
+
+  const pair = normalizePairForDex(query.pair);
+  const [coingecko, coinpaprika] = await Promise.all([
+    resolveCoinGeckoMarketContextForPair(c.env, pair),
+    resolveCoinPaprikaMarketContextForPair(c.env, pair),
+  ]);
+  const demo = resolveDemoMarketContextForPair(pair);
+
+  // Prefer real providers; use demo only when both providers miss a series.
+  const hourlySource: OhlcvSource =
+    (coingecko?.hourlyPrices?.length ?? 0) > 0
+      ? 'coingecko'
+      : (coinpaprika?.hourlyPrices?.length ?? 0) > 0
+      ? 'coinpaprika'
+      : (demo?.hourlyPrices?.length ?? 0) > 0
+      ? 'demo'
+      : 'none';
+  const dailySource: OhlcvSource =
+    (coingecko?.dailyPrices?.length ?? 0) > 0
+      ? 'coingecko'
+      : (coinpaprika?.dailyPrices?.length ?? 0) > 0
+      ? 'coinpaprika'
+      : (demo?.dailyPrices?.length ?? 0) > 0
+      ? 'demo'
+      : 'none';
+  const hourlyPrices =
+    (coingecko?.hourlyPrices?.length ?? 0) > 0
+      ? coingecko!.hourlyPrices
+      : (coinpaprika?.hourlyPrices?.length ?? 0) > 0
+      ? coinpaprika!.hourlyPrices
+      : (demo?.hourlyPrices ?? []);
+  const dailyPrices =
+    (coingecko?.dailyPrices?.length ?? 0) > 0
+      ? coingecko!.dailyPrices
+      : (coinpaprika?.dailyPrices?.length ?? 0) > 0
+      ? coinpaprika!.dailyPrices
+      : (demo?.dailyPrices ?? []);
+  const source: OhlcvSource = query.timeframe === '1d' ? dailySource : hourlySource;
+
+  if (hourlyPrices.length === 0 && dailyPrices.length === 0) {
+    return c.json({ candles: [], timeframe: query.timeframe, pair, source: 'none' as OhlcvSource }, 200);
+  }
+
+  const candles = toCandlesForTimeframe(hourlyPrices, dailyPrices, query.timeframe);
+  return c.json({ candles, timeframe: query.timeframe, pair, source }, 200);
+});
+
+/**
  * GET /api/pairs/:chain/:address/ohlcv?timeframe=1h&limit=48
  * Returns OHLCV candles for charting. Timeframes: 15m, 1h, 4h, 1d.
  * NOTE: Must be registered BEFORE /:chain/:address to avoid param capture.
@@ -124,7 +189,7 @@ pairs.get('/:chain/:address/ohlcv', async (c) => {
   // For 4h: downsample hourly candles to 4h buckets
   const result = tf === '4h' ? downsample(candles, 4) : candles;
 
-  return c.json({ candles: result, timeframe: tf });
+  return c.json({ candles: result, timeframe: tf, source: 'geckoterminal' as OhlcvSource });
 });
 
 /** GET /api/pairs/:chain/:address */
@@ -157,6 +222,44 @@ function downsample(candles: Array<{ t: number; o: number; h: number; l: number;
     });
   }
   return buckets;
+}
+
+function toCandlesForTimeframe(
+  hourlyPrices: number[],
+  dailyPrices: number[],
+  timeframe: '1h' | '4h' | '1d',
+): Array<{ t: number; o: number; h: number; l: number; c: number }> {
+  if (timeframe === '1d') {
+    return toSyntheticCandles(dailyPrices, 24 * 60 * 60 * 1000);
+  }
+
+  const baseHourly = toSyntheticCandles(hourlyPrices, 60 * 60 * 1000);
+  if (timeframe === '1h') return baseHourly;
+  return downsample(baseHourly, 4);
+}
+
+function toSyntheticCandles(
+  closes: number[],
+  stepMs: number,
+): Array<{ t: number; o: number; h: number; l: number; c: number }> {
+  const clean = closes.filter((v) => Number.isFinite(v) && v > 0);
+  if (clean.length === 0) return [];
+
+  const end = Date.now();
+  const start = end - stepMs * (clean.length - 1);
+  return clean.map((close, i) => {
+    const previousClose = i > 0 ? clean[i - 1] : close;
+    const open = previousClose;
+    const high = Math.max(open, close);
+    const low = Math.min(open, close);
+    return {
+      t: start + i * stepMs,
+      o: open,
+      h: high,
+      l: low,
+      c: close,
+    };
+  });
 }
 
 /** GET /api/pairs/token/:address */

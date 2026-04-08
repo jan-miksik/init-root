@@ -421,11 +421,14 @@ async function handleDeposit() {
         autoStartError = `Deposit succeeded, but auto-start failed: ${extractApiError(err)}`;
       }
       if (!autoStartError) {
-        try {
-          await request(`/api/agents/${createdAgentId.value}/analyze`, { method: 'POST', silent: true, timeout: 90_000 });
-        } catch (err) {
-          autoStartError = `Agent started, but the initial analysis failed: ${extractApiError(err)}`;
-        }
+        // Fire the initial analysis in the background so the UI clears immediately.
+        request(`/api/agents/${createdAgentId.value}/analyze`, {
+          method: 'POST',
+          silent: true,
+          timeout: 90_000,
+        }).catch((err) => {
+          console.warn('[create-flow] background initial analysis failed:', err);
+        });
       }
     }
 
@@ -762,31 +765,6 @@ function handleOpenAgent() {
           <span class="fund-step__currency">iUSD-demo</span>
         </div>
 
-        <div class="fund-step__faucet">
-          <div class="fund-step__faucet-title">iUSD-demo faucet</div>
-          <div class="fund-step__input-row">
-            <input
-              v-model="faucetAmount"
-              type="number"
-              min="0.0001"
-              step="0.0001"
-              class="fund-step__input"
-              placeholder="1000"
-              :disabled="funding || withdrawing || bridging || mintingFaucet || autoSignBusy !== null"
-              @focus="clearFundingFeedback"
-            >
-            <span class="fund-step__currency">iUSD-demo</span>
-          </div>
-          <button
-            class="fund-step__btn fund-step__btn--faucet"
-            :disabled="funding || withdrawing || bridging || mintingFaucet || autoSignBusy !== null"
-            @click="handleMintFaucet"
-          >
-            <span v-if="mintingFaucet" class="spinner" style="width:12px;height:12px;" />
-            {{ mintingFaucet ? 'Minting…' : 'Mint Faucet Tokens' }}
-          </button>
-        </div>
-
         <div class="fund-step__actions">
           <button
             class="fund-step__btn fund-step__btn--primary"
@@ -821,6 +799,31 @@ function handleOpenAgent() {
             We still keep bridge in this flow because it demonstrates the hackathon path: bridge assets from L1 to appchain, then deposit into the agent vault.
             This improves onboarding speed, liquidity access, and immediate utility.
           </p>
+        </div>
+
+        <div class="fund-step__faucet">
+          <div class="fund-step__faucet-title">iUSD-demo faucet</div>
+          <div class="fund-step__input-row">
+            <input
+              v-model="faucetAmount"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              class="fund-step__input"
+              placeholder="1000"
+              :disabled="funding || withdrawing || bridging || mintingFaucet || autoSignBusy !== null"
+              @focus="clearFundingFeedback"
+            >
+            <span class="fund-step__currency">iUSD-demo</span>
+          </div>
+          <button
+            class="fund-step__btn fund-step__btn--faucet"
+            :disabled="funding || withdrawing || bridging || mintingFaucet || autoSignBusy !== null"
+            @click="handleMintFaucet"
+          >
+            <span v-if="mintingFaucet" class="spinner" style="width:12px;height:12px;" />
+            {{ mintingFaucet ? 'Minting…' : 'Mint Faucet Tokens' }}
+          </button>
         </div>
       </div>
     </div>
@@ -1135,6 +1138,7 @@ function handleOpenAgent() {
   gap: 6px;
   cursor: pointer;
   transition: opacity 0.12s, border-color 0.12s, background 0.12s;
+  min-height: 2.5rem;
 }
 
 .fund-step__btn:disabled {

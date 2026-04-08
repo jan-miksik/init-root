@@ -5,7 +5,14 @@ import { agentDecisions } from '../../db/schema.js';
 import { createDexDataService, getPriceUsd } from '../../services/dex-data.js';
 import type { DexPair } from '../../services/dex-data.js';
 import { createGeckoTerminalService } from '../../services/gecko-terminal.js';
-import { resolveCoinGeckoSpotUsdForPair } from '../../services/coingecko-price.js';
+import {
+  resolveCoinGeckoSpotUsdForPair,
+  resolveCoinGeckoMarketContextForPair,
+  resolveCoinPaprikaSpotUsdForPair,
+  resolveCoinPaprikaMarketContextForPair,
+  resolveDemoFallbackSpotUsdForPair,
+  resolveDemoMarketContextForPair,
+} from '../../services/coingecko-price.js';
 import { combineSignals, computeIndicators, evaluateSignals } from '../../services/indicators.js';
 import { classifyApiError, logStructuredError } from '../../lib/agent-errors.js';
 import { createLogger } from '../../lib/logger.js';
@@ -96,6 +103,14 @@ async function fetchOnePair(params: {
   let liquidity: number | undefined;
   let prices: number[] = [];
   let dailyPrices: number[] = [];
+
+  function mergeMissingPriceChange(source: Record<string, number | undefined>) {
+    for (const key of ['m5', 'h1', 'h6', 'h24'] as const) {
+      if (priceChange[key] === undefined && source[key] !== undefined) {
+        priceChange[key] = source[key];
+      }
+    }
+  }
 
   try {
     console.log(`[agent-loop] ${agentId}: GeckoTerminal search "${query}"`);
@@ -205,6 +220,88 @@ async function fetchOnePair(params: {
       }
     } catch {
       // non-fatal
+    }
+  }
+
+  if (priceUsd === 0) {
+    try {
+      const coinpaprikaSpot = await resolveCoinPaprikaSpotUsdForPair(env, pairName);
+      if (coinpaprikaSpot > 0) {
+        priceUsd = coinpaprikaSpot;
+        console.log(`[agent-loop] ${agentId}: CoinPaprika spot fallback found @ $${priceUsd}`);
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  if (prices.length === 0 || dailyPrices.length === 0 || priceChange.h1 === undefined || priceChange.h24 === undefined) {
+    try {
+      const coingeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName);
+      if (coingeckoCtx) {
+        if (priceUsd === 0 && coingeckoCtx.spotUsd > 0) {
+          priceUsd = coingeckoCtx.spotUsd;
+        }
+        if (prices.length === 0 && coingeckoCtx.hourlyPrices.length > 0) {
+          prices = coingeckoCtx.hourlyPrices;
+        }
+        if (dailyPrices.length === 0 && coingeckoCtx.dailyPrices.length > 0) {
+          dailyPrices = coingeckoCtx.dailyPrices;
+        }
+        if (volume24h === undefined && coingeckoCtx.volume24h !== undefined) {
+          volume24h = coingeckoCtx.volume24h;
+        }
+        mergeMissingPriceChange(coingeckoCtx.priceChange);
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  if (prices.length === 0 || dailyPrices.length === 0 || priceChange.h1 === undefined || priceChange.h24 === undefined) {
+    try {
+      const coinpaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName);
+      if (coinpaprikaCtx) {
+        if (priceUsd === 0 && coinpaprikaCtx.spotUsd > 0) {
+          priceUsd = coinpaprikaCtx.spotUsd;
+        }
+        if (prices.length === 0 && coinpaprikaCtx.hourlyPrices.length > 0) {
+          prices = coinpaprikaCtx.hourlyPrices;
+        }
+        if (dailyPrices.length === 0 && coinpaprikaCtx.dailyPrices.length > 0) {
+          dailyPrices = coinpaprikaCtx.dailyPrices;
+        }
+        if (volume24h === undefined && coinpaprikaCtx.volume24h !== undefined) {
+          volume24h = coinpaprikaCtx.volume24h;
+        }
+        mergeMissingPriceChange(coinpaprikaCtx.priceChange);
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  if (priceUsd === 0) {
+    const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
+    if (demoSpot > 0) {
+      priceUsd = demoSpot;
+      console.warn(`[agent-loop] ${agentId}: Using demo fallback spot for ${pairName} @ $${priceUsd}`);
+    }
+  }
+
+  if (prices.length === 0 || dailyPrices.length === 0 || priceChange.h1 === undefined || priceChange.h24 === undefined) {
+    const demoCtx = resolveDemoMarketContextForPair(pairName);
+    if (demoCtx) {
+      if (priceUsd === 0) {
+        priceUsd = demoCtx.spotUsd;
+      }
+      if (prices.length === 0) {
+        prices = demoCtx.hourlyPrices;
+      }
+      if (dailyPrices.length === 0) {
+        dailyPrices = demoCtx.dailyPrices;
+      }
+      mergeMissingPriceChange(demoCtx.priceChange);
     }
   }
 

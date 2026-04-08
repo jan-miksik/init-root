@@ -71,6 +71,16 @@ describe('filterSupportedBasePairs', () => {
       ])
     ).toEqual(['WETH/USDC', 'AERO/USDC']);
   });
+
+  it('keeps INIT/USD in the supported allowlist', () => {
+    expect(
+      filterSupportedBasePairs([
+        'INIT/USD',
+        'INIT/USD',
+        'WETH/USDC',
+      ])
+    ).toEqual(['INIT/USD', 'WETH/USDC']);
+  });
 });
 
 describe('Initia agent schemas', () => {

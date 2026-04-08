@@ -178,13 +178,13 @@ export async function executeManagerAction(
           : profileId
             ? getAgentPersonaTemplate(profileId, agentName)
             : getDefaultAgentPersona(agentName);
-      const normalizedPairs = normalizePairsForDex((params.pairs as string[] | undefined) ?? ['WETH/USDC']);
+      const normalizedPairs = normalizePairsForDex((params.pairs as string[] | undefined) ?? ['INIT/USD']);
       const supportedPairs = filterSupportedBasePairs(normalizedPairs);
       const config = {
         name: agentName,
         llmModel,
         temperature: params.temperature ?? 0.7,
-        pairs: supportedPairs.length > 0 ? supportedPairs : ['WETH/USDC'],
+        pairs: supportedPairs.length > 0 ? supportedPairs : ['INIT/USD'],
         analysisInterval,
         strategies: params.strategies ?? ['combined'],
         paperBalance,

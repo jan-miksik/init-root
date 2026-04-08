@@ -143,7 +143,12 @@ function formatJson(text: string): string {
 }
 
 function decisionHtml(text: string, md: boolean): string {
-  return sectionHtml(text, md);
+  let cleanText = text;
+  const execIdx = cleanText.indexOf('\n\n—\nExecution:');
+  if (execIdx !== -1) {
+    cleanText = cleanText.substring(0, execIdx);
+  }
+  return sectionHtml(cleanText, md);
 }
 
 /** Returns a compact inline diff of market prices vs previous cycle, e.g. "WETH +0.6% · USDC -0.1%" */
@@ -915,9 +920,18 @@ function formatDate(iso: string) {
 function formatPrice(p: number) {
   return p >= 1 ? p.toLocaleString('en', { maximumFractionDigits: 4 }) : p.toPrecision(5);
 }
+function mapDecision(d: string) {
+  const norm = d.toUpperCase();
+  if (norm === 'OPEN_LONG') return 'buy';
+  if (norm === 'OPEN_SHORT') return 'sell';
+  if (norm === 'CLOSE_LONG' || norm === 'CLOSE_SHORT') return 'close';
+  return d.toLowerCase();
+}
 function decisionColor(d: string) {
-  if (d === 'buy') return 'positive';
-  if (d === 'sell') return 'negative';
+  const mapped = mapDecision(d);
+  if (mapped === 'buy') return 'positive';
+  if (mapped === 'sell') return 'negative';
+  if (mapped === 'close') return 'accent';
   return 'neutral';
 }
 function winRateClass(rate: number): 'positive' | 'negative' | 'neutral' {
@@ -1160,10 +1174,10 @@ function formatLatency(ms: number): string {
             <!-- Always-visible main content -->
             <div class="dec-main">
               <div class="dec-main-header">
-                <span class="dec-action-badge" :class="`dec-action--${dec.decision}`">{{ dec.decision.toUpperCase() }}</span>
+                <span class="dec-action-badge" :class="`dec-action--${mapDecision(dec.decision)}`">{{ mapDecision(dec.decision).toUpperCase() }}</span>
                 <span class="dec-conf-num">{{ (dec.confidence * 100).toFixed(0) }}%</span>
                 <div class="dec-conf-track">
-                  <div class="dec-conf-fill" :class="`dec-conf-fill--${dec.decision}`" :style="{ width: (dec.confidence * 100) + '%' }" />
+                  <div class="dec-conf-fill" :class="`dec-conf-fill--${mapDecision(dec.decision)}`" :style="{ width: (dec.confidence * 100) + '%' }" />
                 </div>
               </div>
               <!-- eslint-disable-next-line vue/no-v-html -->
@@ -1305,6 +1319,7 @@ function formatLatency(ms: number): string {
               <PriceSparkline
                 chain="base"
                 :pair-address="getPairAddress(pair)"
+                :pair-name="pair"
                 :open-timestamps="pairTrades.map((t) => t.openedAt)"
               />
 

@@ -53,7 +53,7 @@ async function handleBridge() {
         <h1 class="about-title">initRoot</h1>
         <p class="about-desc">
           Autonomous AI trading agents on Initia. Deploy strategies, track performance,
-          and let LLMs manage your portfolio in paper-trading mode — with on-chain vault
+          and let LLMs manage your portfolio — with on-chain vault
           integration via InterwovenKit.
         </p>
       </section>
@@ -81,27 +81,6 @@ async function handleBridge() {
           </div>
         </div>
       </section>
-
-      <!-- Balances + Bridge -->
-      <section class="about-section about-section--bridge">
-        <span class="about-section-label">balances</span>
-        <div class="about-balances">
-          <div class="about-balance-cell">
-            <div class="about-balance-amount">{{ formatWei(initiaState.walletBalanceWei) }}</div>
-            <div class="about-balance-unit">wallet · INIT</div>
-          </div>
-          <div class="about-balance-sep" />
-          <div class="about-balance-cell">
-            <div class="about-balance-amount">{{ formatWei(initiaState.vaultBalanceWei) }}</div>
-            <div class="about-balance-unit">vault · INIT</div>
-          </div>
-        </div>
-        <button class="about-bridge-btn" :disabled="bridging" @click="handleBridge">
-          {{ bridging ? 'Opening…' : 'Bridge assets →' }}
-        </button>
-      </section>
-
-
 
       <!-- System bar -->
       <div class="about-sysbar">

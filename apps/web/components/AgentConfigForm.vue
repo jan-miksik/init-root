@@ -100,7 +100,7 @@ const isEditing = computed(() => !!props.initialValues);
 
 const form = reactive<CreateAgentPayload & { pairs: string[] }>({
   name: '',
-  pairs: ['WETH/USDC'],
+  pairs: ['INIT/USD'],
   paperBalance: 1000,
   strategies: ['combined'],
   analysisInterval: '1h',
@@ -198,7 +198,7 @@ function restoreBehavior() {
 
 // ─── Name helpers ──────────────────────────────────────────────────────────
 
-const AVAILABLE_PAIRS = ['WETH/USDC', 'cbBTC/USDC', 'AERO/WETH', 'INIT/USDC'] as const;
+const AVAILABLE_PAIRS = ['INIT/USD', 'WETH/USDC', 'cbBTC/USDC', 'AERO/WETH'] as const;
 
 function togglePair(p: string) {
   form.pairs = form.pairs.includes(p) ? form.pairs.filter((x) => x !== p) : [...form.pairs, p];

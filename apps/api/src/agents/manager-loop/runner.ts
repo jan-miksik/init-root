@@ -7,7 +7,11 @@ import { agentManagerLogs, agentManagers, agents, performanceSnapshots, trades, 
 import { decryptKey } from '../../lib/crypto.js';
 import { createDexDataService, getPriceUsd } from '../../services/dex-data.js';
 import { createGeckoTerminalService } from '../../services/gecko-terminal.js';
-import { resolveCoinGeckoSpotUsdForPair } from '../../services/coingecko-price.js';
+import {
+  resolveCoinGeckoMarketContextForPair,
+  resolveCoinPaprikaMarketContextForPair,
+  resolveDemoMarketContextForPair,
+} from '../../services/coingecko-price.js';
 import { generateId, nowIso } from '../../lib/utils.js';
 import { normalizeManagerDecisionInterval } from '../../lib/manager-interval-sync.js';
 import type { ManagerConfig } from '@something-in-loop/shared';
@@ -155,12 +159,32 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
       // skip
     }
 
-    const coinGeckoSpot = await resolveCoinGeckoSpotUsdForPair(env, pairName);
-    if (coinGeckoSpot > 0) {
+    const coinGeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName);
+    if (coinGeckoCtx && coinGeckoCtx.spotUsd > 0) {
       marketData.push({
         pair: pairName,
-        priceUsd: coinGeckoSpot,
-        priceChange: {},
+        priceUsd: coinGeckoCtx.spotUsd,
+        priceChange: coinGeckoCtx.priceChange,
+      });
+      continue;
+    }
+
+    const coinPaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName);
+    if (coinPaprikaCtx && coinPaprikaCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: coinPaprikaCtx.spotUsd,
+        priceChange: coinPaprikaCtx.priceChange,
+      });
+      continue;
+    }
+
+    const demoCtx = resolveDemoMarketContextForPair(pairName);
+    if (demoCtx && demoCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: demoCtx.spotUsd,
+        priceChange: demoCtx.priceChange,
       });
     }
   }
