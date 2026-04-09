@@ -305,11 +305,6 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 
     <div v-if="!loading" class="stats-grid" style="margin-bottom: 16px;">
       <div class="stat-card">
-        <div class="stat-label">Total Agents</div>
-        <div class="stat-value">{{ agents.length }}</div>
-        <div class="stat-change">{{ runningCount }} running</div>
-      </div>
-      <div class="stat-card">
         <div class="stat-label">Total Trades</div>
         <div class="stat-value">{{ stats?.totalTrades ?? '—' }}</div>
         <div class="stat-change">{{ stats?.openTrades ?? 0 }} open</div>

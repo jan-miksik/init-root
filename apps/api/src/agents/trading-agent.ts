@@ -1,14 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import { drizzle } from 'drizzle-orm/d1';
 import type { Env } from '../types/env.js';
-import { performanceSnapshots, trades } from '../db/schema.js';
 import { PaperEngine } from '../services/paper-engine.js';
-import type { Position } from '../services/paper-engine.js';
 import { runAgentLoop, executeTradeDecision, type PendingLlmContext, type RecentDecision } from './agent-loop.js';
-import { generateId, nowIso } from '../lib/utils.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { migrateStorage } from '../lib/do-storage-migration.js';
 import { intervalToMs, normalizeTradingInterval } from '@something-in-loop/shared';
+import { persistTrade, savePerformanceSnapshot } from './trading-agent/persistence.js';
 
 /**
  * Minimal agent row fields cached in DO storage.
@@ -329,7 +327,7 @@ export class TradingAgentDO extends DurableObject<Env> {
 
       try {
         await this.ctx.storage.put('pendingTrade', closed);
-        await this.persistTrade(closed);
+        await persistTrade(this.env, closed);
         await this.ctx.storage.delete('pendingTrade');
         await this.ctx.storage.delete(`priceMiss:${positionId}`);
       } catch (err) {
@@ -593,7 +591,7 @@ export class TradingAgentDO extends DurableObject<Env> {
       await this.ctx.storage.put('tickCount', tickCount);
 
       if (tickCount % 6 === 0) {
-        await this.savePerformanceSnapshot(agentId, engine);
+        await savePerformanceSnapshot(this.env, agentId, engine);
       }
     } catch (err) {
       console.error(`[TradingAgentDO] unexpected alarm error for ${agentId}:`, err);
@@ -631,103 +629,4 @@ export class TradingAgentDO extends DurableObject<Env> {
     }
   }
 
-  private async savePerformanceSnapshot(
-    agentId: string,
-    engine: PaperEngine
-  ): Promise<void> {
-    try {
-      const db = drizzle(this.env.DB);
-      const closed = engine.closedPositions;
-      const totalTrades = closed.length;
-      const winRate = engine.getWinRate();
-      // Use realized P&L only for the snapshot — engine.balance deducts locked capital
-      // for open positions which makes P&L look negative when it isn't.
-      const realizedPnlUsd = closed.reduce((sum, p) => sum + (p.pnlUsd ?? 0), 0);
-      const serialized = engine.serialize();
-      const initialBalance = serialized.initialBalance;
-      // Balance = cash + open positions at cost (= initial + realized P&L)
-      const openAtCost = serialized.positions.reduce((sum, p) => sum + p.amountUsd, 0);
-      const balanceAtCost = serialized.balance + openAtCost;
-      const totalPnlPct = initialBalance > 0 ? (realizedPnlUsd / initialBalance) * 100 : 0;
-
-      // Simplified Sharpe (assume 0% risk-free, using stddev of pnl pcts)
-      let sharpeRatio: number | null = null;
-      if (closed.length >= 5) {
-        const pnls = closed.map((t) => t.pnlPct ?? 0);
-        const mean = pnls.reduce((a, b) => a + b, 0) / pnls.length;
-        const variance =
-          pnls.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / pnls.length;
-        const stddev = Math.sqrt(variance);
-        sharpeRatio = stddev > 0 ? mean / stddev : 0;
-      }
-
-      // Max drawdown from closed trades
-      let maxDrawdown: number | null = null;
-      if (closed.length >= 2) {
-        let peak = 0;
-        let drawdown = 0;
-        let cumPnl = 0;
-        for (const t of closed) {
-          cumPnl += t.pnlPct ?? 0;
-          if (cumPnl > peak) peak = cumPnl;
-          const dd = peak - cumPnl;
-          if (dd > drawdown) drawdown = dd;
-        }
-        maxDrawdown = drawdown;
-      }
-
-      await db.insert(performanceSnapshots).values({
-        id: generateId('snap'),
-        agentId,
-        balance: balanceAtCost,
-        totalPnlPct,
-        winRate,
-        totalTrades,
-        sharpeRatio,
-        maxDrawdown,
-        snapshotAt: nowIso(),
-      });
-    } catch (err) {
-      console.warn(`[TradingAgentDO] Failed to save snapshot:`, err);
-    }
-  }
-
-  private async persistTrade(position: Position): Promise<void> {
-    const db = drizzle(this.env.DB);
-    await db
-      .insert(trades)
-      .values({
-        id: position.id,
-        agentId: position.agentId,
-        pair: position.pair,
-        dex: position.dex,
-        side: position.side,
-        entryPrice: position.entryPrice,
-        exitPrice: position.exitPrice ?? null,
-        amountUsd: position.amountUsd,
-        pnlPct: position.pnlPct ?? null,
-        pnlUsd: position.pnlUsd ?? null,
-        confidenceBefore: position.confidenceBefore,
-        confidenceAfter: position.confidenceAfter ?? null,
-        reasoning: position.reasoning,
-        strategyUsed: position.strategyUsed,
-        slippageSimulated: position.slippageSimulated,
-        status: position.status,
-        closeReason: position.closeReason ?? null,
-        openedAt: position.openedAt,
-        closedAt: position.closedAt ?? null,
-      })
-      .onConflictDoUpdate({
-        target: trades.id,
-        set: {
-          exitPrice: position.exitPrice ?? null,
-          pnlPct: position.pnlPct ?? null,
-          pnlUsd: position.pnlUsd ?? null,
-          confidenceAfter: position.confidenceAfter ?? null,
-          status: position.status,
-          closeReason: position.closeReason ?? null,
-          closedAt: position.closedAt ?? null,
-        },
-      });
-  }
 }
