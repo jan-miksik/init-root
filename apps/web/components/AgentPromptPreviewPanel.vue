@@ -7,7 +7,7 @@ import { useAgentPromptPreview, type PromptFormState } from '~/composables/useAg
 const props = defineProps({
   formRef: {
     type: Object as PropType<PromptFormState | null>,
-    required: true,
+    default: null,
   },
   marketDataPreviewText: {
     type: String,
@@ -20,6 +20,10 @@ const props = defineProps({
   previewError: {
     type: String,
     default: '',
+  },
+  initiallyExpanded: {
+    type: Boolean,
+    default: true,
   },
 });
 
@@ -56,6 +60,7 @@ const {
   formRef: toRef(props, 'formRef'),
   marketDataPreviewText: toRef(props, 'marketDataPreviewText'),
   fallbackEditableSetup: toRef(props, 'fallbackEditableSetup'),
+  initiallyExpanded: toRef(props, 'initiallyExpanded'),
 });
 
 function togglePromptPreviewExpanded() {

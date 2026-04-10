@@ -1,35 +1,31 @@
 <script setup lang="ts">
 import initRootLogoWithText from '~/assets/initRootLogoWithTextWhite.png';
+import { doesSessionMatchWallet } from '~/utils/auth-session';
 
 const {
   state: initiaState,
   openConnect: openInitiaConnect,
   refresh: refreshInitia,
 } = useInitiaBridge();
-const { isAuthenticated, fetchMe } = useAuth();
+const { isAuthenticated, authResolved, fetchMe, signIn, signOut, user } = useAuth();
 const connecting = ref(false);
 const connectError = ref<string | null>(null);
 const walletConnected = computed(() => !!(initiaState.value.initiaAddress || initiaState.value.evmAddress));
+const sessionMatchesConnectedWallet = computed(() => doesSessionMatchWallet(
+  user.value?.walletAddress,
+  [initiaState.value.evmAddress, initiaState.value.initiaAddress],
+));
 const visibleError = computed(() => connectError.value ?? initiaState.value.error);
 
-// When wallet connects (bridge state updates), trigger hackathon auth + redirect.
-// openConnect() is fire-and-forget — the modal resolves async via bridge state events,
-// so we watch the result rather than awaiting it directly.
-watch(walletConnected, async (connected) => {
-  if (!connected || isAuthenticated.value) return;
-
+async function ensureSignedSession(evmAddress: string): Promise<void> {
   connecting.value = true;
   connectError.value = null;
   try {
-    const addr = initiaState.value.evmAddress ?? initiaState.value.initiaAddress;
-    if (!addr) return;
+    if (isAuthenticated.value && !sessionMatchesConnectedWallet.value) {
+      await signOut({ redirectToConnect: false, clearWalletState: false });
+    }
 
-    await $fetch('/api/auth/hackathon-session', {
-      method: 'POST',
-      credentials: 'include',
-      body: { walletAddress: addr },
-    });
-    await fetchMe();
+    await signIn({ walletAddress: evmAddress });
 
     if (isAuthenticated.value) {
       await navigateTo('/agents', { replace: true });
@@ -41,11 +37,30 @@ watch(walletConnected, async (connected) => {
   } finally {
     connecting.value = false;
   }
-});
+}
+
+// When the wallet bridge exposes the connected EVM address, restore or create
+// the signed session for that wallet.
+watch([() => initiaState.value.evmAddress, authResolved], async ([evmAddress, resolved]) => {
+  if (!resolved || !evmAddress || connecting.value) return;
+
+  if (isAuthenticated.value && sessionMatchesConnectedWallet.value) {
+    await navigateTo('/agents', { replace: true });
+    return;
+  }
+
+  await ensureSignedSession(evmAddress);
+}, { immediate: true });
 
 onMounted(async () => {
   await Promise.allSettled([refreshInitia(), fetchMe()]);
-  if (isAuthenticated.value && walletConnected.value) {
+
+  if (isAuthenticated.value && !walletConnected.value) {
+    await navigateTo('/agents', { replace: true });
+    return;
+  }
+
+  if (isAuthenticated.value && sessionMatchesConnectedWallet.value) {
     await navigateTo('/agents', { replace: true });
   }
 });

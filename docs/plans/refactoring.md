@@ -29,7 +29,6 @@ Gemini 3 Flash for apps/web/**
 
   - Frontend:
       - apps/web/pages/agents/[id]/index.vue
-      - apps/web/pages/managers/[id]/index.vue
       - apps/web/components/AgentConfigForm.vue
       - apps/web/components/ManagerConfigForm.vue
       - apps/web/utils/initia/react-bridge.ts
@@ -69,98 +68,13 @@ Gemini 3 Flash for apps/web/**
   - *-types.ts:
       - shared types only, no behavior
 
-  ## Phase 1: Finish Frontend Shell Decomposition
+  ## Completed: Phase 1 & 2 (Frontend & Bridge)
 
-  Priority: highest
+  - [x] **Agent/Manager Detail Pages**: Refactored monolithic pages into thin route shells with feature composables and modular sections.
+  - [x] **Config Forms**: Decomposed `AgentConfigForm` and `ManagerConfigForm` into shared presentational sections and feature-based logic.
+  - [x] **Initia Bridge**: Modularized `react-bridge.ts` into specialized units (`bootstrap`, `sync`, `actions`, `events`).
 
-  ### 1. Agent Detail Page
-
-  Refactor apps/web/pages/agents/[id]/index.vue into a route shell plus feature sections.
-
-  Target structure:
-
-  - apps/web/features/agents/detail/useAgentDetailPage.ts
-  - apps/web/components/agent-detail/AgentHeaderSection.vue
-  - apps/web/components/agent-detail/AgentStatsSection.vue
-  - apps/web/components/agent-detail/AgentPersonaSection.vue
-  - apps/web/components/agent-detail/AgentOnchainSection.vue
-  - apps/web/components/agent-detail/AgentLiveStatusSection.vue
-  - keep existing:
-      - apps/web/components/agent-detail/AgentDecisionsLog.vue
-      - apps/web/components/agent-detail/AgentPositionsSection.vue
-
-  Outcome:
-
-  - page file under 300-400 LOC
-  - each section under 250 LOC where possible
-
-  ### [x] 2. Manager Detail Page
-
-  Refactor apps/web/pages/managers/[id]/index.vue with the same pattern.
-
-  Target structure:
-
-  - [x] apps/web/features/managers/detail/useManagerDetailPage.ts
-  - [x] apps/web/components/manager-detail/ManagerHeaderSection.vue
-  - [x] apps/web/components/manager-detail/ManagerStatsSection.vue
-  - [x] apps/web/components/manager-detail/ManagerPromptSection.vue
-  - [x] apps/web/components/manager-detail/ManagerLogsSection.vue
-  - [x] apps/web/components/manager-detail/ManagerAgentsSection.vue
-
-  Outcome:
-
-  - [x] page becomes shell-only
-  - [x] manager-specific derived state moves into one composable
-
-  ### 3. Finish Form Decomposition
-
-  Continue reducing:
-
-  - apps/web/components/AgentConfigForm.vue
-  - apps/web/components/ManagerConfigForm.vue
-
-  Target structure:
-
-  - apps/web/features/agents/config/useAgentConfigForm.ts
-  - apps/web/features/managers/config/useManagerConfigForm.ts
-  - form sections:
-      - BasicsSection.vue
-      - ModelSection.vue
-      - PersonaSection.vue
-      - RiskSection.vue
-      - PromptPreviewSection.vue
-
-  Outcome:
-
-  - form components become composition shells
-  - business logic moves into feature composables
-  - section names become grep-friendly
-
-  ## Phase 2: Split Initia Bridge and Onchain Workflows
-
-  Priority: highest
-
-  Refactor apps/web/utils/initia/react-bridge.ts.
-
-  Target structure:
-
-  - apps/web/utils/initia/provider-bootstrap.ts
-  - apps/web/utils/initia/wallet-sync.ts
-  - apps/web/utils/initia/contract-reads.ts
-  - apps/web/utils/initia/contract-writes.ts
-  - apps/web/utils/initia/event-bridge.ts
-
-  Add higher-level composables:
-
-  - apps/web/composables/useInitiaWalletGate.ts
-  - apps/web/composables/useInitiaAgentSync.ts
-  - apps/web/composables/useInitiaFundingActions.ts
-
-  Outcome:
-
-  - low-level bridge code separated from UI workflows
-  - pages/components stop assembling wallet + tx + sync logic ad hoc
-  - AI agent can choose between “bridge internals” and “page flow” quickly
+  ---
 
   ## Phase 3: Backend Agent Runtime Modularization
 
@@ -304,18 +218,17 @@ Gemini 3 Flash for apps/web/**
 
   Add short local READMEs at feature roots.
 
-  Must exist:
-
-  - apps/web/features/agents/create/README.md
-  - apps/web/features/agents/detail/README.md
-  - apps/web/features/agents/edit/README.md
-  - apps/web/features/managers/detail/README.md
-  - apps/web/features/agents/config/README.md
-  - apps/web/features/managers/config/README.md
-  - apps/web/utils/initia/README.md
-  - apps/api/src/agents/README.md
-  - apps/api/src/routes/README.md
-  - apps/api/src/services/README.md
+  Status:
+  - [x] apps/web/features/agents/create/README.md
+  - [ ] apps/web/features/agents/detail/README.md
+  - [ ] apps/web/features/agents/edit/README.md
+  - [x] apps/web/features/managers/detail/README.md
+  - [ ] apps/web/features/agents/config/README.md
+  - [ ] apps/web/features/managers/config/README.md
+  - [x] apps/web/utils/initia/README.md
+  - [x] apps/api/src/agents/README.md
+  - [x] apps/api/src/routes/README.md
+  - [ ] apps/api/src/services/README.md
 
   Each README should answer:
 
@@ -343,11 +256,11 @@ Gemini 3 Flash for apps/web/**
 
   Replace with module-aligned tests, for example:
 
-  - llm-router.test.ts
-  - agent-loop-market.test.ts
-  - agent-route-persona.test.ts
-  - auth-session.test.ts
-  - coingecko-normalization.test.ts
+  - [x] coingecko-price.test.ts
+  - [ ] agent-loop.test.ts
+  - [x] managers-route-utils.test.ts
+  - [ ] auth-session.test.ts
+  - [x] pairs-normalization.test.ts
 
   Rules:
 
@@ -412,17 +325,12 @@ Gemini 3 Flash for apps/web/**
 
   ## Recommended Execution Order
 
-  1. apps/web/pages/managers/[id]/index.vue
-  2. apps/web/pages/agents/[id]/index.vue final split pass
-  3. apps/web/utils/initia/react-bridge.ts
-  4. apps/web/components/AgentConfigForm.vue and apps/web/components/ManagerConfigForm.vue final
-     composable extraction
-  5. apps/api/src/agents/trading-agent.ts
-  6. apps/api/src/services/llm-router.ts
-  7. apps/api/src/services/coingecko-price.ts and apps/api/src/agents/agent-loop/market.ts
-  8. route helper unification
-  9. test renaming and duplication cleanup
-  10. hygiene scripts and README completion
+  1. apps/api/src/agents/trading-agent.ts
+  2. apps/api/src/services/llm-router.ts
+  3. apps/api/src/services/coingecko-price.ts and apps/api/src/agents/agent-loop/market.ts
+  4. route helper unification
+  5. test renaming and duplication cleanup
+  6. hygiene scripts and README completion
 
   ## Definition Of Done
 
@@ -435,5 +343,16 @@ Gemini 3 Flash for apps/web/**
   - phase-style tests are gone
   - structural hygiene checks are in place
 
-  If you want, I can turn this into an execution checklist and start Phase 1 immediately with
-  apps/web/pages/managers/[id]/index.vue.
+---
+
+# COMPLETED TASKS
+
+### Phase 1 & 2: Frontend & Bridge Modularization
+- [x] **Agent/Manager Detail Pages**: Lean route shells + feature composables.
+- [x] **Config Forms**: Shared sections + logical composables.
+- [x] **Initia Bridge**: Domain-split logic unit.
+- [x] **Outcome**: High predictability and reduced token scanning for frontend tasks.
+
+### Completed READMEs & Tests
+- [x] READMEs: `agents/create`, `managers/detail`, `initia`, `api/agents`, `api/routes`.
+- [x] Tests: `coingecko-price`, `managers-route-utils`, `pairs-normalization`.

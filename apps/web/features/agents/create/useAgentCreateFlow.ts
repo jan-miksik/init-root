@@ -188,7 +188,7 @@ export function useAgentCreateFlow() {
     }
   }
 
-  async function handleNext(payload: Partial<CreateAgentPayload>) {
+  async function executeCreateStep(payload: Partial<CreateAgentPayload>) {
     creating.value = true;
     try {
       await ensureWalletConnected();
@@ -203,7 +203,8 @@ export function useAgentCreateFlow() {
         currentPaperBalance.value = 0;
       }
 
-      await ensureOnchainAgent({ forceCreate: true, autoSign: false });
+      const autoSign = autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignEnabled.value;
+      await ensureOnchainAgent({ forceCreate: true, autoSign });
       await refresh();
       await syncInitiaState('create-step-onchain');
       step.value = 2;
@@ -223,6 +224,12 @@ export function useAgentCreateFlow() {
       creating.value = false;
       onchainStatus.value = '';
     }
+  }
+
+  async function handleNext(payload: Partial<CreateAgentPayload>) {
+    await runWithAutoSignCheck('createAgentOnchain', async () => {
+      await executeCreateStep(payload);
+    });
   }
 
   async function handleDeposit() {

@@ -1,8 +1,8 @@
 /**
  * useAuth — authentication state + SIWE sign-in/out.
  *
- * Uses Interwoven wallet provider for message signing (SIWE) and hackathon
- * session bootstrap. Safe to call from plugins, middleware, and components alike.
+ * Uses the Interwoven wallet provider for signed session creation and HttpOnly
+ * cookie restore. Safe to call from plugins, middleware, and components alike.
  */
 import { ref, computed } from 'vue';
 import { createSiweMessage } from 'viem/siwe';
@@ -25,26 +25,22 @@ export interface AuthUser {
   openRouterKeySet: boolean;
 }
 
+interface SignInOptions {
+  email?: string;
+  displayName?: string;
+  avatarUrl?: string;
+  walletAddress?: string;
+}
+
+interface SignOutOptions {
+  redirectToConnect?: boolean;
+  clearWalletState?: boolean;
+}
+
 const authUser = ref<AuthUser | null>(null);
 const authLoading = ref(false);
 const authResolved = ref(false);
 let fetchMePromise: Promise<void> | null = null;
-
-// ─── Auto-disconnect hook ─────────────────────────────────────────────────────
-// Called when Interwoven wallet becomes disconnected.
-
-export async function handleWalletDisconnect(): Promise<boolean> {
-  if (!authUser.value) return false; // nothing to sign out of
-  // Dev/test sessions have no wallet connection — don't sign them out on disconnect
-  if (authUser.value.authProvider === 'playwright') return false;
-  authUser.value = null;
-  try {
-    await $fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-  } catch {
-    // Session already gone — that's fine
-  }
-  return true;
-}
 
 // ─── Composable ───────────────────────────────────────────────────────────────
 
@@ -89,16 +85,15 @@ export function useAuth() {
    * Optional: pass profile fields from email/social logins so they're
    * stored in the users table alongside the wallet address.
    */
-  async function signIn(opts?: {
-    email?: string;
-    displayName?: string;
-    avatarUrl?: string;
-  }): Promise<void> {
-    let addr = wallet.walletAddress.value;
+  async function signIn(opts?: SignInOptions): Promise<void> {
+    let addr = opts?.walletAddress ?? wallet.walletAddress.value ?? await wallet.syncWalletAddress();
     if (!addr) {
       addr = await wallet.connectWallet();
     }
     if (!addr) throw new Error('No wallet connected');
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+      throw new Error('Connected wallet did not expose an EVM address for sign-in.');
+    }
 
     authLoading.value = true;
     try {
@@ -135,7 +130,7 @@ export function useAuth() {
     }
   }
 
-  /** Hackathon sign-in flow: create session directly from connected wallet. */
+  /** Dev/test bypass sign-in flow: create session directly from connected wallet. */
   async function signInHackathon(): Promise<void> {
     let addr = wallet.walletAddress.value;
     if (!addr) {
@@ -158,15 +153,18 @@ export function useAuth() {
   }
 
   /** Sign out: invalidate server session + clear local wallet state cache. */
-  async function signOut(): Promise<void> {
+  async function signOut(opts?: SignOutOptions): Promise<void> {
     try {
       await $fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     } catch {
       // Still clear local state even if server call fails
     }
     authUser.value = null;
-    wallet.clearWalletState();
-    if (import.meta.client) {
+    authResolved.value = true;
+    if (opts?.clearWalletState !== false) {
+      wallet.clearWalletState();
+    }
+    if ((opts?.redirectToConnect ?? true) && import.meta.client) {
       await navigateTo('/connect');
     }
   }

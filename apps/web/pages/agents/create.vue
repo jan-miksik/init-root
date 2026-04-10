@@ -91,7 +91,7 @@ const {
       </div>
 
       <div class="edit-page__right">
-        <AgentPromptPreviewPanel :form-ref="configFormRef" />
+        <AgentPromptPreviewPanel :form-ref="configFormRef" :initially-expanded="false" />
       </div>
     </div>
 

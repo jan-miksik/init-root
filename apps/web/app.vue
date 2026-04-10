@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { handleWalletDisconnect } from '~/composables/useAuth';
 import initRootLogoWithText from '~/assets/initRootLogoWithTextWhite.png';
+import { doesSessionMatchWallet } from '~/utils/auth-session';
 
 // Feature flag — set to false to remove the beta badge sitewide
 const IS_BETA = true;
 
-const { user, isAuthenticated } = useAuth();
+const { user, isAuthenticated, signOut } = useAuth();
 const {
   state: initiaState,
   openConnect: openInitiaConnect,
@@ -16,10 +16,16 @@ const {
 const { showNotification } = useNotification();
 const walletActionError = ref<string | null>(null);
 const walletConnected = computed(() => !!(initiaState.value.initiaAddress || initiaState.value.evmAddress));
-const shouldEnforceWalletSession = computed(() => {
-  if (!isAuthenticated.value || !user.value) return false;
-  return user.value.authProvider !== 'playwright';
-});
+const displayedWalletAddress = computed(() => (
+  initiaState.value.evmAddress
+  || initiaState.value.initiaAddress
+  || user.value?.walletAddress
+  || ''
+));
+const sessionMatchesConnectedWallet = computed(() => doesSessionMatchWallet(
+  user.value?.walletAddress,
+  [initiaState.value.evmAddress, initiaState.value.initiaAddress],
+));
 const route = useRoute();
 const isConnectRoute = computed(() => route.path === '/connect');
 
@@ -37,13 +43,11 @@ onMounted(() => {
 });
 
 watch(
-  [() => initiaState.value.ready, walletConnected, shouldEnforceWalletSession],
-  async ([ready, connected, enforce]) => {
-    if (!ready || connected || !enforce) return;
-    await handleWalletDisconnect();
-    if (route.path !== '/connect') {
-      await navigateTo('/connect', { replace: true });
-    }
+  [() => initiaState.value.ready, () => isAuthenticated.value, () => user.value?.authProvider, walletConnected, sessionMatchesConnectedWallet],
+  async ([ready, authenticated, authProvider, connected, matches]) => {
+    if (!ready || !authenticated || authProvider === 'playwright' || !connected || matches) return;
+    await signOut({ redirectToConnect: false, clearWalletState: false });
+    if (route.path !== '/connect') await navigateTo('/connect', { replace: true });
   },
   { immediate: true },
 );
@@ -109,7 +113,7 @@ async function handleWalletClick() {
             class="wallet-dot"
             :class="{ 'wallet-dot--disconnected': !walletConnected }"
           />
-          <span v-if="user && walletConnected">{{ truncate(user.walletAddress) }}</span>
+          <span v-if="user">{{ truncate(displayedWalletAddress) }}</span>
           <span v-else>Connect</span>
         </button>
       </div>
@@ -120,14 +124,14 @@ async function handleWalletClick() {
         <span v-if="IS_BETA" class="beta-badge">Beta</span>
       </NuxtLink>
       <div class="navbar-nav">
-        <template v-if="isAuthenticated && walletConnected">
+        <template v-if="isAuthenticated">
           <NuxtLink to="/agents">Agents</NuxtLink>
           <NuxtLink to="/trades">Trades</NuxtLink>
         </template>
         <NuxtLink to="/about">About</NuxtLink>
       </div>
       <div class="navbar-auth">
-        <template v-if="isAuthenticated && user && walletConnected">
+        <template v-if="isAuthenticated && user">
           <NuxtLink to="/settings" class="settings-icon-btn" title="Settings">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -139,8 +143,11 @@ async function handleWalletClick() {
             class="wallet-trigger"
             @click="handleWalletClick"
           >
-            <span class="wallet-dot" />
-            {{ truncate(user.walletAddress) }}
+            <span
+              class="wallet-dot"
+              :class="{ 'wallet-dot--disconnected': !walletConnected }"
+            />
+            {{ truncate(displayedWalletAddress) }}
             <span
               v-if="user.authProvider && user.authProvider !== 'wallet'"
               class="provider-badge"

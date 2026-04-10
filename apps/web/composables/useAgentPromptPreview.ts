@@ -109,10 +109,11 @@ export function useAgentPromptPreview(options: {
   formRef: Ref<PromptFormState | null | undefined>;
   marketDataPreviewText: Ref<string | undefined>;
   fallbackEditableSetup: Ref<string | undefined>;
+  initiallyExpanded?: Ref<boolean | undefined>;
 }) {
   const showMdPreview = ref(false);
   const showSetupDiff = ref(false);
-  const promptPreviewExpanded = ref(true);
+  const promptPreviewExpanded = ref(options.initiallyExpanded?.value ?? true);
   const systemExpanded = ref(false);
   const marketDataExpanded = ref(false);
   const setupExpanded = ref(true);
