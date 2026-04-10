@@ -1,10 +1,14 @@
 import { useCallback } from 'react';
-import { createPublicClient, http as viemHttp } from 'viem';
 import { AGENT_ABI, ERC20_ABI } from '~/utils/initia/bridge/abi';
 import { EMPTY_AGENT_STATE, type AgentState } from '~/utils/initia/bridge/state';
 
+interface WalletSyncPublicClient {
+  readContract: (args: any) => Promise<any>;
+  getBalance: (args: { address: `0x${string}` }) => Promise<bigint>;
+}
+
 export function useWalletSync(params: {
-  publicClient: ReturnType<typeof createPublicClient>;
+  publicClient: WalletSyncPublicClient;
   normalizedEvmAddress: `0x${string}` | null;
   normalizedContractAddress: `0x${string}` | null;
   showcaseTokenAddress: `0x${string}` | null;

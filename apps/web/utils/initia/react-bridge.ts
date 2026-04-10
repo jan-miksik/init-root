@@ -111,6 +111,30 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: any
     }
   }, [openBridge, options.bridgeUrl]);
 
+  useEffect(() => {
+    const win = window as Window & {
+      __initiaBridgeApi?: {
+        openConnect?: () => Promise<void> | void;
+        openWallet?: () => Promise<void> | void;
+        openBridge?: (params?: InitiaBridgeOpenParams) => Promise<void> | void;
+        refresh?: () => Promise<void> | void;
+      };
+    };
+
+    win.__initiaBridgeApi = {
+      openConnect,
+      openWallet,
+      openBridge: safeOpenBridge,
+      refresh,
+    };
+
+    return () => {
+      if (win.__initiaBridgeApi?.openConnect === openConnect) {
+        delete win.__initiaBridgeApi;
+      }
+    };
+  }, [openConnect, openWallet, refresh, safeOpenBridge]);
+
   useBridgeEvents({
     openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId,
     initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, options

@@ -208,13 +208,13 @@ export function useInitiaBridge() {
   async function openConnect() {
     await waitForBridgeReady();
     if (invokeDirectModalAction('openConnect')) return;
-    throw new Error('Initia wallet bridge is ready but openConnect API is missing.');
+    await sendBridgeAction({ action: 'openConnect' });
   }
 
   async function openWallet() {
     await waitForBridgeReady();
     if (invokeDirectModalAction('openWallet')) return;
-    throw new Error('Initia wallet bridge is ready but openWallet API is missing.');
+    await sendBridgeAction({ action: 'openWallet' });
   }
 
   async function openBridge(params?: InitiaBridgeOpenParams) {

@@ -9,8 +9,8 @@ export function useBridgeEvents(params: {
   openWallet: () => void;
   safeOpenBridge: (p?: InitiaBridgeOpenParams) => Promise<void>;
   refresh: () => Promise<void>;
-  doAgentTx: (a: string, i: string, v?: string, as?: boolean) => Promise<string>;
-  doContractTx: (a: string, c: `0x${string}`, i: string, v?: string, as?: boolean) => Promise<string>;
+  doAgentTx: (a: string, i: string, v?: string, as?: boolean) => Promise<string | null>;
+  doContractTx: (a: string, c: `0x${string}`, i: string, v?: string, as?: boolean) => Promise<string | null>;
   fetchLatestAgentId: (o: `0x${string}`) => Promise<bigint | null>;
   initiaAddressRef: React.MutableRefObject<string | null>;
   evmAddressRef: React.MutableRefObject<`0x${string}` | null>;
