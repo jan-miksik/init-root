@@ -1,24 +1,11 @@
 import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { TradeDecisionSchema, PerpTradeDecisionSchema } from '@something-in-loop/shared';
+import { TradeDecisionSchema, PerpTradeDecisionSchema, buildJsonSchemaInstruction } from '@something-in-loop/shared';
 import type { TradeDecision, PerpTradeDecision, AgentBehaviorConfig } from '@something-in-loop/shared';
 import { sleep } from '../lib/utils.js';
 import { classifyLlmError } from '../lib/agent-errors.js';
 import { BASE_AGENT_PROMPT, buildAnalysisPrompt, buildPerpAnalysisPrompt } from '../agents/prompts.js';
-
-export function buildJsonSchemaInstruction(): string {
-  return `
-IMPORTANT: Respond with ONLY a valid JSON object — no markdown, no code blocks, no explanation.
-The JSON must match this schema exactly:
-{
-  "action": "buy" | "sell" | "hold" | "close",
-  "confidence": <number 0.0–1.0>,
-  "reasoning": "<string>",
-  "targetPair": "<string, optional>",
-  "suggestedPositionSizePct": <number 0–100, optional>
-}`;
-}
 
 /** When true, if the primary model fails we try the user-configured fallback model. No automatic emergency fallbacks. */
 export interface LLMRouterConfig {

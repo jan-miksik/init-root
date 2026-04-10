@@ -1,11 +1,15 @@
 import { desc, eq } from 'drizzle-orm';
-import { DEFAULT_AGENT_PROFILE_ID, UpdatePersonaSchema, getAgentPersonaTemplate } from '@something-in-loop/shared';
+import {
+  DEFAULT_AGENT_PROFILE_ID,
+  UpdatePersonaSchema,
+  buildJsonSchemaInstruction,
+  getAgentPersonaTemplate,
+} from '@something-in-loop/shared';
 import { BASE_AGENT_PROMPT, buildAnalysisPrompt } from '../../agents/prompts.js';
 import { resolveAgentPersonaMd } from '../../agents/resolve-agent-persona.js';
 import { agentDecisions, agents, trades } from '../../db/schema.js';
 import { nowIso } from '../../lib/utils.js';
 import { validateBody } from '../../lib/validation.js';
-import { buildJsonSchemaInstruction } from '../../services/llm-router.js';
 import { parseJsonRequired } from '../../lib/json.js';
 import { parseAgentConfig, withOwnedAgent } from './shared.js';
 import type { AgentsRoute } from './shared.js';

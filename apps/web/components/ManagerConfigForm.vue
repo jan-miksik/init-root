@@ -8,12 +8,9 @@ import {
   buildAgentModelCatalog,
   getManagerAllowedAgentModelIds,
   getManagerPersonaTemplate,
-  type ModelCatalogItem,
 } from '@something-in-loop/shared';
 import type { ProfileItem } from '~/composables/useProfiles';
 import { useAuth } from '~/composables/useAuth';
-import { splitManagerPromptSections } from '~/lib/manager-prompt';
-import { renderMarkdown } from '~/utils/markdown';
 
 const props = defineProps<{
   initial?: {
@@ -47,64 +44,11 @@ const emit = defineEmits<{
 
 const { user } = useAuth();
 const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
-const dropdownModel = ref(props.initial?.llmModel ?? DEFAULT_FREE_AGENT_MODEL);
-const customModel = ref('');
-
-// ─── Model picker (table dropdown) ───────────────────────────────────────────
-
-const modelPickerOpen = ref(false);
-const modelQuery = ref('');
-const modelPickerRef = ref<HTMLElement | null>(null);
-
-const MODEL_CATALOG = computed<ModelCatalogItem[]>(() => {
+const MODEL_CATALOG = computed(() => {
   return buildAgentModelCatalog({
     hasOwnOpenRouterKey: hasOwnKey.value,
     isTester: false,
   }).filter((item) => item.tier !== 'tester');
-});
-
-const selectedModelMeta = computed<ModelCatalogItem | null>(() => {
-  const id = customModel.value.trim() || dropdownModel.value;
-  return MODEL_CATALOG.value.find((m) => m.id === id) ?? null;
-});
-
-const filteredModels = computed<ModelCatalogItem[]>(() => {
-  const q = modelQuery.value.trim().toLowerCase();
-  if (!q) return MODEL_CATALOG.value;
-  return MODEL_CATALOG.value.filter((m) =>
-    (m.label + ' ' + m.id + ' ' + (m.desc ?? '')).toLowerCase().includes(q)
-  );
-});
-
-function selectModel(id: string) {
-  dropdownModel.value = id;
-  modelPickerOpen.value = false;
-  modelQuery.value = '';
-}
-
-function closeModelPicker() {
-  modelPickerOpen.value = false;
-  modelQuery.value = '';
-}
-
-function onDocPointerDown(e: PointerEvent) {
-  if (!modelPickerOpen.value) return;
-  const el = modelPickerRef.value;
-  if (el && e.target instanceof Node && !el.contains(e.target)) closeModelPicker();
-}
-
-function onDocKeydown(e: KeyboardEvent) {
-  if (!modelPickerOpen.value) return;
-  if (e.key === 'Escape') closeModelPicker();
-}
-
-onMounted(() => {
-  document.addEventListener('pointerdown', onDocPointerDown);
-  document.addEventListener('keydown', onDocKeydown);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocPointerDown);
-  document.removeEventListener('keydown', onDocKeydown);
 });
 
 // ─── Form state ────────────────────────────────────────────────────────────
@@ -124,14 +68,8 @@ const form = reactive({
 const submitting = ref(false);
 const validationError = ref('');
 
-watch(dropdownModel, (val) => { form.llmModel = val; });
-watch(customModel, (val) => {
-  form.llmModel = val.trim() || dropdownModel.value;
-});
-
 // Accordions — all collapsed by default
 const finetuneOpen = ref(false);
-const personaMdOpen = ref(false);
 const managerConfigOpen = ref(false);
 
 const autoNamePrefKey = computed(() =>
@@ -157,34 +95,6 @@ const behavior = ref<Record<string, unknown>>(props.initial?.behavior ?? {
 
 const personaMd = ref(props.initial?.personaMd ?? '');
 const isPersonaCustomized = ref(!!props.initial?.personaMd);
-const showMdPreview = ref(false);
-const systemExpanded = ref(false);
-const contextExpanded = ref(false);
-const editingSetup = ref(false);
-
-const previewLoading = ref(false);
-const previewError = ref('');
-const lastPromptText = ref('');
-const lastPromptAt = ref<string | null>(null);
-
-async function loadPromptPreview() {
-  if (!props.managerId) return;
-  previewLoading.value = true;
-  previewError.value = '';
-  try {
-    const data = await $fetch<{ promptText: string | null; promptAt: string | null }>(`/api/managers/${props.managerId}/prompt-preview`, {
-      credentials: 'include',
-    });
-    lastPromptText.value = data.promptText ?? '';
-    lastPromptAt.value = data.promptAt ?? null;
-  } catch {
-    previewError.value = 'Prompt preview unavailable — run the manager once';
-    lastPromptText.value = '';
-    lastPromptAt.value = null;
-  } finally {
-    previewLoading.value = false;
-  }
-}
 
 // ─── Behavior → Persona sync helpers ──────────────────────────────────────
 
@@ -407,20 +317,6 @@ const liveEditableSetup = computed(() => {
 
   return parts.filter(Boolean).join('\n\n').trim();
 });
-
-const apiContext = computed(() => splitManagerPromptSections(lastPromptText.value).context);
-const contextNote = computed(() => {
-  if (previewLoading.value) return 'loading…';
-  if (!props.isEdit) return '— available after first run';
-  if (!lastPromptText.value) return '— run manager to populate';
-  return lastPromptAt.value ? `— last run ${new Date(lastPromptAt.value).toLocaleString()}` : '— last run';
-});
-
-onMounted(() => {
-  if (props.isEdit && props.managerId) {
-    loadPromptPreview();
-  }
-});
 </script>
 
 <template>
@@ -447,86 +343,7 @@ onMounted(() => {
     <div class="mcf__section">
       <div class="mcf__section-label">LLM model</div>
       <div class="form-group">
-        <div ref="modelPickerRef" class="model-picker">
-          <button
-            type="button"
-            class="model-picker__btn form-select"
-            :aria-expanded="modelPickerOpen ? 'true' : 'false'"
-            aria-haspopup="dialog"
-            @click="modelPickerOpen = !modelPickerOpen"
-          >
-            <span class="model-picker__btn-left">
-              <span class="model-picker__btn-label">{{ selectedModelMeta?.label ?? (customModel.trim() || dropdownModel) }}</span>
-              <span class="model-picker__btn-sub">
-                <span class="model-picker__mono">{{ customModel.trim() || dropdownModel }}</span>
-                <span v-if="selectedModelMeta" class="model-picker__meta">
-                  · {{ selectedModelMeta.ctx }} · {{ selectedModelMeta.price }}
-                </span>
-              </span>
-            </span>
-            <span class="model-picker__chev" :class="{ open: modelPickerOpen }">›</span>
-          </button>
-
-          <div v-if="modelPickerOpen" class="model-picker__panel" role="dialog" aria-label="Select model">
-            <div class="model-picker__panel-top">
-              <input
-                v-model="modelQuery"
-                class="model-picker__search"
-                placeholder="Search models..."
-                autocomplete="off"
-              />
-              <div class="model-picker__hint">Pick a row · Esc to close</div>
-            </div>
-
-            <div class="model-picker__table">
-              <div class="model-picker__thead">
-                <div>Model</div>
-                <div>Context</div>
-                <div>Price (in/out)</div>
-                <div>Tier</div>
-              </div>
-              <button
-                v-for="m in filteredModels"
-                :key="m.id"
-                type="button"
-                class="model-picker__row"
-                :class="{ active: (customModel.trim() || dropdownModel) === m.id }"
-                @click="selectModel(m.id)"
-              >
-                <div class="model-picker__cell model-picker__model">
-                  <div class="model-picker__model-label">{{ m.label }}</div>
-                  <div class="model-picker__model-id">{{ m.id }}</div>
-                  <div v-if="m.desc" class="model-picker__model-desc">{{ m.desc }}</div>
-                </div>
-                <div class="model-picker__cell model-picker__mono">{{ m.ctx }}</div>
-                <div class="model-picker__cell model-picker__mono">{{ m.price }}</div>
-                <div class="model-picker__cell">
-                  <span class="model-picker__pill" :data-tier="m.tier">{{ m.tier }}</span>
-                </div>
-              </button>
-              <div v-if="filteredModels.length === 0" class="model-picker__empty">
-                No matches.
-              </div>
-            </div>
-          </div>
-        </div>
-        <template v-if="hasOwnKey">
-          <input
-            v-model="customModel"
-            class="form-input"
-            style="margin-top: 8px"
-            placeholder="Or type any model ID..."
-          />
-          <a
-            href="https://openrouter.ai/models"
-            target="_blank"
-            rel="noopener"
-            class="model-browse-link"
-          >Browse all models at openrouter.ai/models ↗</a>
-        </template>
-        <p v-else class="model-nudge">
-          <NuxtLink to="/settings">Connect your OpenRouter key</NuxtLink> to unlock paid models.
-        </p>
+        <ModelPickerField v-model="form.llmModel" :catalog="MODEL_CATALOG" :has-own-key="hasOwnKey" />
       </div>
     </div>
 
@@ -621,86 +438,17 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Prompt preview (last section, same format as agent pages) -->
-    <div class="mcf__prompt-preview">
-      <div class="mcf__prompt-header">
-        <span class="mcf__prompt-title">Prompt Preview</span>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          style="font-size: 11px;"
-          @click.prevent.stop="showMdPreview = !showMdPreview"
-        >
-          {{ showMdPreview ? 'MD ●' : 'MD ○' }}
-        </button>
-      </div>
-
-      <div v-if="previewError" class="mcf__prompt-error">{{ previewError }}</div>
-
-      <div class="mcf__prompt-pills">
-        <button type="button" class="mcf__prompt-pill mcf__prompt-pill--system" @click="systemExpanded = !systemExpanded">
-          <span>[SYSTEM]</span>
-          <span class="mcf__pill-chevron">{{ systemExpanded ? '▾' : '▸' }}</span>
-        </button>
-        <div v-if="systemExpanded" class="mcf__pill-content">
-          <pre v-if="!showMdPreview" class="mcf__code-block">{{ liveSystemPrompt }}</pre>
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <div v-else class="mcf__code-block mcf__code-block--md" v-html="renderMarkdown(liveSystemPrompt)" />
-        </div>
-
-        <button
-          type="button"
-          class="mcf__prompt-pill mcf__prompt-pill--market"
-          :disabled="!managerId"
-          @click="contextExpanded = !contextExpanded"
-        >
-          <span>[PORTFOLIO CONTEXT]</span>
-          <span class="mcf__prompt-pill-meta">
-            <span class="mcf__prompt-pill-note">{{ contextNote }}</span>
-            <span v-if="managerId" class="mcf__pill-chevron">{{ contextExpanded ? '▾' : '▸' }}</span>
-          </span>
-        </button>
-        <div v-if="contextExpanded" class="mcf__pill-content">
-          <pre v-if="!showMdPreview" class="mcf__code-block">{{ apiContext || '(No runtime context yet — run the manager at least once to populate the preview)' }}</pre>
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <div
-            v-else
-            class="mcf__code-block mcf__code-block--md"
-            v-html="renderMarkdown(apiContext || '(No runtime context yet — run the manager at least once to populate the preview)')"
-          />
-        </div>
-      </div>
-
-      <div class="mcf__editable-setup">
-        <div class="mcf__editable-setup-row">
-          <span class="mcf__editable-label">[EDITABLE SETUP]</span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            style="font-size: 11px;"
-            @click="editingSetup = !editingSetup"
-          >
-            {{ editingSetup ? 'Done' : 'Edit' }}
-          </button>
-        </div>
-
-        <template v-if="editingSetup">
-          <div class="mcf__persona-wrap">
-            <PersonaEditor v-model="personaMd" :show-actions="false" @edited="onPersonaEdited" />
-            <div v-if="isPersonaCustomized" class="mcf__restore-row">
-              <button type="button" class="btn btn-ghost btn-sm" @click="restorePersona">
-                ↺ Restore auto-persona
-              </button>
-            </div>
-          </div>
-        </template>
-        <template v-else>
-          <pre v-if="!showMdPreview" class="mcf__code-block">{{ liveEditableSetup }}</pre>
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <div v-else class="mcf__code-block mcf__code-block--md" v-html="renderMarkdown(liveEditableSetup)" />
-        </template>
-      </div>
-    </div>
+    <ManagerPromptPreviewPanel
+      :manager-id="managerId"
+      :is-edit="isEdit"
+      :system-prompt="liveSystemPrompt"
+      :editable-setup="liveEditableSetup"
+      :persona-md="personaMd"
+      :is-persona-customized="isPersonaCustomized"
+      @update:persona-md="personaMd = $event"
+      @edited="onPersonaEdited"
+      @restore="restorePersona"
+    />
 
     <!-- Footer -->
     <div v-if="!hideFooter" class="mcf__footer">
@@ -876,126 +624,6 @@ onMounted(() => {
   user-select: none;
 }
 
-.mcf__persona-wrap {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.mcf__restore-row {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.mcf__prompt-preview {
-  border: 1px solid var(--border, #2a2a2a);
-  border-radius: 10px;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--surface, #141414) 94%, black);
-}
-.mcf__prompt-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--border, #2a2a2a);
-  background: color-mix(in srgb, var(--border, #2a2a2a) 22%, transparent);
-}
-.mcf__prompt-error {
-  padding: 10px 14px;
-  background: color-mix(in srgb, #e55 10%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, #e55 30%, transparent);
-  font-size: 12px;
-  color: #e55;
-}
-.mcf__prompt-title {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--text, #e0e0e0);
-}
-.mcf__prompt-pills {
-  padding: 10px 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.mcf__prompt-pill {
-  width: 100%;
-  border: none;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-muted, #888);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-family: var(--font-mono, monospace);
-  padding: 4px 2px;
-  text-align: left;
-  cursor: pointer;
-}
-.mcf__prompt-pill--system { color: var(--text-muted, #888); }
-.mcf__prompt-pill--market { color: #f59e0b; }
-.mcf__prompt-pill:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.mcf__prompt-pill-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.mcf__pill-chevron {
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.mcf__prompt-pill-note {
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.mcf__pill-content {
-  padding: 0 0 4px 10px;
-}
-.mcf__editable-setup {
-  border-top: 1px solid var(--border, #2a2a2a);
-  margin-top: 8px;
-}
-.mcf__editable-setup-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px 8px;
-}
-.mcf__editable-label {
-  color: #60a5fa;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-family: var(--font-mono, monospace);
-}
-.mcf__code-block {
-  margin: 0;
-  padding: 8px 12px 12px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text, #e0e0e0);
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-mono, monospace);
-}
-.mcf__code-block--md :deep(p) { margin: 0 0 6px; }
-.mcf__code-block--md :deep(ul) { margin: 4px 0; padding-left: 16px; }
-.mcf__code-block--md :deep(li) { margin-bottom: 2px; }
-.mcf__code-block--md :deep(h1),
-.mcf__code-block--md :deep(h2),
-.mcf__code-block--md :deep(h3) { margin: 6px 0 2px; font-size: 12px; font-weight: 700; }
-
 .mcf__config {
   padding: 16px;
   display: flex;
@@ -1042,166 +670,4 @@ onMounted(() => {
   padding-top: 4px;
 }
 
-.model-browse-link {
-  display: block;
-  font-size: 12px;
-  color: var(--accent, #7c6af7);
-  margin-top: 4px;
-  text-decoration: none;
-}
-.model-browse-link:hover { text-decoration: underline; }
-.model-nudge {
-  font-size: 12px;
-  color: var(--text-muted, #555);
-  margin-top: 6px;
-}
-.model-nudge a { color: var(--accent, #7c6af7); }
-
-/* Model picker — table dropdown (shared with AgentConfigForm) */
-.model-picker { position: relative; }
-.model-picker__btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.model-picker__btn-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.model-picker__btn-label {
-  font-weight: 650;
-  letter-spacing: 0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.model-picker__btn-sub {
-  font-size: 11px;
-  color: var(--text-muted, #6a6a6a);
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-}
-.model-picker__meta { white-space: nowrap; opacity: 0.9; }
-.model-picker__mono {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-variant-numeric: tabular-nums;
-}
-.model-picker__chev {
-  font-size: 18px;
-  color: var(--text-muted, #555);
-  transition: transform 0.2s;
-  display: inline-block;
-  transform: rotate(0deg);
-  flex-shrink: 0;
-}
-.model-picker__chev.open { transform: rotate(90deg); }
-
-.model-picker__panel {
-  position: absolute;
-  z-index: 50;
-  left: 0;
-  right: 0;
-  margin-top: 8px;
-  background: color-mix(in srgb, var(--surface, #141414) 92%, black);
-  border: 1px solid var(--border, #2a2a2a);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.model-picker__panel-top {
-  padding: 10px 12px 8px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-bottom: 1px solid var(--border, #2a2a2a);
-  background: color-mix(in srgb, var(--border, #2a2a2a) 20%, transparent);
-}
-.model-picker__search {
-  flex: 1;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid color-mix(in srgb, var(--border, #2a2a2a) 70%, transparent);
-  border-radius: 8px;
-  padding: 9px 10px;
-  font-size: 13px;
-  color: var(--text, #e0e0e0);
-  outline: none;
-}
-.model-picker__search:focus { border-color: var(--accent, #7c6af7); }
-.model-picker__hint {
-  font-size: 10px;
-  color: var(--text-muted, #666);
-  white-space: nowrap;
-}
-
-.model-picker__table { max-height: 360px; overflow: auto; }
-.model-picker__thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) 92px 110px 72px;
-  gap: 10px;
-  padding: 9px 12px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-muted, #666);
-  background: color-mix(in srgb, var(--surface, #141414) 96%, black);
-  border-bottom: 1px solid var(--border, #2a2a2a);
-}
-.model-picker__row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) 92px 110px 72px;
-  gap: 10px;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text, #e0e0e0);
-  cursor: pointer;
-  text-align: left;
-  border-bottom: 1px dashed color-mix(in srgb, var(--border, #2a2a2a) 65%, transparent);
-}
-.model-picker__row:hover {
-  background: color-mix(in srgb, var(--accent, #7c6af7) 10%, transparent);
-}
-.model-picker__row.active {
-  background: color-mix(in srgb, var(--accent, #7c6af7) 18%, transparent);
-  outline: 1px solid color-mix(in srgb, var(--accent, #7c6af7) 55%, transparent);
-  outline-offset: -1px;
-}
-.model-picker__cell { display: flex; align-items: flex-start; }
-.model-picker__model { flex-direction: column; gap: 2px; }
-.model-picker__model-label { font-size: 13px; font-weight: 650; }
-.model-picker__model-id { font-size: 11px; color: var(--text-muted, #777); font-family: inherit; }
-.model-picker__model-desc { font-size: 10px; color: var(--text-muted, #666); }
-
-.model-picker__pill {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border, #2a2a2a) 80%, transparent);
-  background: rgba(0,0,0,0.25);
-  color: var(--text-muted, #aaa);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.model-picker__pill[data-tier="free"] {
-  border-color: color-mix(in srgb, #4ade80 35%, transparent);
-  color: color-mix(in srgb, #4ade80 85%, white);
-}
-.model-picker__pill[data-tier="paid"] {
-  border-color: color-mix(in srgb, #fbbf24 35%, transparent);
-  color: color-mix(in srgb, #fbbf24 85%, white);
-}
-
-.model-picker__empty {
-  padding: 14px 12px;
-  font-size: 12px;
-  color: var(--text-muted, #666);
-}
 </style>
