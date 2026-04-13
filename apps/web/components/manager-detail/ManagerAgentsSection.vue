@@ -15,8 +15,8 @@ defineProps<{
     </div>
 
     <div v-if="managedAgents.length === 0" class="empty-state">
-      <div class="empty-title">No agents yet</div>
-      <p>The manager will create agents based on its strategy when started.</p>
+      <div class="empty-title">No paper agents yet</div>
+      <p>The manager will create paper agents based on its strategy when started.</p>
     </div>
 
     <div v-else class="table-wrap">

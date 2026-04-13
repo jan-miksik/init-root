@@ -140,6 +140,7 @@ async function handleWalletClick() {
       <div class="navbar-nav">
         <template v-if="authenticatedWalletReady">
           <NuxtLink to="/agents">Agents</NuxtLink>
+          <NuxtLink to="/managers">Managers</NuxtLink>
           <NuxtLink to="/trades">Trades</NuxtLink>
         </template>
         <NuxtLink to="/about">About</NuxtLink>

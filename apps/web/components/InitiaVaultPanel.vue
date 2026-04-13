@@ -65,7 +65,7 @@ async function onConsentProceed(useAutoSignChoice: boolean, dontShowAgain: boole
   autoSignMgr.setEnabled(key, useAutoSignChoice);
   autoSignMgr.setDismissed(key, dontShowAgain);
 
-  if (useAutoSignChoice && !autoSignMgr.chainAutoSignEnabled.value) {
+  if (useAutoSignChoice && !autoSignMgr.chainAutoSignGrantEnabled.value) {
     await runAction('enableAutoSign', async () => await enableAutoSign());
   }
 
@@ -180,7 +180,7 @@ async function handleCreateAgentOnchain() {
     return;
   }
   await withAutoSignCheck('createAgentOnchain', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('create', async () => {
       const metadataPointer = { source: 'initroot', createdAt: new Date().toISOString() };
       return await createAgentOnchain(metadataPointer, opts);
@@ -194,7 +194,7 @@ async function handleDepositToken() {
     return;
   }
   await withAutoSignCheck('depositShowcaseToken', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('depositToken', async () => await depositShowcaseToken(tokenAmount.value, opts));
   });
 }
@@ -205,7 +205,7 @@ async function handleWithdrawToken() {
     return;
   }
   await withAutoSignCheck('withdrawShowcaseToken', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('withdrawShowcaseToken') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('withdrawShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('withdrawToken', async () => await withdrawShowcaseToken(tokenAmount.value, opts));
   });
 }
@@ -216,14 +216,14 @@ async function handleMintToken() {
     return;
   }
   await withAutoSignCheck('mintShowcaseToken', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('mintShowcaseToken') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('mintShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('mintToken', async () => await mintShowcaseToken(faucetAmount.value, opts));
   });
 }
 
 async function handleAuthorizeExecutor() {
   await withAutoSignCheck('authorizeExecutor', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('authorizeExecutor') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('authorizeExecutor') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('authorizeExecutor', async () => await authorizeExecutor(opts));
   });
 }
@@ -238,7 +238,7 @@ async function handleDisableAutoSign() {
 
 async function handleExecuteTick() {
   await withAutoSignCheck('executeTick', async () => {
-    const opts = { autoSign: autoSignMgr.isEnabled('executeTick') && autoSignMgr.chainAutoSignEnabled.value };
+    const opts = { autoSign: autoSignMgr.isEnabled('executeTick') && autoSignMgr.chainAutoSignGrantEnabled.value };
     await runAction('executeTick', async () => await executeTick(opts));
   });
 }

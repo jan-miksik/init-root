@@ -142,6 +142,18 @@ contract Agent {
 
     /// @notice Create a new agent vault owned by msg.sender.
     function createAgent(bytes calldata metadata) external returns (uint256 agentId) {
+        agentId = _createAgent(metadata, false);
+    }
+
+    /// @notice Create a new agent vault and optionally enable delegated execution immediately.
+    function createAgentWithDelegatedExecution(bytes calldata metadata, bool delegatedExecutionEnabled)
+        external
+        returns (uint256 agentId)
+    {
+        agentId = _createAgent(metadata, delegatedExecutionEnabled);
+    }
+
+    function _createAgent(bytes calldata metadata, bool delegatedExecutionEnabled) internal returns (uint256 agentId) {
         agentId = nextAgentId;
         unchecked {
             nextAgentId = agentId + 1;
@@ -152,12 +164,15 @@ contract Agent {
             metadata: metadata,
             nativeBalance: 0,
             exists: true,
-            delegatedExecutionEnabled: false,
+            delegatedExecutionEnabled: delegatedExecutionEnabled,
             paused: false,
             maxLeverage: 10
         });
         _ownerAgentIds[msg.sender].push(agentId);
         emit AgentCreated(agentId, msg.sender, metadata, block.timestamp);
+        if (delegatedExecutionEnabled) {
+            emit DelegatedExecutionUpdated(agentId, true);
+        }
     }
 
     function ownerAgentIds(address owner) external view returns (uint256[] memory) {

@@ -4,8 +4,8 @@ import { useManagerConfigForm } from '~/features/managers/config/useManagerConfi
 
 import BasicsSection from '~/components/config/BasicsSection.vue';
 import BehaviorSection from '~/components/config/BehaviorSection.vue';
-import PersonaSection from '~/components/config/PersonaSection.vue';
 import ManagerRiskSection from '~/components/config/ManagerRiskSection.vue';
+import ManagerPromptPreviewPanel from '~/components/manager-config/ManagerPromptPreviewPanel.vue';
 
 const props = defineProps<{
   initial?: any;
@@ -58,11 +58,15 @@ function handleSubmit() {
     submitting.value = false;
   }
 }
+
 </script>
 
 <template>
   <form id="manager-config-form" class="mcf" @submit.prevent="handleSubmit">
     <div v-if="validationError" class="alert alert-error">{{ validationError }}</div>
+    <div class="mcf__paper-note">
+      Managers are paper-only. They can create and control paper trading agents, not live or onchain agents.
+    </div>
 
     <BasicsSection
       v-model:sync-name-with-model="syncName"
@@ -97,6 +101,7 @@ function handleSubmit() {
       :editable-setup="liveEditableSetup"
       :persona-md="personaMd"
       :is-persona-customized="isPersonaCustomized"
+      :initially-expanded="false"
       @update:persona-md="personaMd = $event"
       @edited="onPersonaEdited"
       @restore="restorePersona"
@@ -107,7 +112,7 @@ function handleSubmit() {
       <button v-if="onCancel" type="button" class="btn btn-ghost" @click="onCancel">Cancel</button>
       <button type="submit" class="btn btn-primary" :disabled="submitting">
         <span v-if="submitting" class="spinner" style="width:14px;height:14px;" />
-        {{ isEdit ? 'Save Changes' : 'Create Manager' }}
+        {{ isEdit ? 'Save Changes' : 'Create Paper Manager' }}
       </button>
     </div>
   </form>
@@ -115,5 +120,13 @@ function handleSubmit() {
 
 <style scoped>
 .mcf { display: flex; flex-direction: column; gap: 16px; }
+.mcf__paper-note {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #74d38a) 26%, transparent);
+  background: color-mix(in srgb, var(--accent, #74d38a) 10%, transparent);
+  border-radius: var(--radius, 6px);
+  color: var(--text-dim, #b0aba5);
+  font-size: 12px;
+}
 .mcf__footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 </style>

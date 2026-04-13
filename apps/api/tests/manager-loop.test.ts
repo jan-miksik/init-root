@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   parseManagerDecisions,
   buildManagerPrompt,
@@ -6,6 +6,17 @@ import {
   normalizeManagerAnalysisInterval,
 } from '../src/agents/manager-loop.js';
 import type { ManagedAgentSnapshot, ManagerMemory, ManagerDecision } from '../src/agents/manager-loop.js';
+import { DEFAULT_FREE_AGENT_MODEL } from '@something-in-loop/shared';
+
+const doClientMocks = vi.hoisted(() => ({
+  startTradingAgentDo: vi.fn(),
+  stopTradingAgentDo: vi.fn(),
+  pauseTradingAgentDo: vi.fn(),
+  setTradingAgentIntervalDo: vi.fn(),
+  syncTradingAgentConfigDo: vi.fn(),
+}));
+
+vi.mock('../src/lib/do-clients.js', () => doClientMocks);
 
 const mockAgent: ManagedAgentSnapshot = {
   id: 'agent_001',
@@ -44,6 +55,43 @@ const mockManagerConfig = {
   decisionInterval: '1h' as const,
   riskParams: { maxTotalDrawdown: 0.2, maxAgents: 10, maxCorrelatedPositions: 3 },
 };
+
+function createMockDb(agentRows: Array<Record<string, unknown>>) {
+  const rows = agentRows.map((row) => ({ ...row }));
+  const insertSpy = vi.fn(async (values: Record<string, unknown>) => {
+    rows.push({ ...values });
+  });
+  const updateCalls: Array<Record<string, unknown>> = [];
+  const updateSpy = vi.fn((values: Record<string, unknown>) => {
+    updateCalls.push({ ...values });
+    return {
+      where: async () => undefined,
+    };
+  });
+
+  return {
+    rows,
+    insertSpy,
+    updateCalls,
+    db: {
+      select: () => ({
+        from: () => ({
+          where: async () => rows,
+        }),
+      }),
+      insert: () => ({
+        values: insertSpy,
+      }),
+      update: () => ({
+        set: updateSpy,
+      }),
+    } as any,
+  };
+}
+
+beforeEach(() => {
+  Object.values(doClientMocks).forEach((mock) => mock.mockReset());
+});
 
 describe('parseManagerDecisions', () => {
   it('parses valid JSON array of decisions', () => {
@@ -171,6 +219,17 @@ describe('buildManagerPrompt', () => {
     expect(prompt).toContain('"4h"');
     expect(prompt).toContain('"1d"');
   });
+
+  it('includes a paper-only manager restriction', () => {
+    const prompt = buildManagerPrompt({
+      agents: [mockAgent],
+      marketData: [],
+      memory: mockMemory,
+      managerConfig: mockManagerConfig,
+    });
+    expect(prompt).toContain('Managers are paper-only');
+    expect(prompt).toContain('must never request live, onchain, or Initia-linked agents');
+  });
 });
 
 describe('normalizeManagerAnalysisInterval', () => {
@@ -237,5 +296,131 @@ describe('executeManagerAction', () => {
     );
     expect(result.success).toBe(false);
     expect(result.error).toContain('agentId');
+  });
+
+  it('creates paper agents even if the decision requests live/onchain fields', async () => {
+    const { db, rows, insertSpy } = createMockDb([]);
+    const result = await executeManagerAction(
+      {
+        action: 'create_agent',
+        reasoning: 'launch a new paper agent',
+        params: {
+          name: 'Manager Alpha',
+          chain: 'initia',
+          isPaper: false,
+          initiaWalletAddress: 'init1abc',
+          initiaMetadataHash: 'hash_12345678',
+          llmModel: 'not-an-allowed-model',
+        },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].chain).toBe('base');
+    expect(rows[0].isPaper).toBe(true);
+    const config = JSON.parse(String(rows[0].config));
+    expect(config.isPaper).toBe(true);
+    expect(config.chain).toBe('base');
+    expect(config.initiaWalletAddress).toBeUndefined();
+    expect(config.initiaMetadataHash).toBeUndefined();
+    expect(config.llmModel).toBe(DEFAULT_FREE_AGENT_MODEL);
+    expect(doClientMocks.startTradingAgentDo).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps manager-modified agents in paper mode and strips live fields', async () => {
+    const { db, updateCalls } = createMockDb([
+      {
+        id: 'agent_001',
+        name: 'Managed Paper Agent',
+        status: 'stopped',
+        llmModel: DEFAULT_FREE_AGENT_MODEL,
+        isPaper: true,
+        config: JSON.stringify({
+          name: 'Managed Paper Agent',
+          chain: 'base',
+          isPaper: true,
+          pairs: ['INIT/USD'],
+          strategies: ['combined'],
+          analysisInterval: '1h',
+          paperBalance: 10000,
+          temperature: 0.7,
+        }),
+      },
+    ]);
+
+    const result = await executeManagerAction(
+      {
+        action: 'modify_agent',
+        agentId: 'agent_001',
+        reasoning: 'tighten settings',
+        params: {
+          chain: 'initia',
+          isPaper: false,
+          initiaWalletAddress: 'init1abc',
+          analysisInterval: '4h',
+          paperBalance: 25000,
+        },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].chain).toBe('base');
+    expect(updateCalls[0].isPaper).toBe(true);
+    const config = JSON.parse(String(updateCalls[0].config));
+    expect(config.isPaper).toBe(true);
+    expect(config.chain).toBe('base');
+    expect(config.initiaWalletAddress).toBeUndefined();
+    expect(config.analysisInterval).toBe('4h');
+    expect(config.paperBalance).toBe(25000);
+  });
+
+  it('rejects manager actions against non-paper agents', async () => {
+    const { db, updateCalls } = createMockDb([
+      {
+        id: 'agent_live',
+        name: 'Live Agent',
+        status: 'running',
+        llmModel: DEFAULT_FREE_AGENT_MODEL,
+        isPaper: false,
+        config: JSON.stringify({
+          chain: 'initia',
+          isPaper: false,
+          pairs: ['INIT/USD'],
+          strategies: ['combined'],
+          analysisInterval: '1h',
+          paperBalance: 10000,
+          temperature: 0.7,
+        }),
+      },
+    ]);
+
+    const result = await executeManagerAction(
+      {
+        action: 'modify_agent',
+        agentId: 'agent_live',
+        reasoning: 'change settings',
+        params: { paperBalance: 12345 },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('paper agents');
+    expect(updateCalls).toHaveLength(0);
+    expect(doClientMocks.syncTradingAgentConfigDo).not.toHaveBeenCalled();
   });
 });

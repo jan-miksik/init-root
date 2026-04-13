@@ -6,6 +6,9 @@ const props = defineProps<{
   showAgent?: boolean;
   agentEmojis?: Record<string, string>;
 }>();
+const emit = defineEmits<{
+  (e: 'trade-closed', trade: Trade): void;
+}>();
 
 const { request } = useApi();
 const { pnlClass, closeTrade } = useTrades();
@@ -93,6 +96,14 @@ function sortIcon(key: SortKey) {
   return sortDir.value === 'asc' ? '↑' : '↓';
 }
 
+function effectiveTradePnl(trade: Trade): { pnlPct: number; pnlUsd: number } {
+  const unrealized = getUnrealizedPnl(trade);
+  return {
+    pnlPct: unrealized?.pnlPct ?? trade.pnlPct ?? Number.NEGATIVE_INFINITY,
+    pnlUsd: unrealized?.pnlUsd ?? trade.pnlUsd ?? Number.NEGATIVE_INFINITY,
+  };
+}
+
 function tradeSortValue(trade: Trade, key: SortKey): string | number {
   switch (key) {
     case 'pair':
@@ -102,9 +113,9 @@ function tradeSortValue(trade: Trade, key: SortKey): string | number {
     case 'confidenceBefore':
       return trade.confidenceBefore;
     case 'pnlPct':
-      return trade.pnlPct ?? -Infinity;
+      return effectiveTradePnl(trade).pnlPct;
     case 'pnlUsd':
-      return trade.pnlUsd ?? -Infinity;
+      return effectiveTradePnl(trade).pnlUsd;
     case 'openedAt':
       return trade.openedAt;
   }
@@ -133,11 +144,13 @@ function toggleRow(id: string) {
 
 async function onCloseClick(ev: MouseEvent, trade: Trade) {
   ev.stopPropagation();
+  ev.preventDefault();
   if (trade.status !== 'open') return;
   if (closing.value.has(trade.id)) return;
   closing.value.add(trade.id);
   try {
-    await closeTrade(trade.id);
+    const updatedTrade = await closeTrade(trade.id);
+    emit('trade-closed', updatedTrade);
   } finally {
     closing.value.delete(trade.id);
   }
@@ -215,6 +228,7 @@ function formatAmountUsd(amountUsd: number): string {
                 @click.stop
               >
                 <span v-if="agentEmojis?.[trade.agentId]" class="tt-agent-emoji">{{ agentEmojis[trade.agentId] }}</span>{{ trade.agentName ?? trade.agentId }}
+                <span v-if="trade.isPaper" class="tt-paper-tag">PAPER</span>
               </NuxtLink>
             </td>
             <td class="mono">{{ trade.pair }}</td>
@@ -264,7 +278,7 @@ function formatAmountUsd(amountUsd: number): string {
                 type="button"
                 class="btn btn-ghost btn-sm"
                 :disabled="closing.has(trade.id)"
-                @click="(ev) => onCloseClick(ev, trade)"
+                @click.stop.prevent="(ev) => onCloseClick(ev, trade)"
               >
                 {{ closing.has(trade.id) ? 'Closing…' : 'Close' }}
               </button>
@@ -314,7 +328,9 @@ function formatAmountUsd(amountUsd: number): string {
 .tt-cell-agent { max-width: 0; }
 
 .tt-agent-name {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -324,7 +340,21 @@ function formatAmountUsd(amountUsd: number): string {
 
 .tt-agent-emoji {
   font-style: normal;
-  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.tt-paper-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, #d97706 30%, transparent);
+  border-radius: var(--radius);
+  color: #d97706;
+  background: color-mix(in srgb, #d97706 10%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
 }
 
 .tt-cell-date {

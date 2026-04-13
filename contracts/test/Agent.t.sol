@@ -37,6 +37,16 @@ contract AgentEntryPointTest is Test {
         assertEq(ids[1], a2);
     }
 
+    function test_createAgentWithDelegatedExecution_enablesDelegationImmediately() external {
+        vm.prank(alice);
+        uint256 agentId = agent.createAgentWithDelegatedExecution(bytes("delegated"), true);
+
+        (, , , bool exists, bool delegatedExecutionEnabled, bool paused) = agent.getAgent(agentId);
+        assertTrue(exists);
+        assertTrue(delegatedExecutionEnabled);
+        assertFalse(paused);
+    }
+
     function test_nativeDepositAndWithdraw() external {
         uint256 agentId = _createAliceAgent(bytes("vault"));
 

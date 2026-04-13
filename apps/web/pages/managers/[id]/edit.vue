@@ -45,6 +45,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import ManagerConfigForm from '~/components/ManagerConfigForm.vue';
 
 const route = useRoute();
 const router = useRouter();

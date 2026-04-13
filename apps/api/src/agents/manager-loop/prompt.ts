@@ -65,6 +65,7 @@ export function buildManagerPrompt(ctx: BuildManagerPromptParams): string {
   const personaSection = managerPersonaMd ? `## Your Persona\n${managerPersonaMd}\n` : '';
 
   return `${personaSection}You are an Agent Manager overseeing a portfolio of paper trading agents on Base chain DEXes.
+Managers are paper-only in this product: you may create and manage paper agents only, and you must never request live, onchain, or Initia-linked agents.
 
 ## Managed Agents (${managedAgents.length})
 ${agentSummaries || 'No agents yet.'}
@@ -106,11 +107,11 @@ ${AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
-- "start_agent": start a stopped or paused agent (provide agentId)
-- "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
-- "terminate_agent": permanently stop an agent (provide agentId)
+- "create_agent": spawn a new paper agent. Params: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Never include live/onchain fields such as chain overrides, isPaper=false, Initia metadata, or wallet addresses.
+- "start_agent": start a stopped or paused paper agent (provide agentId)
+- "pause_agent": pause an underperforming paper agent (provide agentId)
+- "modify_agent": change paper-agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc. Never include live/onchain fields or any non-paper transition.
+- "terminate_agent": permanently stop a paper agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 
 IMPORTANT: Respond with ONLY a valid JSON array — no markdown, no explanation.

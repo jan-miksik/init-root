@@ -3,13 +3,9 @@
     <div class="page-header">
       <div>
         <h1 class="page-title">Agent Managers</h1>
-        <p class="page-subtitle">{{ managers.length }} managers · {{ managers.filter(m => m.status === 'running').length }} running</p>
+        <p class="page-subtitle">{{ managers.length }} paper-only managers · {{ managers.filter(m => m.status === 'running').length }} running</p>
       </div>
       <div style="display: flex; gap: 8px; align-items: center;">
-        <div class="view-toggle">
-          <button :class="['toggle-btn', { active: viewMode === 'table' }]" title="Table view" @click="viewMode = 'table'">☰</button>
-          <button :class="['toggle-btn', { active: viewMode === 'grid' }]" title="Grid view" @click="viewMode = 'grid'">⊞</button>
-        </div>
         <NuxtLink to="/managers/new" class="btn btn-primary">+ New Manager</NuxtLink>
       </div>
     </div>
@@ -26,13 +22,12 @@
 
     <div v-else-if="managers.length === 0" class="empty-state">
       <div class="empty-icon">🧠</div>
-      <div class="empty-title">No managers yet</div>
-      <p>Create a manager to autonomously run and optimize your trading agents.</p>
+      <div class="empty-title">No paper managers yet</div>
+      <p>Create a manager to autonomously run and optimize paper trading agents.</p>
       <NuxtLink to="/managers/new" class="btn btn-primary" style="margin-top: 16px;">Create Manager</NuxtLink>
     </div>
 
-    <!-- TABLE VIEW -->
-    <div v-else-if="viewMode === 'table'" class="table-wrap">
+    <div v-else class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -63,15 +58,6 @@
         </tbody>
       </table>
     </div>
-
-    <!-- GRID VIEW -->
-    <div v-else class="agents-grid">
-      <ManagerCard
-        v-for="m in managers"
-        :key="m.id"
-        :manager="m"
-      />
-    </div>
   </main>
 </template>
 
@@ -84,8 +70,6 @@ definePageMeta({ ssr: false });
 
 const { managers, loading: pending, error, fetchManagers } = useManagers();
 await fetchManagers();
-
-const viewMode = ref<'table' | 'grid'>('table');
 
 type SortKey = 'name' | 'status' | 'decisionInterval' | 'agentCount' | 'createdAt';
 type SortDir = 'asc' | 'desc';
@@ -157,29 +141,6 @@ function formatDate(iso: string) {
 </script>
 
 <style scoped>
-.view-toggle {
-  display: flex;
-  gap: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 6px);
-  padding: 2px;
-}
-.toggle-btn {
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: background 0.15s, color 0.15s;
-}
-.toggle-btn.active {
-  background: var(--accent);
-  color: #fff;
-}
 .manager-table-row {
   cursor: pointer;
   transition: background 0.12s;

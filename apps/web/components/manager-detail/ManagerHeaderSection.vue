@@ -43,7 +43,7 @@ defineEmits<{
     <!-- Deciding banner -->
     <div v-if="deciding" class="deciding-banner">
       <span class="deciding-dot" />
-      <span class="deciding-text">Analyzing portfolio &amp; making decisions…</span>
+      <span class="deciding-text">Analyzing paper portfolio &amp; making decisions…</span>
       <span v-if="lastDecisionMs" class="deciding-hint">last cycle took {{ (lastDecisionMs / 1000).toFixed(1) }}s</span>
     </div>
   </div>

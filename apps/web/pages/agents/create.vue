@@ -96,8 +96,7 @@ const {
     </div>
 
     <div v-if="isPaper && step === 1" class="paper-callout">
-      <span class="paper-callout__icon">📄</span>
-      <span>Paper Trading — simulated balance, no wallet or on-chain transaction needed. Set your starting balance below.</span>
+      <span>Paper Trading — simulated balance, no wallet or on-chain transaction needed. You can set your starting balance under Trading Config bellow.</span>
     </div>
 
     <div v-show="step === 1" class="edit-page__body">

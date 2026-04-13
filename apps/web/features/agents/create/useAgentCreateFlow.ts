@@ -204,7 +204,7 @@ export function useAgentCreateFlow() {
         currentPaperBalance.value = 0;
       }
 
-      const autoSign = autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignEnabled.value;
+      const autoSign = autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignGrantEnabled.value;
       await ensureOnchainAgent({ forceCreate: true, autoSign });
       await refresh();
       await syncInitiaState('create-step-onchain');
@@ -278,9 +278,9 @@ export function useAgentCreateFlow() {
       try {
         const balanceBeforeDeposit = currentPaperBalance.value;
         await ensureWalletConnected();
-        const autoSign = autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignEnabled.value;
+        const autoSign = autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
         await ensureOnchainAgent({ autoSign });
-        const result = await depositShowcaseToken(String(amount));
+        const result = await depositShowcaseToken(String(amount), { autoSign });
         await refresh();
         currentPaperBalance.value += amount;
         await updateAgent(createdAgentId.value!, { paperBalance: currentPaperBalance.value });
@@ -350,7 +350,8 @@ export function useAgentCreateFlow() {
     try {
       await ensureWalletConnected();
       await ensureOnchainAgent();
-      const result = await withdrawShowcaseToken(String(amount));
+      const autoSign = autoSignMgr.isEnabled('withdrawShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
+      const result = await withdrawShowcaseToken(String(amount), { autoSign });
       await refresh();
       currentPaperBalance.value = Math.max(0, currentPaperBalance.value - amount);
       await updateAgent(createdAgentId.value, { paperBalance: currentPaperBalance.value });
@@ -410,7 +411,8 @@ export function useAgentCreateFlow() {
     mintingFaucet.value = true;
     try {
       await ensureWalletConnected();
-      const result = await mintShowcaseToken(String(amount));
+      const autoSign = autoSignMgr.isEnabled('mintShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
+      const result = await mintShowcaseToken(String(amount), { autoSign });
       await refresh();
       await syncInitiaState('create-step-mint-iusd-faucet');
       showNotification({

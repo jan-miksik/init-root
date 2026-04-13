@@ -87,8 +87,8 @@ export function useAutoSign() {
   }
 
   function shouldPrompt(actionKey: string): boolean {
-    if (chainAutoSignNeedsRenewal.value) return true;
-    return !chainAutoSignEnabled.value && !isDismissed(actionKey);
+    if (chainAutoSignConfigured.value && !chainAutoSignGrantEnabled.value) return true;
+    return !chainAutoSignGrantEnabled.value && !isDismissed(actionKey);
   }
 
   return {

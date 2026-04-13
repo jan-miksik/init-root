@@ -22,6 +22,18 @@ import {
 } from '@something-in-loop/shared';
 import type { ManagerDecision } from './types.js';
 
+const MANAGER_DISALLOWED_AGENT_PARAMS = new Set([
+  'chain',
+  'isPaper',
+  'initiaWalletAddress',
+  'initiaMetadataHash',
+  'initiaMetadataVersion',
+  'onchainAgentId',
+  'initiaSyncState',
+  'initiaLinkTxHash',
+  'initiaLinkedAt',
+]);
+
 function buildAllowedAgentModels(hasUserOpenRouterKey: boolean): Set<string> {
   return buildManagerAllowedAgentModelSet(hasUserOpenRouterKey);
 }
@@ -34,6 +46,24 @@ function normaliseAgentModel(requested: unknown, allowedModels: Set<string>): st
 
 export function normalizeManagerAnalysisInterval(value: unknown, fallback: string = '1h'): string {
   return normalizeTradingInterval(value, normalizeTradingInterval(fallback, '1h'));
+}
+
+function isPaperAgentRow(agent: { isPaper?: boolean | null; config: string }): boolean {
+  if (agent.isPaper === true) return true;
+  try {
+    const parsed = JSON.parse(agent.config) as { isPaper?: unknown };
+    return parsed.isPaper === true;
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeManagerAgentParams(params: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...params };
+  for (const key of MANAGER_DISALLOWED_AGENT_PARAMS) {
+    delete sanitized[key];
+  }
+  return sanitized;
 }
 
 /** Execute a single manager decision against D1 + DO stubs */
@@ -56,6 +86,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'start_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isPaperAgentRow(agent)) {
+        return { success: false, error: `Manager ${managerId} can only control paper agents` };
+      }
       if (agent.status === 'running') return { success: true, detail: `Agent ${agentId} already running` };
       const agentConfig = JSON.parse(agent.config) as {
         paperBalance?: number;
@@ -76,6 +109,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'pause_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isPaperAgentRow(agent)) {
+        return { success: false, error: `Manager ${managerId} can only control paper agents` };
+      }
       if (agent.status === 'running') {
         await pauseTradingAgentDo(env, agentId);
       }
@@ -87,6 +123,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'terminate_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isPaperAgentRow(agent)) {
+        return { success: false, error: `Manager ${managerId} can only control paper agents` };
+      }
       if (agent.status === 'running' || agent.status === 'paused') {
         await stopTradingAgentDo(env, agentId);
       }
@@ -101,9 +140,13 @@ export async function executeManagerAction(
       if (!agentId || !params) return { success: false, error: 'modify_agent requires agentId and params' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isPaperAgentRow(agent)) {
+        return { success: false, error: `Manager ${managerId} can only control paper agents` };
+      }
       const existingConfig = JSON.parse(agent.config);
       const previousAnalysisInterval = normalizeManagerAnalysisInterval(existingConfig.analysisInterval, '1h');
-      const { personaMd: paramsPersona, ...restParams } = params as Record<string, unknown> & { personaMd?: string };
+      const sanitizedParams = sanitizeManagerAgentParams(params as Record<string, unknown>);
+      const { personaMd: paramsPersona, ...restParams } = sanitizedParams as Record<string, unknown> & { personaMd?: string };
       const patch: Record<string, unknown> = { ...restParams };
       if (typeof patch.llmModel === 'string') {
         patch.llmModel = normaliseAgentModel(patch.llmModel, allowedModels);
@@ -122,9 +165,16 @@ export async function executeManagerAction(
       }
       const mergedConfig = { ...existingConfig, ...patch };
       const nextAnalysisInterval = normalizeManagerAnalysisInterval(mergedConfig.analysisInterval, previousAnalysisInterval);
+      mergedConfig.isPaper = true;
+      mergedConfig.chain = 'base';
+      delete mergedConfig.initiaWalletAddress;
+      delete mergedConfig.initiaMetadataHash;
+      delete mergedConfig.initiaMetadataVersion;
       mergedConfig.analysisInterval = nextAnalysisInterval;
       const analysisIntervalChanged = nextAnalysisInterval !== previousAnalysisInterval;
       const updates: Partial<typeof agents.$inferInsert> = {
+        chain: 'base',
+        isPaper: true,
         config: JSON.stringify(mergedConfig),
         llmModel: (mergedConfig.llmModel ?? agent.llmModel) || DEFAULT_FREE_AGENT_MODEL,
         updatedAt: nowIso(),
@@ -164,37 +214,39 @@ export async function executeManagerAction(
 
     case 'create_agent': {
       if (!params) return { success: false, error: 'create_agent requires params' };
-      const agentName = String(params.name ?? 'Manager-created Agent');
-      const paperBalance = Number(params.paperBalance ?? 10000);
+      const sanitizedParams = sanitizeManagerAgentParams(params as Record<string, unknown>);
+      const agentName = String(sanitizedParams.name ?? 'Manager-created Paper Agent');
+      const paperBalance = Number(sanitizedParams.paperBalance ?? 10000);
       const slippageSimulation = 0.3;
-      const analysisInterval = normalizeManagerAnalysisInterval(params.analysisInterval, '1h');
-      const llmModel = normaliseAgentModel(params.llmModel, allowedModels);
+      const analysisInterval = normalizeManagerAnalysisInterval(sanitizedParams.analysisInterval, '1h');
+      const llmModel = normaliseAgentModel(sanitizedParams.llmModel, allowedModels);
       const validAgentProfileIds = new Set(AGENT_PROFILES.map((p) => p.id));
-      const llmProfileId = typeof params.profileId === 'string' ? params.profileId : null;
+      const llmProfileId = typeof sanitizedParams.profileId === 'string' ? sanitizedParams.profileId : null;
       const profileId = llmProfileId && validAgentProfileIds.has(llmProfileId) ? llmProfileId : null;
       const personaMd =
-        typeof params.personaMd === 'string' && params.personaMd.trim()
-          ? params.personaMd.trim()
+        typeof sanitizedParams.personaMd === 'string' && sanitizedParams.personaMd.trim()
+          ? sanitizedParams.personaMd.trim()
           : profileId
             ? getAgentPersonaTemplate(profileId, agentName)
             : getDefaultAgentPersona(agentName);
-      const normalizedPairs = normalizePairsForDex((params.pairs as string[] | undefined) ?? ['INIT/USD']);
+      const normalizedPairs = normalizePairsForDex((sanitizedParams.pairs as string[] | undefined) ?? ['INIT/USD']);
       const supportedPairs = filterSupportedBasePairs(normalizedPairs);
       const config = {
         name: agentName,
         llmModel,
-        temperature: params.temperature ?? 0.7,
+        temperature: sanitizedParams.temperature ?? 0.7,
         pairs: supportedPairs.length > 0 ? supportedPairs : ['INIT/USD'],
         analysisInterval,
-        strategies: params.strategies ?? ['combined'],
+        strategies: sanitizedParams.strategies ?? ['combined'],
+        isPaper: true,
         paperBalance,
-        maxPositionSizePct: params.maxPositionSizePct ?? 5,
-        maxOpenPositions: params.maxOpenPositions ?? 3,
-        stopLossPct: params.stopLossPct ?? 5,
-        takeProfitPct: params.takeProfitPct ?? 7,
+        maxPositionSizePct: sanitizedParams.maxPositionSizePct ?? 5,
+        maxOpenPositions: sanitizedParams.maxOpenPositions ?? 3,
+        stopLossPct: sanitizedParams.stopLossPct ?? 5,
+        takeProfitPct: sanitizedParams.takeProfitPct ?? 7,
         slippageSimulation,
-        maxDailyLossPct: params.maxDailyLossPct ?? 10,
-        cooldownAfterLossMinutes: params.cooldownAfterLossMinutes ?? 30,
+        maxDailyLossPct: sanitizedParams.maxDailyLossPct ?? 10,
+        cooldownAfterLossMinutes: sanitizedParams.cooldownAfterLossMinutes ?? 30,
         chain: 'base',
         dexes: ['aerodrome', 'uniswap-v3'],
         maxLlmCallsPerHour: 12,
@@ -208,6 +260,8 @@ export async function executeManagerAction(
         name: agentName,
         status: 'running',
         autonomyLevel: 2,
+        chain: 'base',
+        isPaper: true,
         config: JSON.stringify(config),
         llmModel,
         ownerAddress,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ManagerLog } from '~/features/managers/detail/useManagerDetailPage';
+import ManagerPromptSection from '~/components/manager-detail/ManagerPromptSection.vue';
 
 defineProps<{
   logs: ManagerLog[];

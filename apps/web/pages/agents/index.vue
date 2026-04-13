@@ -2,14 +2,39 @@
 import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@something-in-loop/shared';
 
 definePageMeta({ ssr: false });
+const AGENTS_PAPER_STORAGE_KEY = 'heppy:agents:showPaperAgents';
 const { agents, loading, error, fetchAgents, createAgent, startAgent, stopAgent, deleteAgent, updateAgent } = useAgents();
 const { stats, error: tradesError, fetchStats } = useTrades();
+const { stats: paperStats, fetchStats: fetchPaperStats } = useTrades();
 const { request } = useApi();
 const router = useRouter();
 const refreshing = ref(false);
 
 const overviewError = computed(() => tradesError.value);
 const runningCount = computed(() => agents.value.filter((a) => a.status === 'running').length);
+
+const realAgents = computed(() => agents.value.filter((a) => !a.isPaper));
+const paperAgents = computed(() => agents.value.filter((a) => a.isPaper));
+const storedShowPaperAgents = ref<boolean | null>(null);
+const showPaperFallback = computed(() => realAgents.value.length === 0 && paperAgents.value.length > 0);
+const showPaperAgents = computed(() => (
+  realAgents.value.length > 0
+    ? (storedShowPaperAgents.value ?? false)
+    : paperAgents.value.length > 0
+));
+const toggleDisabled = computed(() => showPaperFallback.value);
+const visibleAgents = computed(() => {
+  if (realAgents.value.length === 0) return paperAgents.value;
+  return showPaperAgents.value ? agents.value : realAgents.value;
+});
+const primaryTradeStats = computed(() => (realAgents.value.length > 0 ? stats.value : paperStats.value));
+const primaryRealizedPnlUsd = computed(() => (realAgents.value.length > 0 ? realizedPnlUsd.value : paperRealizedPnlUsd.value));
+const showPaperMiniStats = computed(() => realAgents.value.length > 0 && showPaperAgents.value && paperAgents.value.length > 0);
+const agentsSummaryText = computed(() => {
+  if (showPaperFallback.value) return `Showing ${visibleAgents.value.length} paper agents`;
+  if (showPaperAgents.value) return `Showing ${visibleAgents.value.length} real + paper agents`;
+  return `Showing ${visibleAgents.value.length} real agents`;
+});
 
 const managedAgents = computed(() => agents.value.filter((a) => !!a.managerId));
 
@@ -97,8 +122,8 @@ function sortedList(list: typeof agents.value) {
       av = a.config.analysisInterval;
       bv = b.config.analysisInterval;
     } else if (sortKey.value === 'paperBalance') {
-      av = a.config.paperBalance;
-      bv = b.config.paperBalance;
+      av = agentBalance(a);
+      bv = agentBalance(b);
     } else if (sortKey.value === 'maxPositionSizePct') {
       av = a.config.maxPositionSizePct;
       bv = b.config.maxPositionSizePct;
@@ -116,14 +141,14 @@ function sortedList(list: typeof agents.value) {
   });
 }
 
-const sortedAgents = computed(() => sortedList(agents.value));
+const sortedAgents = computed(() => sortedList(visibleAgents.value));
 
 // Per-agent P&L (realized P&L from closed trades; synced with agent detail table)
 const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
 
-const realizedPnlUsd = computed(() => {
-  if (agents.value.length === 0) return 0;
-  const ids = new Set(agents.value.map((a) => a.id));
+function sumPnlForAgents(agentList: typeof agents.value, fallback: number) {
+  if (agentList.length === 0) return 0;
+  const ids = new Set(agentList.map((a) => a.id));
   let sum = 0;
   let hasAny = false;
   for (const [agentId, pnl] of Object.entries(agentPnl.value)) {
@@ -131,10 +156,16 @@ const realizedPnlUsd = computed(() => {
     sum += pnl.totalPnlUsd;
     hasAny = true;
   }
-  // Fallback during first load before per-agent totals arrive.
-  if (!hasAny) return stats.value?.totalPnlUsd ?? 0;
+  if (!hasAny) return fallback;
   return sum;
-});
+}
+
+const realizedPnlUsd = computed(() =>
+  sumPnlForAgents(realAgents.value, stats.value?.totalPnlUsd ?? 0),
+);
+const paperRealizedPnlUsd = computed(() =>
+  sumPnlForAgents(paperAgents.value, paperStats.value?.totalPnlUsd ?? 0),
+);
 
 function formatUsdNoNegativeZero(value: number, digits = 0): string {
   const abs = Math.abs(value);
@@ -152,9 +183,31 @@ function formatPnlInline(usd?: number | null, pct?: number | null): string {
   return `${formatUsdNoNegativeZero(usd, 0)} (${normalizedPct.toFixed(1)}%)`;
 }
 
+function agentBalance(agent: (typeof agents.value)[0]): number {
+  return agent.config.paperBalance + (agentPnl.value[agent.id]?.totalPnlUsd ?? 0);
+}
+
 function winRateClass(rate?: number | null): 'positive' | 'negative' | 'neutral' {
   if (!rate) return 'neutral';
   return rate >= 50 ? 'positive' : 'negative';
+}
+
+function readStoredPaperPreference(): boolean | null {
+  if (!import.meta.client) return null;
+  const raw = localStorage.getItem(AGENTS_PAPER_STORAGE_KEY);
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return null;
+}
+
+function saveStoredPaperPreference(value: boolean) {
+  if (!import.meta.client) return;
+  localStorage.setItem(AGENTS_PAPER_STORAGE_KEY, String(value));
+}
+
+function setShowPaperAgents(value: boolean) {
+  storedShowPaperAgents.value = value;
+  saveStoredPaperPreference(value);
 }
 
 async function loadAgentPerformance(agentId: string) {
@@ -224,6 +277,7 @@ function handleGlobalClick(e: MouseEvent) {
 
 onMounted(() => {
   if (import.meta.client) {
+    storedShowPaperAgents.value = readStoredPaperPreference();
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
@@ -246,7 +300,11 @@ onUnmounted(() => {
 async function refreshOverview(force = false) {
   refreshing.value = true;
   try {
-    await Promise.all([fetchAgents({ force }), fetchStats({ force })]);
+    await Promise.all([
+      fetchAgents({ force }),
+      fetchStats({ force, isPaper: false }),
+      fetchPaperStats({ force, isPaper: true }),
+    ]);
     await Promise.all(agents.value.map((a) => loadAgentPerformance(a.id)));
   } finally {
     refreshing.value = false;
@@ -258,7 +316,7 @@ async function handleDelete(id: string) {
   if (!confirm('Delete this agent? This cannot be undone.')) return;
   try {
     await deleteAgent(id);
-    await fetchStats({ force: true });
+    await Promise.all([fetchStats({ force: true, isPaper: false }), fetchPaperStats({ force: true, isPaper: true })]);
   } catch (e) {
     alert(`Failed to delete: ${extractApiError(e)}`);
   }
@@ -303,27 +361,40 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 
     <div v-if="overviewError" class="alert alert-error" style="margin-bottom: 12px;">{{ overviewError }}</div>
 
-    <div v-if="!loading" class="stats-grid" style="margin-bottom: 16px;">
-      <div class="stat-card">
-        <div class="stat-label">Total Trades</div>
-        <div class="stat-value">{{ stats?.totalTrades ?? '—' }}</div>
-        <div class="stat-change">{{ stats?.openTrades ?? 0 }} open</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-value" :class="winRateClass(stats?.winRate)">
-          {{ stats?.winRate !== null && stats?.winRate !== undefined ? stats.winRate.toFixed(1) + '%' : '—' }}
+    <template v-if="!loading">
+      <div v-if="primaryTradeStats && visibleAgents.length > 0" class="stats-section" style="margin-bottom: 16px;">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Trades</div>
+            <div class="stat-value">{{ primaryTradeStats.totalTrades }}</div>
+            <div class="stat-change">{{ primaryTradeStats.openTrades }} open</div>
+            <div v-if="showPaperMiniStats && paperStats" class="stat-change stat-change-secondary">
+              paper {{ paperStats.totalTrades }} · {{ paperStats.openTrades }} open
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value" :class="winRateClass(primaryTradeStats.winRate)">
+              {{ primaryTradeStats.winRate.toFixed(1) + '%' }}
+            </div>
+            <div class="stat-change">across closed trades</div>
+            <div v-if="showPaperMiniStats && paperStats" class="stat-change stat-change-secondary">
+              paper {{ paperStats.winRate.toFixed(1) }}%
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total P&amp;L</div>
+            <div class="stat-value" :class="primaryRealizedPnlUsd >= 0 ? 'positive' : 'negative'">
+              {{ formatUsdNoNegativeZero(primaryRealizedPnlUsd, 0) }}
+            </div>
+            <div class="stat-change">{{ realAgents.length > 0 ? 'closed trades' : 'closed trades · simulated' }}</div>
+            <div v-if="showPaperMiniStats && paperStats" class="stat-change stat-change-secondary">
+              paper {{ formatUsdNoNegativeZero(paperRealizedPnlUsd, 0) }}
+            </div>
+          </div>
         </div>
-        <div class="stat-change">across closed trades</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Total P&amp;L</div>
-        <div class="stat-value" :class="realizedPnlUsd >= 0 ? 'positive' : 'negative'">
-          {{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }}
-        </div>
-        <div class="stat-change">closed trades</div>
-      </div>
-    </div>
+    </template>
 
     <div v-if="loading" class="page-loader">
       <div class="page-loader-track">
@@ -346,6 +417,19 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 
     <!-- TABLE VIEW -->
     <div v-else>
+      <div class="card agents-toolbar">
+        <label class="paper-toggle" :class="{ 'paper-toggle--disabled': toggleDisabled }">
+          <input
+            :checked="showPaperAgents"
+            :disabled="toggleDisabled"
+            type="checkbox"
+            @change="setShowPaperAgents(($event.target as HTMLInputElement).checked)"
+          />
+          <span>Show paper agents</span>
+        </label>
+        <span class="agents-toolbar__summary">{{ agentsSummaryText }}</span>
+      </div>
+
       <div class="table-wrap" style="overflow: visible;">
         <table>
           <thead>
@@ -446,7 +530,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 {{ agent.config.analysisInterval }}
               </td>
               <td v-if="visibleColumns.paperBalance" class="mono" style="font-size: 12px;">
-                ${{ agent.config.paperBalance.toLocaleString() }}
+                {{ formatUsdNoNegativeZero(agentBalance(agent), 0) }}
               </td>
               <td v-if="visibleColumns.maxPositionSizePct" class="mono" style="font-size: 12px;">
                 {{ agent.config.maxPositionSizePct }}%
@@ -555,6 +639,63 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 </template>
 
 <style scoped>
+.stats-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stats-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.stats-section-label--paper {
+  color: #d97706;
+  opacity: 0.8;
+}
+
+.agents-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.agents-toolbar__summary {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.paper-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.paper-toggle--disabled {
+  opacity: 0.7;
+}
+
+.paper-toggle input {
+  width: auto;
+}
+
+.stat-change-secondary {
+  color: #d97706;
+  opacity: 0.85;
+}
+
 .agent-table-row {
   cursor: pointer;
   transition: background 0.12s;

@@ -137,7 +137,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: any
 
   useBridgeEvents({
     openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId,
-    initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, options
+    initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, autoSign, options
   });
 
   useEffect(() => {

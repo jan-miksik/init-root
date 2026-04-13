@@ -26,7 +26,7 @@ export function useAutoSignConsent(options: {
     autoSignMgr.setEnabled(key, useAutoSignChoice);
     autoSignMgr.setDismissed(key, dontShowAgain);
 
-    if (useAutoSignChoice && !autoSignMgr.chainAutoSignEnabled.value) {
+    if (useAutoSignChoice && !autoSignMgr.chainAutoSignGrantEnabled.value) {
       try {
         await enableAutoSign();
       } catch {

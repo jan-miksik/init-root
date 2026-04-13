@@ -114,11 +114,11 @@ await init();
       <div class="modal">
         <h2 class="modal-title">Delete manager?</h2>
         <p class="modal-hint">
-          <strong class="text-normal">{{ manager?.name }}</strong> will be permanently deleted along with its decision log.
+          <strong class="text-normal">{{ manager?.name }}</strong> will be permanently deleted along with its paper-agent decision log.
         </p>
         <div v-if="managedAgents.length > 0" class="delete-agents-choice">
           <p class="choice-text">
-            This manager has <strong class="text-normal">{{ managedAgents.length }} agent{{ managedAgents.length !== 1 ? 's' : '' }}</strong>. What should happen to them?
+            This manager has <strong class="text-normal">{{ managedAgents.length }} paper agent{{ managedAgents.length !== 1 ? 's' : '' }}</strong>. What should happen to them?
           </p>
           <label class="radio-row">
             <input v-model="deleteAgentsChoice" type="radio" value="detach" />

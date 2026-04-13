@@ -8,6 +8,16 @@ export const AGENT_ABI = [
   },
   {
     type: 'function',
+    name: 'createAgentWithDelegatedExecution',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'metadata', type: 'bytes' },
+      { name: 'delegatedExecutionEnabled', type: 'bool' },
+    ],
+    outputs: [{ name: 'agentId', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'ownerAgentIds',
     stateMutability: 'view',
     inputs: [{ name: 'owner', type: 'address' }],

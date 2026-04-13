@@ -20,6 +20,10 @@ export function useBridgeEvents(params: {
   startSteps: (l: string[]) => void;
   advanceStep: (i: number) => void;
   clearSteps: () => void;
+  autoSign: {
+    enable: (chainId?: string) => Promise<void>;
+    disable: (chainId?: string) => Promise<void>;
+  };
   options: any;
 }) {
   const {
@@ -38,6 +42,7 @@ export function useBridgeEvents(params: {
     startSteps,
     advanceStep,
     clearSteps,
+    autoSign,
     options,
   } = params;
 
@@ -64,8 +69,17 @@ export function useBridgeEvents(params: {
           case 'createAgentOnchain': {
             const metadataPointer = (actionParams?.metadataPointer ?? {}) as Record<string, unknown>;
             const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPointer));
-            const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'createAgent', args: [toHex(metadataBytes)] });
-            startSteps(['Confirm agent creation']);
+            const shouldEnableAutoSign = actionParams?.autoSign === true;
+            const input = encodeFunctionData({
+              abi: AGENT_ABI,
+              functionName: shouldEnableAutoSign ? 'createAgentWithDelegatedExecution' : 'createAgent',
+              args: shouldEnableAutoSign ? [toHex(metadataBytes), true] : [toHex(metadataBytes)],
+            });
+            startSteps([
+              shouldEnableAutoSign
+                ? 'Confirm agent creation with delegated execution'
+                : 'Confirm agent creation',
+            ]);
             const txHash = await doAgentTx('createAgentOnchain', input, undefined, actionParams?.autoSign === true);
             advanceStep(0);
             setBusyAction('createAgentOnchain');
@@ -159,6 +173,75 @@ export function useBridgeEvents(params: {
               return { txHash, whitelistTxHash, onchainAgentId: agentId.toString() };
             } finally { clearSteps(); }
           }
+          case 'enableAutoSign': {
+            const currentAgentState = agentStateRef.current;
+            const hasAgent = currentAgentState?.id !== null && currentAgentState?.exists;
+            startSteps(hasAgent
+              ? ['Approve auto-sign in Interwoven', 'Enable delegated execution']
+              : ['Approve auto-sign in Interwoven']);
+            setBusyAction('enableAutoSign');
+            try {
+              await autoSign.enable(options.chainId);
+              advanceStep(0);
+
+              let txHash: string | null = null;
+              if (hasAgent) {
+                const agentId = requireAgentId();
+                const input = encodeFunctionData({
+                  abi: AGENT_ABI,
+                  functionName: 'setDelegatedExecutionEnabled',
+                  args: [agentId, true],
+                });
+                txHash = await doAgentTx('enableAutoSignOnchain', input, undefined, true);
+                advanceStep(1);
+              }
+
+              await refresh();
+              return hasAgent ? { txHash, onchainAgentId: requireAgentId().toString() } : {};
+            } finally {
+              setBusyAction(null);
+              clearSteps();
+            }
+          }
+          case 'disableAutoSign': {
+            const currentAgentState = agentStateRef.current;
+            const hasAgent = currentAgentState?.id !== null && currentAgentState?.exists;
+            startSteps(hasAgent
+              ? ['Disable delegated execution', 'Revoke auto-sign in Interwoven']
+              : ['Revoke auto-sign in Interwoven']);
+            setBusyAction('disableAutoSign');
+            try {
+              let txHash: string | null = null;
+              if (hasAgent) {
+                const agentId = requireAgentId();
+                const input = encodeFunctionData({
+                  abi: AGENT_ABI,
+                  functionName: 'setDelegatedExecutionEnabled',
+                  args: [agentId, false],
+                });
+                txHash = await doAgentTx('disableAutoSignOnchain', input, undefined, false);
+                advanceStep(0);
+              }
+
+              await autoSign.disable(options.chainId);
+              if (!hasAgent) advanceStep(0);
+              else advanceStep(1);
+              await refresh();
+              return hasAgent ? { txHash, onchainAgentId: requireAgentId().toString() } : {};
+            } finally {
+              setBusyAction(null);
+              clearSteps();
+            }
+          }
+          case 'executeTick': {
+            const agentId = requireAgentId();
+            const input = encodeFunctionData({ abi: AGENT_ABI, functionName: 'executeTick', args: [agentId] });
+            startSteps(['Confirm tick execution']);
+            try {
+              const txHash = await doAgentTx('executeTick', input, undefined, actionParams?.autoSign === true);
+              return { txHash, onchainAgentId: agentId.toString() };
+            } finally { clearSteps(); }
+          }
           default: throw new Error(`Unsupported action: ${action}`);
         }
       };
@@ -175,5 +258,5 @@ export function useBridgeEvents(params: {
 
     window.addEventListener(INITIA_BRIDGE_ACTION_EVENT, onAction);
     return () => window.removeEventListener(INITIA_BRIDGE_ACTION_EVENT, onAction);
-  }, [openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId, initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, options]);
+  }, [openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId, initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, autoSign, options]);
 }
