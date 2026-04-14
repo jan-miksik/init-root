@@ -116,13 +116,6 @@ export function useAgentDetailPage(id: string) {
     return `${phaseText[analyzePhase.value]} (${elapsed})`;
   });
 
-  const personaEmoji = computed(() => {
-    if (!agent.value) return '';
-    const configProfileId = (agent.value.config as { profileId?: string }).profileId;
-    const profileId = agent.value.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
-    const profile = getAgentProfile(profileId);
-    return profile?.emoji ?? '';
-  });
 
   const isInitiaAgent = computed(() => agent.value?.chain === 'initia');
 
@@ -140,7 +133,8 @@ export function useAgentDetailPage(id: string) {
   const activeOnchainAgentId = computed(() => initiaState.value.onchainAgentId);
 
   const autoSignMismatch = computed(() => {
-    if (!linkedOnchainAgentId.value || !activeOnchainAgentId.value) return false;
+    if (!linkedOnchainAgentId.value || !initiaState.value.initiaAddress) return false;
+    if (!activeOnchainAgentId.value) return true;
     return linkedOnchainAgentId.value !== activeOnchainAgentId.value;
   });
 
@@ -499,8 +493,9 @@ export function useAgentDetailPage(id: string) {
       }
       if (!initiaState.value.initiaAddress) throw new Error('Wallet not connected');
       if (autoSignMismatch.value) throw new Error('Wallet mismatch');
-      if (enabling) await enableAutoSign();
-      else await disableAutoSign();
+      const targetAgentId = linkedOnchainAgentId.value ?? activeOnchainAgentId.value ?? undefined;
+      if (enabling) await enableAutoSign({ configureOnchain: true, agentId: targetAgentId });
+      else await disableAutoSign({ configureOnchain: true, agentId: targetAgentId });
       await refreshInitiaState();
       await handleSyncInitia();
     } catch (err: any) {
@@ -600,7 +595,6 @@ export function useAgentDetailPage(id: string) {
     autoSignError,
     menuOpen,
     now,
-    personaEmoji,
     isInitiaAgent,
     autoSignEnabled,
     autoSignButtonLabel,

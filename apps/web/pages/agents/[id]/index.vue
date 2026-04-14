@@ -26,7 +26,6 @@ const {
   livePricesLoading,
   livePricesError,
   menuOpen,
-  personaEmoji,
   clearingHistory,
   isModelUnavailableError,
   openTrades,
@@ -83,7 +82,6 @@ definePageMeta({ ssr: false });
       <AgentHeaderSection
         v-model:menu-open="menuOpen"
         :agent="agent"
-        :persona-emoji="personaEmoji"
         :is-analyzing="isAnalyzing"
         :analyze-status-text="analyzeStatusText"
         :clearing-history="clearingHistory"

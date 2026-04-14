@@ -59,6 +59,8 @@ export default defineNuxtConfig({
       initiaShowcaseTargetAddress: process.env.NUXT_PUBLIC_INITIA_SHOWCASE_TARGET_ADDRESS || '',
       initiaExecutorMaxTradeWei: process.env.NUXT_PUBLIC_INITIA_EXECUTOR_MAX_TRADE_WEI || '0',
       initiaExecutorDailyLimitWei: process.env.NUXT_PUBLIC_INITIA_EXECUTOR_DAILY_LIMIT_WEI || '0',
+      defaultManagerMaxAgents:
+        process.env.NUXT_PUBLIC_DEFAULT_MANAGER_MAX_AGENTS || process.env.DEFAULT_MANAGER_MAX_AGENTS || '2',
     },
     // Server-only: upstream for API proxy when Service Binding is not present (e.g. local dev)
     apiUpstream: process.env.API_BASE_URL || 'http://localhost:8787',

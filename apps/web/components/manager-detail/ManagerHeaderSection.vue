@@ -3,7 +3,6 @@ import type { ManagerDetail } from '~/features/managers/detail/useManagerDetailP
 
 defineProps<{
   manager: ManagerDetail;
-  personaEmoji: string;
   statusBadgeClass: any;
   actionLoading: boolean;
   deciding: boolean;
@@ -25,7 +24,7 @@ defineEmits<{
         <NuxtLink to="/managers" class="back-link">← Managers</NuxtLink>
         <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
           <h1 class="page-title">
-            <span v-if="personaEmoji" class="manager-emoji" style="margin-right: 6px;">{{ personaEmoji }}</span>
+            <ProfileIcon :profile-id="manager.profileId || manager.config?.profileId" :size="28" style="margin-right: 6px;" />
             {{ manager.name }}
           </h1>
           <span class="badge" :class="statusBadgeClass">{{ manager.status }}</span>

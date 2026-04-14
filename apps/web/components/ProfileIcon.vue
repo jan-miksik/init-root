@@ -50,13 +50,13 @@ const props = withDefaults(
       <path d="M10 26 L5 21 L10 16" />
     </g>
 
-    <!-- Joker — card with question mark -->
+    <!-- Joker — three-pointed jester hat with bells -->
     <g v-else-if="profileId === 'joker'">
-      <rect x="7" y="4" width="18" height="24" rx="1.5" />
-      <path d="M13 12 C13 10 14.3 9 16 9 C17.7 9 19 10 19 11.8 C19 13.5 16 14 16 16.5" />
-      <circle cx="16" cy="20" r="1" fill="currentColor" stroke="none" />
-      <path d="M10 7 L11 8" opacity="0.5" />
-      <path d="M22 25 L21 24" opacity="0.5" />
+      <path d="M5 23 L5 20 L10 12 L15 17 L16 8 L17 17 L22 12 L27 20 L27 23 Z" />
+      <path d="M3 23 L29 23" />
+      <circle cx="10" cy="10.5" r="2" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="6.5" r="2" fill="currentColor" stroke="none" />
+      <circle cx="22" cy="10.5" r="2" fill="currentColor" stroke="none" />
     </g>
 
     <!-- Drunk Uncle — tilted beer mug with foam -->

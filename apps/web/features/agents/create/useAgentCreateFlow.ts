@@ -43,7 +43,7 @@ function requireCreateAgentPayload(payload: Partial<CreateAgentPayload>): Create
 export function useAgentCreateFlow() {
   const router = useRouter();
   const { request } = useApi();
-  const { createAgent, updateAgent, startAgent } = useAgents();
+  const { createAgent, updateAgent, startAgent, deleteAgent } = useAgents();
   const { showNotification, clearNotification } = useNotification();
   const {
     state: initiaState,
@@ -191,6 +191,7 @@ export function useAgentCreateFlow() {
 
   async function executeCreateStep(payload: Partial<CreateAgentPayload>) {
     creating.value = true;
+    let createdLocalAgentId: string | null = null;
     try {
       await ensureWalletConnected();
 
@@ -201,6 +202,7 @@ export function useAgentCreateFlow() {
           initiaWalletAddress: initiaState.value.initiaAddress ?? undefined,
         });
         createdAgentId.value = agent.id;
+        createdLocalAgentId = agent.id;
         currentPaperBalance.value = 0;
       }
 
@@ -221,6 +223,16 @@ export function useAgentCreateFlow() {
         message: extractApiError(err),
         durationMs: 8_000,
       });
+      if (createdLocalAgentId) {
+        try {
+          await deleteAgent(createdLocalAgentId);
+        } catch (cleanupErr) {
+          console.warn('[create-flow] failed to delete local agent after onchain create error', cleanupErr);
+        }
+        if (createdAgentId.value === createdLocalAgentId) {
+          createdAgentId.value = null;
+        }
+      }
     } finally {
       creating.value = false;
       onchainStatus.value = '';

@@ -250,7 +250,6 @@ function onPersonaInput(event: Event) {
 </template>
 
 <style scoped>
-.prompt-section { border-bottom: 1px solid var(--border, #1e1e1e); }
 .prompt-section:last-child { border-bottom: none; }
 
 .prompt-section__toggle {
@@ -258,37 +257,38 @@ function onPersonaInput(event: Event) {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: 10px 16px;
-  background: none;
+  padding: 4px 8px;
+  background: transparent;
   border: none;
-  color: var(--text-muted, #555);
+  color: #60a5fa;
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-family: var(--font-mono, monospace);
+  font-weight: 400;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
   text-align: left;
-  gap: 8px;
+  gap: 6px;
+  transition: opacity 0.1s;
 }
 
-.prompt-section__toggle:hover {
-  background: color-mix(in srgb, var(--border) 20%, transparent);
-}
+.prompt-section__toggle:hover { opacity: 0.75; }
 
 .prompt-section__toggle-row {
   display: flex;
   align-items: center;
+  padding: 0 12px;
 }
 
 .prompt-section__edited-badge {
-  font-size: 9px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--warning, #f5a623) 18%, transparent);
-  color: var(--warning, #f5a623);
-  border: 1px solid color-mix(in srgb, var(--warning, #f5a623) 32%, transparent);
-  letter-spacing: 0.05em;
+  font-size: 10px;
+  font-weight: 400;
+  padding: 0 4px;
+  background: transparent;
+  color: #f59e0b;
+  border: 1px solid #f59e0b;
+  border-radius: 0;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -297,13 +297,18 @@ function onPersonaInput(event: Event) {
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-secondary, #aaa);
-  padding: 12px 16px;
+  padding: 8px 10px;
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+  background: color-mix(in srgb, var(--border, #2a2a2a) 10%, transparent);
+  border-radius: 4px;
 }
 
-.prompt-section__content--setup { overflow-y: auto; }
+.prompt-section__content--setup {
+  overflow-y: auto;
+  margin: 0 10px 0 22px;
+}
 .prompt-section__content--diff { white-space: pre; }
 
 :deep(.diff-line) {
@@ -345,7 +350,8 @@ function onPersonaInput(event: Event) {
 :deep(.diff-line--eq)::before { content: ' '; }
 
 .setup-part {
-  padding: 12px 16px;
+  padding: 12px 10px;
+  margin: 0 10px 0 22px;
   border-bottom: 1px solid var(--border, #1e1e1e);
 }
 
@@ -357,7 +363,7 @@ function onPersonaInput(event: Event) {
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--text-muted, #555);
+  color: var(--text-muted, #777);
   margin-bottom: 8px;
   display: flex;
   align-items: center;
@@ -395,8 +401,8 @@ function onPersonaInput(event: Event) {
 
 .acf__chevron {
   flex-shrink: 0;
-  font-size: 18px;
-  color: var(--text-muted, #555);
+  font-size: 12px;
+  color: currentColor;
   transition: transform 0.2s;
   display: inline-block;
   transform: rotate(0deg);

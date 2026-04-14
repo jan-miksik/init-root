@@ -4,7 +4,7 @@ import type { Trade } from '~/composables/useTrades';
 const props = defineProps<{
   trades: Trade[];
   showAgent?: boolean;
-  agentEmojis?: Record<string, string>;
+  agentProfileIds?: Record<string, string>;
 }>();
 const emit = defineEmits<{
   (e: 'trade-closed', trade: Trade): void;
@@ -231,7 +231,12 @@ function formatAmountUsd(amountUsd: number): string {
                 :title="trade.agentName ?? trade.agentId"
                 @click.stop
               >
-                <span v-if="agentEmojis?.[trade.agentId]" class="tt-agent-emoji">{{ agentEmojis[trade.agentId] }}</span>{{ trade.agentName ?? trade.agentId }}
+                <ProfileIcon
+                  v-if="agentProfileIds?.[trade.agentId]"
+                  :profile-id="agentProfileIds[trade.agentId]"
+                  :size="16"
+                  style="margin-right: 6px;"
+                />{{ trade.agentName ?? trade.agentId }}
                 <span v-if="trade.isPaper" class="tt-paper-tag">PAPER</span>
               </NuxtLink>
             </td>
@@ -340,11 +345,6 @@ function formatAmountUsd(amountUsd: number): string {
   white-space: nowrap;
   max-width: 100%;
   font-size: 11px;
-}
-
-.tt-agent-emoji {
-  font-style: normal;
-  flex-shrink: 0;
 }
 
 .tt-paper-tag {

@@ -101,7 +101,7 @@ export function buildAgentModelCatalog(params: {
 
 export function getManagerAllowedAgentModelIds(hasUserOpenRouterKey: boolean): string[] {
   if (!hasUserOpenRouterKey) return [...FREE_MODEL_IDS];
-  return [...FREE_MODEL_IDS, ...MANAGER_CHEAP_PAID_MODEL_IDS];
+  return [...FREE_MODEL_IDS, ...AGENT_PAID_MODEL_IDS];
 }
 
 export function buildManagerAllowedAgentModelSet(hasUserOpenRouterKey: boolean): Set<string> {

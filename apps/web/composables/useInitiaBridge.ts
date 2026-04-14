@@ -295,15 +295,15 @@ export function useInitiaBridge() {
     };
   }
 
-  async function enableAutoSign(): Promise<{ txHash?: string | null }> {
-    const result = await sendBridgeAction({ action: 'enableAutoSign' });
+  async function enableAutoSign(opts?: { configureOnchain?: boolean; agentId?: string }): Promise<{ txHash?: string | null }> {
+    const result = await sendBridgeAction({ action: 'enableAutoSign', params: opts });
     return {
       txHash: (result?.txHash as string | undefined) ?? null,
     };
   }
 
-  async function disableAutoSign(): Promise<{ txHash?: string | null }> {
-    const result = await sendBridgeAction({ action: 'disableAutoSign' });
+  async function disableAutoSign(opts?: { configureOnchain?: boolean; agentId?: string }): Promise<{ txHash?: string | null }> {
+    const result = await sendBridgeAction({ action: 'disableAutoSign', params: opts });
     return {
       txHash: (result?.txHash as string | undefined) ?? null,
     };

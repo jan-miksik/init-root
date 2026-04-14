@@ -12,6 +12,7 @@ export function useBridgeEvents(params: {
   doAgentTx: (a: string, i: string, v?: string, as?: boolean) => Promise<string | null>;
   doContractTx: (a: string, c: `0x${string}`, i: string, v?: string, as?: boolean) => Promise<string | null>;
   fetchLatestAgentId: (o: `0x${string}`) => Promise<bigint | null>;
+  waitForCreatedAgentId: (txHash: string | null) => Promise<bigint | null>;
   initiaAddressRef: React.MutableRefObject<string | null>;
   evmAddressRef: React.MutableRefObject<`0x${string}` | null>;
   agentStateRef: React.MutableRefObject<any>;
@@ -34,6 +35,7 @@ export function useBridgeEvents(params: {
     doAgentTx,
     doContractTx,
     fetchLatestAgentId,
+    waitForCreatedAgentId,
     initiaAddressRef,
     evmAddressRef,
     agentStateRef,
@@ -84,8 +86,11 @@ export function useBridgeEvents(params: {
             advanceStep(0);
             setBusyAction('createAgentOnchain');
             try {
+              let latestAgentId: bigint | null = await waitForCreatedAgentId(txHash);
               const pollAddr: `0x${string}` | null = evmAddressRef.current ?? bech32ToEvmHex(initiaAddressRef.current);
-              let latestAgentId: bigint | null = pollAddr ? await fetchLatestAgentId(pollAddr).catch(() => null) : null;
+              if (latestAgentId === null && pollAddr) {
+                latestAgentId = await fetchLatestAgentId(pollAddr).catch(() => null);
+              }
               if (latestAgentId === null && pollAddr) {
                 const startedAt = Date.now();
                 while (latestAgentId === null && Date.now() - startedAt < 45000) {
@@ -174,60 +179,82 @@ export function useBridgeEvents(params: {
             } finally { clearSteps(); }
           }
           case 'enableAutoSign': {
+            const requestedAgentIdRaw = actionParams?.agentId;
+            const requestedAgentId =
+              typeof requestedAgentIdRaw === 'string' && requestedAgentIdRaw.trim().length > 0
+                ? BigInt(requestedAgentIdRaw)
+                : null;
+            const configureOnchain = actionParams?.configureOnchain === true;
             const currentAgentState = agentStateRef.current;
-            const hasAgent = currentAgentState?.id !== null && currentAgentState?.exists;
-            startSteps(hasAgent
+            const fallbackAgentId =
+              currentAgentState?.id !== null && currentAgentState?.exists ? currentAgentState.id : null;
+            const targetAgentId = configureOnchain ? (requestedAgentId ?? fallbackAgentId) : null;
+            const shouldConfigureOnchain = targetAgentId !== null;
+
+            startSteps(shouldConfigureOnchain
               ? ['Approve auto-sign in Interwoven', 'Enable delegated execution']
               : ['Approve auto-sign in Interwoven']);
             setBusyAction('enableAutoSign');
             try {
-              await autoSign.enable(options.chainId);
+              await autoSign.enable(options.chainId, {
+                permissions: ['/minievm.evm.v1.MsgCall'],
+              });
               advanceStep(0);
 
               let txHash: string | null = null;
-              if (hasAgent) {
-                const agentId = requireAgentId();
+              if (targetAgentId !== null) {
                 const input = encodeFunctionData({
                   abi: AGENT_ABI,
                   functionName: 'setDelegatedExecutionEnabled',
-                  args: [agentId, true],
+                  args: [targetAgentId, true],
                 });
-                txHash = await doAgentTx('enableAutoSignOnchain', input, undefined, true);
+                // Don't depend on the newly granted auto-sign becoming active immediately.
+                // This follow-up tx should still prompt normally if needed.
+                txHash = await doAgentTx('enableAutoSignOnchain', input, undefined, false);
                 advanceStep(1);
               }
 
               await refresh();
-              return hasAgent ? { txHash, onchainAgentId: requireAgentId().toString() } : {};
+              return targetAgentId !== null ? { txHash, onchainAgentId: targetAgentId.toString() } : {};
             } finally {
               setBusyAction(null);
               clearSteps();
             }
           }
           case 'disableAutoSign': {
+            const requestedAgentIdRaw = actionParams?.agentId;
+            const requestedAgentId =
+              typeof requestedAgentIdRaw === 'string' && requestedAgentIdRaw.trim().length > 0
+                ? BigInt(requestedAgentIdRaw)
+                : null;
+            const configureOnchain = actionParams?.configureOnchain === true;
             const currentAgentState = agentStateRef.current;
-            const hasAgent = currentAgentState?.id !== null && currentAgentState?.exists;
-            startSteps(hasAgent
+            const fallbackAgentId =
+              currentAgentState?.id !== null && currentAgentState?.exists ? currentAgentState.id : null;
+            const targetAgentId = configureOnchain ? (requestedAgentId ?? fallbackAgentId) : null;
+            const shouldConfigureOnchain = targetAgentId !== null;
+
+            startSteps(shouldConfigureOnchain
               ? ['Disable delegated execution', 'Revoke auto-sign in Interwoven']
               : ['Revoke auto-sign in Interwoven']);
             setBusyAction('disableAutoSign');
             try {
               let txHash: string | null = null;
-              if (hasAgent) {
-                const agentId = requireAgentId();
+              if (targetAgentId !== null) {
                 const input = encodeFunctionData({
                   abi: AGENT_ABI,
                   functionName: 'setDelegatedExecutionEnabled',
-                  args: [agentId, false],
+                  args: [targetAgentId, false],
                 });
                 txHash = await doAgentTx('disableAutoSignOnchain', input, undefined, false);
                 advanceStep(0);
               }
 
               await autoSign.disable(options.chainId);
-              if (!hasAgent) advanceStep(0);
+              if (!shouldConfigureOnchain) advanceStep(0);
               else advanceStep(1);
               await refresh();
-              return hasAgent ? { txHash, onchainAgentId: requireAgentId().toString() } : {};
+              return targetAgentId !== null ? { txHash, onchainAgentId: targetAgentId.toString() } : {};
             } finally {
               setBusyAction(null);
               clearSteps();
@@ -258,5 +285,5 @@ export function useBridgeEvents(params: {
 
     window.addEventListener(INITIA_BRIDGE_ACTION_EVENT, onAction);
     return () => window.removeEventListener(INITIA_BRIDGE_ACTION_EVENT, onAction);
-  }, [openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId, initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, autoSign, options]);
+  }, [openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId, waitForCreatedAgentId, initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, autoSign, options]);
 }

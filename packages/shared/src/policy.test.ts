@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_PAID_MODEL_IDS,
   DEFAULT_FREE_AGENT_MODEL,
   buildAgentModelCatalog,
   getManagerAllowedAgentModelIds,
@@ -28,7 +29,7 @@ describe('model catalog policy', () => {
     expect(freeOnly.every((id) => id.includes(':free'))).toBe(true);
 
     const withPaid = getManagerAllowedAgentModelIds(true);
-    expect(withPaid.length).toBeGreaterThan(freeOnly.length);
+    expect(withPaid).toEqual([...freeOnly, ...AGENT_PAID_MODEL_IDS]);
   });
 });
 

@@ -26,7 +26,6 @@ const {
   logPage,
   totalLogPages,
   pagedLogs,
-  personaEmoji,
   statusBadgeClass,
   shortModel,
   maxDrawdownLabel,
@@ -60,7 +59,6 @@ await init();
     <template v-else-if="manager">
       <ManagerHeaderSection
         :manager="manager"
-        :persona-emoji="personaEmoji"
         :status-badge-class="statusBadgeClass"
         :action-loading="actionLoading"
         :deciding="!!doStatus?.deciding"
@@ -111,23 +109,28 @@ await init();
 
     <!-- Delete confirmation modal -->
     <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
-      <div class="modal">
-        <h2 class="modal-title">Delete manager?</h2>
-        <p class="modal-hint">
-          <strong class="text-normal">{{ manager?.name }}</strong> will be permanently deleted along with its paper-agent decision log.
-        </p>
-        <div v-if="managedAgents.length > 0" class="delete-agents-choice">
-          <p class="choice-text">
-            This manager has <strong class="text-normal">{{ managedAgents.length }} paper agent{{ managedAgents.length !== 1 ? 's' : '' }}</strong>. What should happen to them?
+      <div class="modal del-modal">
+        <div class="modal-header del-modal__header">
+          <span class="modal-title del-modal__title">Delete Manager</span>
+          <button class="btn btn-ghost btn-sm" @click="showDeleteModal = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-hint">
+            <strong class="text-normal">{{ manager?.name }}</strong> will be permanently deleted along with its paper-agent decision log.
           </p>
-          <label class="radio-row">
-            <input v-model="deleteAgentsChoice" type="radio" value="detach" />
-            <span>Keep agents — detach them from this manager</span>
-          </label>
-          <label class="radio-row">
-            <input v-model="deleteAgentsChoice" type="radio" value="delete" />
-            <span class="text-danger">Delete agents too</span>
-          </label>
+          <div v-if="managedAgents.length > 0" class="delete-agents-choice">
+            <p class="choice-text">
+              This manager has <strong class="text-normal">{{ managedAgents.length }} paper agent{{ managedAgents.length !== 1 ? 's' : '' }}</strong>. What should happen to them?
+            </p>
+            <label class="radio-row">
+              <input v-model="deleteAgentsChoice" type="radio" value="detach" />
+              <span>Keep agents — detach from this manager</span>
+            </label>
+            <label class="radio-row">
+              <input v-model="deleteAgentsChoice" type="radio" value="delete" />
+              <span class="text-danger">Delete agents too</span>
+            </label>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-ghost" @click="showDeleteModal = false">Cancel</button>
@@ -152,7 +155,20 @@ await init();
   .detail-columns { grid-template-columns: 1fr; }
 }
 
-/* Modal styles kept here as they are page-level UI state */
+/* ── Delete modal ─────────────────────────────────────────── */
+.del-modal {
+  max-width: 440px;
+}
+
+.del-modal__header {
+  border-bottom-color: color-mix(in srgb, var(--red) 35%, var(--border));
+  background: color-mix(in srgb, var(--red) 5%, var(--bg-card));
+}
+
+.del-modal__title {
+  color: var(--red);
+}
+
 .modal-hint { font-size: 14px; color: var(--text-dim); margin-bottom: 16px; }
 .text-normal { color: var(--text); }
 .text-danger { color: var(--red); }
@@ -160,9 +176,8 @@ await init();
 .delete-agents-choice {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
   padding: 12px 14px;
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 .choice-text { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; }
 .radio-row {
@@ -174,5 +189,5 @@ await init();
   cursor: pointer;
   padding: 4px 0;
 }
-.radio-row input { cursor: pointer; accent-color: var(--accent); }
+.radio-row input { cursor: pointer; accent-color: var(--red); }
 </style>

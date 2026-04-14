@@ -42,14 +42,6 @@ export function useManagerDetailPage(id: string) {
     manager.value = await getManager(id, { force: true });
   }
 
-  const personaEmoji = computed(() => {
-    const m = manager.value;
-    if (!m) return '';
-    const configProfileId = m.config?.profileId;
-    const profileId = m.profileId ?? configProfileId ?? DEFAULT_MANAGER_PROFILE_ID;
-    const profile = getManagerProfile(profileId);
-    return profile?.emoji ?? '';
-  });
 
   const managedAgents = ref<ManagedAgent[]>([]);
   async function refreshAgents() {
@@ -269,7 +261,6 @@ export function useManagerDetailPage(id: string) {
     logPage,
     totalLogPages,
     pagedLogs,
-    personaEmoji,
     statusBadgeClass,
     shortModel,
     maxDrawdownLabel,

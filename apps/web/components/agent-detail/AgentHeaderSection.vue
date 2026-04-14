@@ -3,7 +3,6 @@ import { ref } from 'vue';
 
 const props = defineProps<{
   agent: any;
-  personaEmoji: string;
   isAnalyzing: boolean;
   analyzeStatusText: string;
   clearingHistory: boolean;
@@ -64,7 +63,7 @@ function formatInterval(val: string) {
       <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
         <button class="btn btn-ghost btn-sm" @click="$router.back()">← Back</button>
         <h1 class="page-title">
-          <span v-if="personaEmoji" class="agent-emoji" style="margin-right: 6px;">{{ personaEmoji }}</span>
+          <ProfileIcon :profile-id="agent.profileId || agent.config?.profileId" :size="28" style="margin-right: 6px;" />
           {{ agent.name }}
         </h1>
         <span v-if="agent.isPaper" class="paper-badge">PAPER</span>

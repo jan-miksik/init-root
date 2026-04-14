@@ -1,5 +1,16 @@
 export const AGENT_ABI = [
   {
+    type: 'event',
+    name: 'AgentCreated',
+    inputs: [
+      { name: 'agentId', type: 'uint256', indexed: true },
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'metadata', type: 'bytes', indexed: false },
+      { name: 'timestamp', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
     type: 'function',
     name: 'createAgent',
     stateMutability: 'nonpayable',

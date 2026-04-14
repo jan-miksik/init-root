@@ -67,8 +67,9 @@ html {
 }
 
 body {
-  background: black;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='a'%3E%3CfeTurbulence baseFrequency='.8' numOctaves='3' stitchTiles='stitch' type='fractalNoise'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)' opacity='.04'/%3E%3C/svg%3E");
+  background-color: black;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cfilter id='a'%3E%3CfeTurbulence baseFrequency='.85' numOctaves='2' stitchTiles='stitch' type='fractalNoise'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)' opacity='.06'/%3E%3C/svg%3E");
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-body);
   line-height: 1.6;
@@ -183,7 +184,7 @@ a {
   text-decoration: none;
 }
 
-a:hover {
+a:hover:not(.btn) {
   color: var(--accent-hover);
   text-decoration: underline;
 }
@@ -941,7 +942,11 @@ tbody tr:last-child td {
 }
 
 .empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 32px;
+  color: var(--text-muted);
   margin-bottom: var(--space-sm);
 }
 

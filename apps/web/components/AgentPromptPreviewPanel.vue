@@ -115,43 +115,47 @@ const editableSetupActions = {
         </button>
         <div v-if="previewError" class="prompt-preview__error">{{ previewError }}</div>
 
-        <div class="prompt-pills">
-          <PromptPreviewSourceSection
-            label="[SYSTEM]"
-            tone="system"
-            :content="liveSystemPrompt"
-            :expanded="systemExpanded"
+        <div class="prompt-preview__sections">
+          <div class="prompt-preview__label">PROMPT →</div>
+
+          <div class="prompt-pills">
+            <PromptPreviewSourceSection
+              label="[SYSTEM]"
+              tone="system"
+              :content="liveSystemPrompt"
+              :expanded="systemExpanded"
+              :show-md-preview="showMdPreview"
+              :toggle="toggleSystemExpanded"
+            />
+            <PromptPreviewSourceSection
+              label="[MARKET DATA]"
+              tone="market"
+              :content="marketDataPreview"
+              :expanded="marketDataExpanded"
+              :show-md-preview="showMdPreview"
+              :toggle="toggleMarketDataExpanded"
+            />
+          </div>
+
+          <PromptPreviewEditableSetupSection
+            :actions="editableSetupActions"
+            :can-edit-setup="canEditSetup"
+            :edit-behavior-text="editBehaviorText"
+            :edit-persona-text="editPersonaText"
+            :edit-role-text="editRoleText"
+            :editing-setup="editingSetup"
+            :is-behavior-customized="isBehaviorCustomized"
+            :is-persona-customized="isPersonaCustomized"
+            :is-role-customized="isRoleCustomized"
+            :live-constraints-section="liveConstraintsSection"
+            :live-editable-setup="liveEditableSetup"
+            :setup-changed="setupChanged"
+            :setup-diff-html="setupDiffHtml"
+            :setup-expanded="setupExpanded"
             :show-md-preview="showMdPreview"
-            :toggle="toggleSystemExpanded"
-          />
-          <PromptPreviewSourceSection
-            label="[MARKET DATA]"
-            tone="market"
-            :content="marketDataPreview"
-            :expanded="marketDataExpanded"
-            :show-md-preview="showMdPreview"
-            :toggle="toggleMarketDataExpanded"
+            :show-setup-diff="showSetupDiff"
           />
         </div>
-
-        <PromptPreviewEditableSetupSection
-          :actions="editableSetupActions"
-          :can-edit-setup="canEditSetup"
-          :edit-behavior-text="editBehaviorText"
-          :edit-persona-text="editPersonaText"
-          :edit-role-text="editRoleText"
-          :editing-setup="editingSetup"
-          :is-behavior-customized="isBehaviorCustomized"
-          :is-persona-customized="isPersonaCustomized"
-          :is-role-customized="isRoleCustomized"
-          :live-constraints-section="liveConstraintsSection"
-          :live-editable-setup="liveEditableSetup"
-          :setup-changed="setupChanged"
-          :setup-diff-html="setupDiffHtml"
-          :setup-expanded="setupExpanded"
-          :show-md-preview="showMdPreview"
-          :show-setup-diff="showSetupDiff"
-        />
       </div>
     </div>
   </div>
@@ -199,7 +203,7 @@ const editableSetupActions = {
 }
 
 .prompt-preview__body-content {
-  padding-top: 30px;
+  padding: 30px 0 10px;
 }
 
 .prompt-preview__md-toggle {
@@ -211,15 +215,34 @@ const editableSetupActions = {
 }
 
 .prompt-preview__error {
-  padding: 16px;
+  padding: 8px 16px 0;
   font-size: 12px;
   color: var(--error, #e05a5a);
+}
+
+.prompt-preview__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prompt-preview__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 12px;
+  margin-bottom: 2px;
 }
 
 .prompt-pills {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 10px 8px 12px;
+  padding: 0 10px 0 12px;
 }
 </style>

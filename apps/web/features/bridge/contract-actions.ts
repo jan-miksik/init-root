@@ -4,6 +4,29 @@ import { useInterwovenKit } from '@initia/interwovenkit-react';
 import { AGENT_ABI, IUSD_FAUCET_ABI, ERC20_ABI } from '~/utils/initia/bridge/abi';
 import { buildMsgCall, extractTxHash } from '~/utils/initia/bridge/helpers';
 
+function gasLimitForAction(action: string): number {
+  switch (action) {
+    case 'createAgentOnchain':
+      return 250_000;
+    case 'authorizeExecutor':
+    case 'authorizeExecutorTarget':
+      return 300_000;
+    case 'depositShowcaseToken':
+    case 'withdrawShowcaseToken':
+    case 'mintShowcaseToken':
+    case 'depositShowcaseTokenApprove':
+    case 'executeTick':
+    case 'enableAutoSignOnchain':
+    case 'disableAutoSignOnchain':
+      return 220_000;
+    case 'deposit':
+    case 'withdraw':
+      return 180_000;
+    default:
+      return 250_000;
+  }
+}
+
 export function useContractActions(params: {
   chainId: string;
   normalizedContractAddress: `0x${string}` | null;
@@ -57,6 +80,7 @@ export function useContractActions(params: {
         chainId,
         autoSign: autoSignEnabled,
         feeDenom: 'GAS',
+        gas: gasLimitForAction(action),
         messages: [buildMsgCall(currentInitiaAddress, contractAddress, input, valueWeiHex ?? '0x0')],
       } as any);
       const txHash = extractTxHash(tx);

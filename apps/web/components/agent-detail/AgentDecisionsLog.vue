@@ -158,7 +158,15 @@ function timeAgo(iso: string) {
           <div class="dec-main">
             <div class="dec-main-header">
               <span class="dec-action-badge" :class="`dec-action--${mapDecision(dec.decision)}`">{{ mapDecision(dec.decision).toUpperCase() }}</span>
-              <span class="dec-conf-num">{{ (dec.confidence * 100).toFixed(0) }}%</span>
+              <span class="dec-conf-num">
+                <span
+                  class="dec-conf-label"
+                  title="Confidence is the model's self-reported conviction in this decision, from 0% to 100%."
+                >
+                  Conf.
+                </span>
+                {{ (dec.confidence * 100).toFixed(0) }}%
+              </span>
               <div class="dec-conf-track">
                 <div class="dec-conf-fill" :class="`dec-conf-fill--${mapDecision(dec.decision)}`" :style="{ width: `${dec.confidence * 100}%` }" />
               </div>
@@ -290,6 +298,19 @@ function timeAgo(iso: string) {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.dec-conf-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dec-conf-label {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
 }
 
 .dec-meta {

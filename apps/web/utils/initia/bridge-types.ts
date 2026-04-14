@@ -92,6 +92,6 @@ export type InitiaBridgeAction =
   | { action: 'depositShowcaseToken'; params: { amount: string; autoSign?: boolean } }
   | { action: 'withdrawShowcaseToken'; params: { amount: string; autoSign?: boolean } }
   | { action: 'authorizeExecutor'; params?: { autoSign?: boolean } }
-  | { action: 'enableAutoSign' }
-  | { action: 'disableAutoSign' }
+  | { action: 'enableAutoSign'; params?: { configureOnchain?: boolean; agentId?: string } }
+  | { action: 'disableAutoSign'; params?: { configureOnchain?: boolean; agentId?: string } }
   | { action: 'executeTick'; params?: { autoSign?: boolean } };

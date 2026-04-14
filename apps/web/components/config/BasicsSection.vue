@@ -94,8 +94,8 @@ const emit = defineEmits<{
 .acf__name-input { flex: 1; background: var(--surface, #141414); border: 1px solid var(--border, #2a2a2a); border-radius: 8px; padding: 10px 14px; font-size: 15px; font-weight: 600; color: var(--text, #e0e0e0); outline: none; transition: border-color 0.15s; }
 .acf__name-input:focus { border-color: var(--accent, #7c6af7); }
 .acf__name-count { font-size: 11px; color: var(--text-muted, #555); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.acf__sync-check { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted, #555); cursor: pointer; white-space: nowrap; }
-.acf__model-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.acf__sync-check { height: 1rem; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted, #555); cursor: pointer; white-space: nowrap; }
+.acf__model-label-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 6px; }
 .acf__section { display: flex; flex-direction: column; gap: 10px; margin-top: 2rem; }
 .acf__section-label { font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted, #555); display: flex; align-items: center; gap: 8px; }
 .acf__profile-desc { font-size: 12px; color: var(--text-secondary, #888); line-height: 1.5; padding: 8px 12px; background: color-mix(in srgb, var(--accent, #7c6af7) 6%, transparent); border-left: 2px solid var(--accent, #7c6af7); border-radius: 0 6px 6px 0; }

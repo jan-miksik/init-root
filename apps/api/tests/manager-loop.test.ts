@@ -6,7 +6,7 @@ import {
   normalizeManagerAnalysisInterval,
 } from '../src/agents/manager-loop.js';
 import type { ManagedAgentSnapshot, ManagerMemory, ManagerDecision } from '../src/agents/manager-loop.js';
-import { DEFAULT_FREE_AGENT_MODEL } from '@something-in-loop/shared';
+import { AGENT_PAID_MODEL_IDS, DEFAULT_FREE_AGENT_MODEL } from '@something-in-loop/shared';
 import { agentManagers, agents } from '../src/db/schema.js';
 
 const doClientMocks = vi.hoisted(() => ({
@@ -348,6 +348,33 @@ describe('executeManagerAction', () => {
     expect(config.initiaMetadataHash).toBeUndefined();
     expect(config.llmModel).toBe(DEFAULT_FREE_AGENT_MODEL);
     expect(doClientMocks.startTradingAgentDo).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts supported paid models for manager-created agents when the owner has an OpenRouter key', async () => {
+    const { db, rows, insertSpy } = createMockDb([]);
+    const paidModel = AGENT_PAID_MODEL_IDS[0];
+    const result = await executeManagerAction(
+      {
+        action: 'create_agent',
+        reasoning: 'launch a higher-capability paper agent',
+        params: {
+          name: 'Manager Paid Model Agent',
+          llmModel: paidModel,
+        },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr',
+      true,
+    );
+
+    expect(result.success).toBe(true);
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(1);
+    const config = JSON.parse(String(rows[0].config));
+    expect(config.llmModel).toBe(paidModel);
+    expect(rows[0].llmModel).toBe(paidModel);
   });
 
   it('prevents manager-created agents beyond the configured manager maxAgents', async () => {

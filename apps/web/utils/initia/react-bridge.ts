@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { injectStyles, useInterwovenKit } from '@initia/interwovenkit-react';
 import InterwovenKitStyles from '@initia/interwovenkit-react/styles.js';
 import '@initia/interwovenkit-react/styles.css';
-import { createPublicClient, http as viemHttp } from 'viem';
+import { createPublicClient, decodeEventLog, http as viemHttp } from 'viem';
 import type { InitiaBridgeOpenParams, InitiaBridgeState, ProgressStep } from '~/utils/initia/bridge-types';
 import { AGENT_ABI } from '~/utils/initia/bridge/abi';
 import { dispatchBridgeState, normalizeEvmAddress, normalizeInitiaAddress, normalizeEvmOptionAddress, normalizeBridgeParam } from '~/utils/initia/bridge/helpers';
@@ -53,6 +53,33 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: any
       args: [owner],
     }) as any;
     return (Array.isArray(ids) && ids.length > 0) ? BigInt(ids[ids.length - 1]) : null;
+  }, [options.contractAddress, publicClient]);
+
+  const waitForCreatedAgentId = useCallback(async (txHash: string | null): Promise<bigint | null> => {
+    if (!txHash || !options.contractAddress) return null;
+    try {
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 45_000 });
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== options.contractAddress.toLowerCase()) continue;
+        try {
+          const decoded = decodeEventLog({
+            abi: AGENT_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+          if (decoded.eventName === 'AgentCreated') {
+            const agentId = (decoded.args as { agentId?: bigint | string }).agentId;
+            if (typeof agentId === 'bigint') return agentId;
+            if (typeof agentId === 'string') return BigInt(agentId);
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
   }, [options.contractAddress, publicClient]);
 
   const { refresh: runRefresh } = useWalletSync({
@@ -136,7 +163,7 @@ function BridgeRuntime(props: { options: InitiaBridgeMountOptions; evmChain: any
   }, [openConnect, openWallet, refresh, safeOpenBridge]);
 
   useBridgeEvents({
-    openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId,
+    openConnect, openWallet, safeOpenBridge, refresh, doAgentTx, doContractTx, fetchLatestAgentId, waitForCreatedAgentId,
     initiaAddressRef, evmAddressRef, agentStateRef, setBusyAction, setError, startSteps, advanceStep, clearSteps, autoSign, options
   });
 

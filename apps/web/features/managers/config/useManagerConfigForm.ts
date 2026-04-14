@@ -17,7 +17,12 @@ export function useManagerConfigForm(props: {
   isEdit?: boolean;
 }) {
   const { user } = useAuth();
+  const runtimeConfig = useRuntimeConfig();
   const hasOwnKey = computed(() => !!user.value?.openRouterKeySet);
+  const defaultManagerMaxAgents = (() => {
+    const parsed = Number.parseInt(String(runtimeConfig.public.defaultManagerMaxAgents || ''), 10);
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 2;
+  })();
   const modelCatalog = computed(() => {
     return buildAgentModelCatalog({
       hasOwnOpenRouterKey: hasOwnKey.value,
@@ -32,7 +37,7 @@ export function useManagerConfigForm(props: {
     decisionInterval: props.initial?.decisionInterval ?? '1h',
     riskParams: {
       maxTotalDrawdown: props.initial?.riskParams?.maxTotalDrawdown ?? 0.2,
-      maxAgents: props.initial?.riskParams?.maxAgents ?? 3,
+      maxAgents: props.initial?.riskParams?.maxAgents ?? defaultManagerMaxAgents,
       maxCorrelatedPositions: props.initial?.riskParams?.maxCorrelatedPositions ?? 3,
     },
   });

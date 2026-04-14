@@ -257,11 +257,6 @@ watch(
   { immediate: true },
 );
 
-function agentEmoji(agent: (typeof agents.value)[0]) {
-  const configProfileId = (agent.config as { profileId?: string }).profileId;
-  const profileId = agent.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
-  return getAgentProfile(profileId)?.emoji ?? '🤖';
-}
 
 function handleGlobalClick(e: MouseEvent) {
   const target = e.target as Node | null;
@@ -463,7 +458,20 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
     <div v-else-if="error" class="alert alert-error">{{ error }}</div>
 
     <div v-else-if="agents.length === 0" class="empty-state">
-      <div class="empty-icon">🤖</div>
+      <div class="empty-icon">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="16" cy="16" r="8" />
+          <circle cx="16" cy="16" r="2.5" fill="currentColor" stroke="none" />
+          <path d="M16 8 V5" />
+          <path d="M16 24 V27" />
+          <path d="M8 16 H5" />
+          <path d="M24 16 H27" />
+          <path d="M10.3 10.3 L8.2 8.2" />
+          <path d="M21.7 21.7 L23.8 23.8" />
+          <path d="M21.7 10.3 L23.8 8.2" />
+          <path d="M10.3 21.7 L8.2 23.8" />
+        </svg>
+      </div>
       <div class="empty-title">No agents yet</div>
       <p>Create your first AI trading agent to get started.</p>
       <button class="btn btn-primary" style="margin-top: 16px;" @click="$router.push('/agents/create')">
@@ -477,7 +485,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
         <table>
           <thead>
             <tr>
-              <th style="width: 32px;"></th>
+              <th class="icon-col"></th>
               <th class="sortable" @click="toggleSort('name')">Name <span class="sort-icon">{{ sortIcon('name') }}</span></th>
               <th
                 v-if="visibleColumns.status"
@@ -555,11 +563,16 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               :class="{ 'row--paper': agent.isPaper }"
               @click="$router.push(`/agents/${agent.id}`)"
             >
-              <td style="font-size: 18px; line-height: 1;">{{ agentEmoji(agent) }}</td>
+              <td class="icon-col">
+                <ProfileIcon :profile-id="agent.profileId || agent.config?.profileId" :size="28" />
+              </td>
               <td>
                 <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
                 <span v-if="agent.isPaper" class="paper-tag">PAPER</span>
-                <span v-if="agent.managerId" class="managed-tag">🧠 managed</span>
+                <span v-if="agent.managerId" class="managed-tag">
+                  <ProfileIcon profile-id="passive_index" :size="12" style="margin-right: 4px;" />
+                  managed
+                </span>
               </td>
               <td v-if="visibleColumns.status">
                 <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
@@ -710,6 +723,13 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   flex-wrap: wrap;
 }
 
+.icon-col {
+  width: 52px;
+  padding-left: 12px !important;
+  padding-right: 8px !important;
+  text-align: center;
+  vertical-align: middle;
+}
 .agent-table-row {
   cursor: pointer;
   transition: background 0.12s;

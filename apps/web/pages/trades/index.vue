@@ -39,12 +39,12 @@ const tradesSummaryText = computed(() => {
   return `Showing ${trades.value.length} live trades`;
 });
 
-const agentEmojiMap = computed<Record<string, string>>(() => {
+const agentProfileIdMap = computed<Record<string, string>>(() => {
   const map: Record<string, string> = {};
   for (const agent of agents.value) {
     const configProfileId = (agent.config as { profileId?: string }).profileId;
     const profileId = agent.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
-    map[agent.id] = getAgentProfile(profileId)?.emoji ?? '🤖';
+    map[agent.id] = profileId;
   }
   return map;
 });
@@ -291,7 +291,7 @@ watch([statusFilter, limitFilter, paperMode], () => {
       <TradeTable
         :trades="trades"
         :show-agent="true"
-        :agent-emojis="agentEmojiMap"
+        :agent-profile-ids="agentProfileIdMap"
         @trade-closed="onTradeClosed"
       />
     </div>

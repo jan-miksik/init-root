@@ -23,6 +23,7 @@ defineProps<{
       <table>
         <thead>
           <tr>
+            <th style="width: 32px;"></th>
             <th>Name</th>
             <th>Status</th>
             <th>Pairs</th>
@@ -31,6 +32,9 @@ defineProps<{
         </thead>
         <tbody>
           <tr v-for="a in managedAgents" :key="a.id">
+            <td style="width: 32px; text-align: center;">
+              <ProfileIcon :profile-id="a.profileId || (a.config as any)?.profileId" :size="20" />
+            </td>
             <td class="agent-name">{{ a.name }}</td>
             <td><span class="badge" :class="agentBadgeClass(a.status)">{{ a.status }}</span></td>
             <td class="mono font-sm">{{ a.config?.pairs?.join(', ') ?? '—' }}</td>

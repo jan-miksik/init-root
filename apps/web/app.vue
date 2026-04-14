@@ -367,8 +367,9 @@ async function handleWalletClick() {
 
 .app-main {
   position: relative;
-  background: black;
+  background: transparent;
 }
+
 
 
 .app-loading-overlay {
