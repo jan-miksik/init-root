@@ -186,6 +186,7 @@ async function handleWalletClick() {
       </div>
     </nav>
     <NotificationsPanel />
+    <SmallScreenModal />
     <main class="app-main">
       <NuxtPage />
     </main>
