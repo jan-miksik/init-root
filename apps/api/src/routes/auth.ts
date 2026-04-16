@@ -24,6 +24,7 @@ import { validateBody } from '../lib/validation.js';
 import { z } from 'zod';
 import { encryptKey } from '../lib/crypto.js';
 import { generateId, nowIso } from '../lib/utils.js';
+import { normalizeSupportedWalletAddress } from '../lib/wallet-address.js';
 import { forbiddenJson, internalServerErrorJson, notFoundJson, unauthorizedJson, upstreamFailureJson } from './_shared/json-response.js';
 
 const authRoute = new Hono<{ Bindings: Env }>();
@@ -75,28 +76,12 @@ const VerifySchema = z.object({
 });
 
 const HackathonSessionSchema = z.object({
-  // Accept both EVM 0x addresses and Initia bech32 (init1...) addresses
-  walletAddress: z.string().min(4).max(128),
+  walletAddress: z.string().trim().min(4).max(128),
   displayName: z.string().max(100).optional(),
 });
 
-function isLocalHostValue(value?: string | null): boolean {
-  if (!value) return false;
-  return /(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?/i.test(value);
-}
-
-function isHackathonBypassAllowed(c: { req: { url: string; header: (name: string) => string | undefined }; env: Env }): boolean {
-  if (c.env.HACKATHON_AUTH_BYPASS === 'true') return true;
-
-  const url = new URL(c.req.url);
-  const origin = c.req.header('origin');
-  const referer = c.req.header('referer');
-
-  return (
-    isLocalHostValue(url.host)
-    || isLocalHostValue(origin)
-    || isLocalHostValue(referer)
-  );
+function isHackathonBypassAllowed(env: Pick<Env, 'HACKATHON_AUTH_BYPASS'>): boolean {
+  return env.HACKATHON_AUTH_BYPASS === 'true';
 }
 
 /** POST /api/auth/verify — verify SIWE, create session, set cookie, return user */
@@ -131,12 +116,15 @@ authRoute.post('/verify', async (c) => {
 
 /** POST /api/auth/hackathon-session — bootstrap a session from connected wallet in localhost/hackathon mode. */
 authRoute.post('/hackathon-session', async (c) => {
-  if (!isHackathonBypassAllowed(c)) {
+  if (!isHackathonBypassAllowed(c.env)) {
     return notFoundJson(c);
   }
 
   const body = await validateBody(c, HackathonSessionSchema);
-  const walletAddress = body.walletAddress.toLowerCase();
+  const walletAddress = normalizeSupportedWalletAddress(body.walletAddress);
+  if (!walletAddress) {
+    return c.json({ error: 'Invalid wallet address.' }, 400);
+  }
   const orm = drizzle(c.env.DB);
 
   let [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
@@ -291,7 +279,7 @@ authRoute.post('/dev-session', async (c) => {
   const isHttps = c.req.url.startsWith('https://');
   c.header('Set-Cookie', buildSessionCookie(sessionToken, isHttps));
 
-  return c.json({ ok: true, userId: user.id, walletAddress: PLAYWRIGHT_WALLET, sessionToken });
+  return c.json({ ok: true, userId: user.id, walletAddress: PLAYWRIGHT_WALLET });
 });
 
 authRoute.onError((err, c) => {

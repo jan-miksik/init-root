@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepareAllForLocalRun.sh — One-shot local setup for initRoot
+# setupLocalAndStart.sh — One-shot local setup for initRoot
 #
 # What it does:
 #   1. Checks prerequisites
@@ -15,10 +15,10 @@
 #   --skip-contracts  Skip contract deployment (use addresses already in apps/web/.env)
 #
 # Usage:
-#   chmod +x prepareAllForLocalRun.sh
-#   ./prepareAllForLocalRun.sh
-#   ./prepareAllForLocalRun.sh --skip-chain
-#   ./prepareAllForLocalRun.sh --skip-chain --skip-contracts
+#   chmod +x setupLocalAndStart.sh
+#   ./setupLocalAndStart.sh
+#   ./setupLocalAndStart.sh --skip-chain
+#   ./setupLocalAndStart.sh --skip-chain --skip-contracts
 
 set -euo pipefail
 
@@ -30,6 +30,63 @@ log()  { echo -e "${BLUE}[•]${NC} $*"; }
 ok()   { echo -e "${GREEN}[✓]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+
+write_atomic() {
+  local target="$1"
+  local dir tmp
+  dir="$(dirname "$target")"
+  tmp="$(mktemp "$dir/.tmp.$(basename "$target").XXXXXX")"
+  cat > "$tmp"
+  mv "$tmp" "$target"
+}
+
+has_tty() {
+  [[ -t 0 && -t 1 ]]
+}
+
+prompt_secret() {
+  local __var_name="$1"
+  local prompt="$2"
+  local value=""
+
+  if has_tty; then
+    read -rsp "$prompt" value || true
+    echo ""
+  fi
+
+  printf -v "$__var_name" '%s' "$value"
+}
+
+prompt_line() {
+  local __var_name="$1"
+  local prompt="$2"
+  local value=""
+
+  if has_tty; then
+    read -rp "$prompt" value || true
+  fi
+
+  printf -v "$__var_name" '%s' "$value"
+}
+
+run_and_capture() {
+  local __var_name="$1"
+  shift
+
+  local tmp status output
+  tmp="$(mktemp "${TMPDIR:-/tmp}/setup-local.XXXXXX")"
+
+  set +e
+  "$@" 2>&1 | tee "$tmp" >&2
+  status=${PIPESTATUS[0]}
+  set -e
+
+  output="$(cat "$tmp")"
+  rm -f "$tmp"
+
+  printf -v "$__var_name" '%s' "$output"
+  return "$status"
+}
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════╗"
@@ -77,7 +134,7 @@ ok "All prerequisites present"
 # ─── 2. Install dependencies ──────────────────────────────────────────────────
 log "Installing pnpm dependencies..."
 cd "$REPO_ROOT"
-pnpm install --frozen-lockfile
+pnpm install --no-frozen-lockfile
 ok "Dependencies installed"
 
 # ─── 3. Start Initia chain ────────────────────────────────────────────────────
@@ -109,23 +166,21 @@ else
 fi
 
 # ─── 4. Resolve deployer private key ─────────────────────────────────────────
-resolve_private_key() {
-  # Priority: shell env → root .env PRIVATE_KEY → derive from INITIATE_MNEMONIC → weave gas-station
+resolve_private_key_from_env() {
+  # Priority: shell env PRIVATE_KEY → shell env INITIATE_MNEMONIC
   if [[ -n "${PRIVATE_KEY:-}" ]]; then
     echo "$PRIVATE_KEY"; return
   fi
 
-  if [[ -f "$REPO_ROOT/.env" ]]; then
-    local pk; pk=$(grep -E '^PRIVATE_KEY=' "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
-    if [[ -n "$pk" ]]; then echo "$pk"; return; fi
-
-    local mnemonic; mnemonic=$(grep -E '^INITIATE_MNEMONIC=' "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2-)
-    if [[ -n "$mnemonic" ]]; then
-      local derived; derived=$(cast wallet private-key --mnemonic "$mnemonic" 2>/dev/null || true)
-      if [[ -n "$derived" ]]; then echo "$derived"; return; fi
-    fi
+  if [[ -n "${INITIATE_MNEMONIC:-}" ]]; then
+    local derived; derived=$(cast wallet private-key --mnemonic "$INITIATE_MNEMONIC" 2>/dev/null || true)
+    if [[ -n "$derived" ]]; then echo "$derived"; return; fi
   fi
 
+  echo ""
+}
+
+resolve_private_key_from_weave() {
   if [[ -f ~/.weave/config.json ]]; then
     local mnemonic; mnemonic=$(jq -r '.common.gas_station.mnemonic // empty' ~/.weave/config.json 2>/dev/null || true)
     if [[ -n "$mnemonic" ]]; then
@@ -138,17 +193,43 @@ resolve_private_key() {
 }
 
 if [[ "$SKIP_CONTRACTS" == false ]]; then
-  PRIVATE_KEY=$(resolve_private_key)
+  PRIVATE_KEY=$(resolve_private_key_from_env)
+
+  if [[ -z "$PRIVATE_KEY" ]]; then
+    WEAVE_PRIVATE_KEY=$(resolve_private_key_from_weave)
+    if [[ -n "$WEAVE_PRIVATE_KEY" ]]; then
+      if has_tty; then
+        echo ""
+        warn "No deployer key found in shell env."
+        prompt_line USE_WEAVE_KEY "  Found a deployer key in ~/.weave/config.json. Use it? [Y/n]: "
+        if [[ ! "${USE_WEAVE_KEY,,}" =~ ^(n|no)$ ]]; then
+          PRIVATE_KEY="$WEAVE_PRIVATE_KEY"
+        fi
+      else
+        PRIVATE_KEY="$WEAVE_PRIVATE_KEY"
+      fi
+    fi
+  fi
 
   if [[ -z "$PRIVATE_KEY" ]]; then
     echo ""
     warn "No deployer key found automatically."
     echo "    Options:"
-    echo "    a) Set PRIVATE_KEY=0x... in root .env"
-    echo "    b) Set INITIATE_MNEMONIC=\"word1 word2 ...\" in root .env"
-    echo "    c) Enter it now:"
-    read -rsp "  Private key (0x...): " PRIVATE_KEY
-    echo ""
+    echo "    a) Export PRIVATE_KEY=0x... in your shell before running this script"
+    echo "    b) Export INITIATE_MNEMONIC=\"word1 word2 ...\" in your shell"
+    echo "    c) Let the script prompt you now"
+    if has_tty; then
+      prompt_line INPUT_MODE "  Type 'm' for mnemonic or 'p' for private key [m/p]: "
+      if [[ "${INPUT_MODE,,}" == "m" ]]; then
+        prompt_secret INPUT_MNEMONIC "  Mnemonic: "
+        if [[ -n "$INPUT_MNEMONIC" ]]; then
+          PRIVATE_KEY=$(cast wallet private-key --mnemonic "$INPUT_MNEMONIC" 2>/dev/null || true)
+        fi
+      fi
+      if [[ -z "$PRIVATE_KEY" ]]; then
+        prompt_secret PRIVATE_KEY "  Private key (0x...): "
+      fi
+    fi
     [[ -z "$PRIVATE_KEY" ]] && err "Private key required for contract deployment."
   fi
 
@@ -163,7 +244,7 @@ if [[ "$SKIP_CONTRACTS" == false ]]; then
   if [[ "$BALANCE" == "0" ]]; then
     warn "Deployer balance is 0. Transactions may fail."
     warn "Fund it: minitiad tx bank send <funded-key> $DEPLOYER_ADDRESS 100000000000000000000GAS --keyring-backend test --chain-id pillow-rollup --node $TENDERMINT_RPC -y"
-    read -rp "  Continue anyway? [y/N]: " cont
+    prompt_line cont "  Continue anyway? [y/N]: "
     [[ "${cont,,}" != "y" ]] && exit 1
   fi
 fi
@@ -175,37 +256,54 @@ if [[ "$SKIP_CONTRACTS" == false ]]; then
 
   # 5a. Agent.sol
   log "  Deploying Agent.sol..."
-  AGENT_OUT=$(PRIVATE_KEY="$PRIVATE_KEY" forge script script/DeployAgent.s.sol:DeployAgent \
-    --rpc-url "$EVM_RPC" --broadcast --slow 2>&1 | tee /dev/stderr)
+  AGENT_STATUS=0
+  run_and_capture AGENT_OUT env PRIVATE_KEY="$PRIVATE_KEY" forge script script/DeployAgent.s.sol:DeployAgent \
+    --rpc-url "$EVM_RPC" --broadcast --slow || AGENT_STATUS=$?
   AGENT_ADDRESS=$(echo "$AGENT_OUT" | grep -oE "Agent deployed at: 0x[0-9a-fA-F]+" | grep -oE "0x[0-9a-fA-F]+" || true)
+  (( AGENT_STATUS == 0 )) || err "Agent deployment failed."
   [[ -z "$AGENT_ADDRESS" ]] && err "Failed to parse Agent address from deploy output."
   ok "  Agent:       $AGENT_ADDRESS"
 
   # 5b. iUSD Demo Token + Faucet
   log "  Deploying IUSDDemoToken + IUSDDemoFaucet..."
-  IUSD_OUT=$(PRIVATE_KEY="$PRIVATE_KEY" forge script script/DeployIUSDDemo.s.sol:DeployIUSDDemo \
-    --rpc-url "$EVM_RPC" --broadcast --slow 2>&1 | tee /dev/stderr)
+  IUSD_STATUS=0
+  run_and_capture IUSD_OUT env PRIVATE_KEY="$PRIVATE_KEY" forge script script/DeployIUSDDemo.s.sol:DeployIUSDDemo \
+    --rpc-url "$EVM_RPC" --broadcast --slow || IUSD_STATUS=$?
   IUSD_TOKEN=$(echo "$IUSD_OUT" | grep -oE "iUSD-demo token deployed at: 0x[0-9a-fA-F]+" | grep -oE "0x[0-9a-fA-F]+" || true)
   IUSD_FAUCET=$(echo "$IUSD_OUT" | grep -oE "iUSD-demo faucet deployed at: 0x[0-9a-fA-F]+" | grep -oE "0x[0-9a-fA-F]+" || true)
   [[ -z "$IUSD_TOKEN" ]]  && err "Failed to parse iUSD token address."
   [[ -z "$IUSD_FAUCET" ]] && err "Failed to parse iUSD faucet address."
+  if (( IUSD_STATUS != 0 )); then
+    warn "DeployIUSDDemo reported a non-zero exit after deploying token/faucet."
+    FAUCET_MINTER=$(cast call "$IUSD_TOKEN" 'minters(address)(bool)' "$IUSD_FAUCET" --rpc-url "$EVM_RPC" 2>/dev/null || echo "unknown")
+    if [[ "$FAUCET_MINTER" != "true" ]]; then
+      warn "Faucet is not an authorized minter on the deployed token. The showcase faucet may not work until fixed manually."
+    fi
+  fi
   ok "  iUSD Token:  $IUSD_TOKEN"
   ok "  iUSD Faucet: $IUSD_FAUCET"
 
   # 5c. MockPerpDEX (reuses the iUSD token we just deployed)
   log "  Deploying MockPerpDEX..."
-  PERP_OUT=$(PRIVATE_KEY="$PRIVATE_KEY" IUSD_TOKEN_ADDRESS="$IUSD_TOKEN" \
+  PERP_STATUS=0
+  run_and_capture PERP_OUT env PRIVATE_KEY="$PRIVATE_KEY" IUSD_TOKEN_ADDRESS="$IUSD_TOKEN" \
     forge script script/DeployMockPerpDEX.s.sol:DeployMockPerpDEX \
-    --rpc-url "$EVM_RPC" --broadcast --slow 2>&1 | tee /dev/stderr)
+    --rpc-url "$EVM_RPC" --broadcast --slow || PERP_STATUS=$?
   PERP_DEX=$(echo "$PERP_OUT" | grep -oE "MockPerpDEX deployed at: 0x[0-9a-fA-F]+" | grep -oE "0x[0-9a-fA-F]+" || true)
-  [[ -z "$PERP_DEX" ]] && err "Failed to parse MockPerpDEX address."
-  ok "  MockPerpDEX: $PERP_DEX"
+  if (( PERP_STATUS != 0 )); then
+    warn "DeployMockPerpDEX reported a non-zero exit."
+  fi
+  if [[ -n "$PERP_DEX" ]]; then
+    ok "  MockPerpDEX: $PERP_DEX"
+  else
+    warn "MockPerpDEX address could not be parsed. apps/web/.env will keep MockPerpDEX values empty."
+  fi
 
   cd "$REPO_ROOT"
 
   # ─── 5d. Write apps/web/.env ──────────────────────────────────────────────
   log "Writing apps/web/.env..."
-  cat > "$REPO_ROOT/apps/web/.env" <<EOF
+  write_atomic "$REPO_ROOT/apps/web/.env" <<EOF
 
 
 NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS=${AGENT_ADDRESS}
@@ -213,19 +311,22 @@ NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS=${AGENT_ADDRESS}
 NUXT_PUBLIC_INITIA_SHOWCASE_TOKEN_ADDRESS=${IUSD_TOKEN}
 NUXT_PUBLIC_INITIA_SHOWCASE_TOKEN_FAUCET_ADDRESS=${IUSD_FAUCET}
 
-NUXT_PUBLIC_INITIA_MOCK_PERP_DEX_ADDRESS=${PERP_DEX}
+NUXT_PUBLIC_INITIA_MOCK_PERP_DEX_ADDRESS=${PERP_DEX:-}
 
 # Executor = deployer address for local dev (authorise it inside Agent.sol via the UI)
 NUXT_PUBLIC_INITIA_EXECUTOR_ADDRESS=${DEPLOYER_ADDRESS}
 
 # Showcase target = MockPerpDEX for local dev
-NUXT_PUBLIC_INITIA_SHOWCASE_TARGET_ADDRESS=${PERP_DEX}
+NUXT_PUBLIC_INITIA_SHOWCASE_TARGET_ADDRESS=${PERP_DEX:-}
 
 NUXT_PUBLIC_INITIA_EXECUTOR_MAX_TRADE_WEI=1000000000000000000
 NUXT_PUBLIC_INITIA_EXECUTOR_DAILY_LIMIT_WEI=5000000000000000000
 EOF
   ok "apps/web/.env written"
 else
+  if [[ ! -s "$REPO_ROOT/apps/web/.env" ]]; then
+    err "--skip-contracts was set, but apps/web/.env is missing or empty."
+  fi
   ok "Skipped contract deployment (using addresses already in apps/web/.env)"
 fi
 
@@ -241,30 +342,49 @@ fi
 
 # Resolve executor key if not already set (contracts were skipped)
 if [[ -z "${PRIVATE_KEY:-}" ]]; then
-  PRIVATE_KEY=$(resolve_private_key)
+  PRIVATE_KEY=$(resolve_private_key_from_env)
+  if [[ -z "$PRIVATE_KEY" ]]; then
+    PRIVATE_KEY=$(resolve_private_key_from_weave)
+  fi
 fi
 
 # Resolve chain ID from the running node
 CHAIN_ID=$(cast chain-id --rpc-url "$EVM_RPC" 2>/dev/null || echo "")
 [[ -z "$CHAIN_ID" ]] && warn "Could not resolve INITIA_EVM_CHAIN_ID — fill it in manually in apps/api/.dev.vars"
 
-# Get or generate KEY_ENCRYPTION_SECRET
-KEY_ENC_SECRET=$(grep -E '^KEY_ENCRYPTION_SECRET=' "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || echo "")
-if [[ -z "$KEY_ENC_SECRET" ]]; then
-  KEY_ENC_SECRET=$(openssl rand -hex 32 2>/dev/null || true)
-  warn "Generated random KEY_ENCRYPTION_SECRET — store it in root .env if you want to reuse encrypted keys"
-fi
+# Helper: read a single value from an existing .dev.vars file
+read_devvar() { grep -E "^${1}=" "$REPO_ROOT/apps/api/.dev.vars" 2>/dev/null | head -1 | cut -d= -f2- || echo ""; }
 
-OR_KEY=$(grep -E '^OPENROUTER_API_KEY=' "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- || echo "")
+# OPENROUTER_API_KEY: shell env → existing .dev.vars → prompt
+OR_KEY="${OPENROUTER_API_KEY:-$(read_devvar OPENROUTER_API_KEY)}"
+OR_KEY="${OR_KEY//$'\r'/}"
+OR_KEY="${OR_KEY//$'\n'/}"
+OR_KEY_PREFIX_COUNT=$(printf '%s' "$OR_KEY" | grep -o 'sk-or-v1-' | wc -l | tr -d ' ' || true)
+if [[ -n "$OR_KEY" && "${OR_KEY_PREFIX_COUNT:-0}" -gt 1 ]]; then
+  warn "Existing OPENROUTER_API_KEY looks malformed (multiple key prefixes found). Prompting for a replacement."
+  OR_KEY=""
+fi
 if [[ -z "$OR_KEY" ]]; then
   echo ""
-  warn "OPENROUTER_API_KEY not found in root .env."
+  warn "OPENROUTER_API_KEY not set."
   echo "  Get one free at: https://openrouter.ai → Dashboard → API Keys"
-  read -rsp "  Paste key (or press Enter to skip — agents won't work without it): " OR_KEY
+  echo "  (or set it in apps/api/.dev.vars before running this script)"
+  if [[ -t 0 ]]; then
+    read -rp "  Paste key visibly (or press Enter to skip — agents won't work without it): " OR_KEY || true
+  else
+    warn "No interactive TTY available — leaving OPENROUTER_API_KEY empty"
+  fi
   echo ""
 fi
 
-cat > "$REPO_ROOT/apps/api/.dev.vars" <<EOF
+# KEY_ENCRYPTION_SECRET: shell env → existing .dev.vars → auto-generate
+KEY_ENC_SECRET="${KEY_ENCRYPTION_SECRET:-$(read_devvar KEY_ENCRYPTION_SECRET)}"
+if [[ -z "$KEY_ENC_SECRET" ]]; then
+  KEY_ENC_SECRET=$(openssl rand -hex 32 2>/dev/null || true)
+  warn "Generated random KEY_ENCRYPTION_SECRET — keep apps/api/.dev.vars to reuse encrypted keys across runs"
+fi
+
+write_atomic "$REPO_ROOT/apps/api/.dev.vars" <<EOF
 OPENROUTER_API_KEY=${OR_KEY}
 PLAYWRIGHT_SECRET=playwright-dev-secret
 KEY_ENCRYPTION_SECRET=${KEY_ENC_SECRET}
@@ -273,14 +393,17 @@ INITIA_EVM_CHAIN_ID=${CHAIN_ID}
 INITIA_AGENT_CONTRACT_ADDRESS=${AGENT_ADDRESS:-}
 MOCK_PERP_DEX_ADDRESS=${PERP_DEX:-}
 INITIA_EXECUTOR_PRIVATE_KEY=${PRIVATE_KEY:-}
+MAX_AGENTS_PER_USER=${MAX_AGENTS_PER_USER:-5}
+MAX_MANAGERS_PER_USER=${MAX_MANAGERS_PER_USER:-1}
+DEFAULT_MANAGER_MAX_AGENTS=${DEFAULT_MANAGER_MAX_AGENTS:-2}
 EOF
 ok "apps/api/.dev.vars written"
 
 # ─── 7. Apply local D1 migrations ────────────────────────────────────────────
 log "Applying local D1 migrations..."
 cd "$REPO_ROOT/apps/api"
-pnpm migration:apply:local --yes 2>/dev/null || \
-  npx wrangler d1 migrations apply trading-agents --local --yes
+pnpm migration:apply:local || \
+  npx wrangler d1 migrations apply trading-agents --local
 ok "D1 migrations applied"
 cd "$REPO_ROOT"
 

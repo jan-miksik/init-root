@@ -5,7 +5,7 @@
 INITIA_EVM_RPC=http://localhost:8545
 
 # Required: get a free key at https://openrouter.ai
-OPENROUTER_API_KEY=sk-or-v1-xxxxx
+OPENROUTER_API_KEY=
 
 # Secret used by the Playwright test runner to authenticate against the local API
 PLAYWRIGHT_SECRET=playwright-dev-secret
@@ -24,3 +24,8 @@ MOCK_PERP_DEX_ADDRESS=
 
 # Private key of the executor wallet that signs and submits on-chain transactions
 INITIA_EXECUTOR_PRIVATE_KEY=
+
+# Optional limits — remove or leave blank for unlimited
+MAX_AGENTS_PER_USER=5
+MAX_MANAGERS_PER_USER=1
+DEFAULT_MANAGER_MAX_AGENTS=2

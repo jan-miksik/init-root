@@ -12,7 +12,16 @@ import { normalizePairsForDex } from '../../lib/pairs.js';
 import { nowIso, generateId } from '../../lib/utils.js';
 import { validateBody } from '../../lib/validation.js';
 import { setTradingAgentIntervalDo, stopTradingAgentDo, syncTradingAgentConfigDo } from '../../lib/do-clients.js';
-import { deleteAgentRelatedRows, formatAgent, notifyScheduler, normalizeInitiaWalletAddress, parseAgentConfig, withOwnedAgent } from './shared.js';
+import {
+  deleteAgentRelatedRows,
+  formatAgent,
+  getPaperAgentLiveStateReset,
+  notifyScheduler,
+  normalizeInitiaWalletAddress,
+  parseAgentConfig,
+  stripPaperAgentLiveConfig,
+  withOwnedAgent,
+} from './shared.js';
 import type { AgentsRoute } from './shared.js';
 
 export function registerAgentCoreRoutes(agentsRoute: AgentsRoute): void {
@@ -116,11 +125,12 @@ export function registerAgentCoreRoutes(agentsRoute: AgentsRoute): void {
       const existingConfig = parseAgentConfig(existing.config);
       const existingChain = existing.chain ?? (typeof existingConfig.chain === 'string' ? existingConfig.chain : 'base');
       const nextChain = typeof body.chain === 'string' ? body.chain : existingChain;
+      const nextIsPaper = body.isPaper ?? existing.isPaper;
       const nextInitiaWalletAddress = body.initiaWalletAddress !== undefined
         ? normalizeInitiaWalletAddress(body.initiaWalletAddress)
         : normalizeInitiaWalletAddress(existing.initiaWalletAddress);
 
-      const mergedConfig = {
+      const mergedConfigBase = {
         ...existingConfig,
         ...body,
         chain: nextChain,
@@ -128,6 +138,7 @@ export function registerAgentCoreRoutes(agentsRoute: AgentsRoute): void {
         ...(typeof body.profileId === 'string' && { profileId: resolveAgentProfileId(body.profileId) }),
         ...(body.pairs !== undefined && { pairs: normalizePairsForDex(body.pairs) }),
       };
+      const mergedConfig = nextIsPaper ? stripPaperAgentLiveConfig(mergedConfigBase) : mergedConfigBase;
 
       const prevInterval = existingConfig.analysisInterval;
       const nextInterval = mergedConfig.analysisInterval;
@@ -149,9 +160,13 @@ export function registerAgentCoreRoutes(agentsRoute: AgentsRoute): void {
       }
       if (body.personaMd !== undefined) updates.personaMd = body.personaMd ?? null;
       if (body.isPaper !== undefined) updates.isPaper = body.isPaper;
-      if (body.initiaWalletAddress !== undefined) updates.initiaWalletAddress = nextInitiaWalletAddress;
-      if (body.initiaMetadataHash !== undefined) updates.initiaMetadataHash = body.initiaMetadataHash ?? null;
-      if (body.initiaMetadataVersion !== undefined) updates.initiaMetadataVersion = body.initiaMetadataVersion ?? null;
+      if (nextIsPaper) {
+        Object.assign(updates, getPaperAgentLiveStateReset(updates.updatedAt ?? nowIso()));
+      } else {
+        if (body.initiaWalletAddress !== undefined) updates.initiaWalletAddress = nextInitiaWalletAddress;
+        if (body.initiaMetadataHash !== undefined) updates.initiaMetadataHash = body.initiaMetadataHash ?? null;
+        if (body.initiaMetadataVersion !== undefined) updates.initiaMetadataVersion = body.initiaMetadataVersion ?? null;
+      }
 
       await db.update(agents).set(updates).where(eq(agents.id, id));
 

@@ -5,6 +5,7 @@ import type { Env } from '../../types/env.js';
 import type { AuthVariables } from '../../lib/auth.js';
 import { agents, trades, agentDecisions, performanceSnapshots, agentSelfModifications } from '../../db/schema.js';
 import { registerSchedulerAgent, unregisterSchedulerAgent } from '../../lib/do-clients.js';
+import { normalizeInitiaWalletAddress as normalizeInitiaWalletAddressValue } from '../../lib/wallet-address.js';
 import { formatStoredEntity } from '../_shared/format-stored-entity.js';
 import { notFoundJson } from '../_shared/json-response.js';
 import { requireOwnedEntity } from '../_shared/owned-entity.js';
@@ -27,10 +28,38 @@ export function formatAgent(r: AgentRow) {
 }
 
 export function normalizeInitiaWalletAddress(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.toLowerCase();
+  return normalizeInitiaWalletAddressValue(value);
+}
+
+export function stripPaperAgentLiveConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const normalizedConfig = { ...config };
+  delete normalizedConfig.initiaWalletAddress;
+  delete normalizedConfig.initiaMetadataHash;
+  delete normalizedConfig.initiaMetadataVersion;
+  return normalizedConfig;
+}
+
+export function getPaperAgentLiveStateReset(now: string): Pick<
+  typeof agents.$inferInsert,
+  | 'initiaWalletAddress'
+  | 'initiaMetadataHash'
+  | 'initiaMetadataVersion'
+  | 'initiaLinkTxHash'
+  | 'initiaLinkedAt'
+  | 'initiaSyncState'
+  | 'initiaLastSyncedAt'
+  | 'updatedAt'
+> {
+  return {
+    initiaWalletAddress: null,
+    initiaMetadataHash: null,
+    initiaMetadataVersion: null,
+    initiaLinkTxHash: null,
+    initiaLinkedAt: null,
+    initiaSyncState: null,
+    initiaLastSyncedAt: null,
+    updatedAt: now,
+  };
 }
 
 export function parseInitiaSyncState(raw: string | null): Record<string, unknown> {
