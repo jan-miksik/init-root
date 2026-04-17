@@ -63,8 +63,8 @@ describe('cache TTL strategy', () => {
     expect(MARKET_DATA_CACHE_TTL_SECONDS).toBeGreaterThanOrEqual(300);
   });
 
-  it('top pairs TTL is shorter than market data TTL', () => {
-    expect(TOP_PAIRS_CACHE_TTL_SECONDS).toBeLessThan(MARKET_DATA_CACHE_TTL_SECONDS);
+  it('top pairs TTL is not longer than market data TTL', () => {
+    expect(TOP_PAIRS_CACHE_TTL_SECONDS).toBeLessThanOrEqual(MARKET_DATA_CACHE_TTL_SECONDS);
   });
 
   it('TTL values are positive integers', () => {

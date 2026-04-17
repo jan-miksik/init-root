@@ -198,6 +198,8 @@ export async function executeManagerAction(
             llmModel: updatedAgent.llmModel ?? null,
             profileId: updatedAgent.profileId ?? null,
             personaMd: updatedAgent.personaMd ?? null,
+            chain: updatedAgent.chain ?? null,
+            isPaper: updatedAgent.isPaper ?? null,
           });
         } catch (err) {
           console.warn(`[manager-loop] failed to sync config cache to TRADING_AGENT DO for ${agentId}:`, err);

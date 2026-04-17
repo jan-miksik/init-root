@@ -33,6 +33,8 @@ export function registerAgentLifecycleRoutes(agentsRoute: AgentsRoute): void {
           llmModel: agent.llmModel ?? null,
           profileId: agent.profileId ?? null,
           personaMd: agent.personaMd ?? null,
+          chain: agent.chain ?? null,
+          isPaper: agent.isPaper ?? null,
         },
       });
 

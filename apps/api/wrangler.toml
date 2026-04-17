@@ -17,9 +17,8 @@ cwd = "../.."
 [triggers]
 crons = ["0 * * * *"]
 
-# Local-only vars — never set PLAYWRIGHT_SECRET in [env.production]
-[vars]
-PLAYWRIGHT_SECRET = "playwright-dev-secret"
+# Local secrets should live in apps/api/.dev.vars.
+# Do not set PLAYWRIGHT_SECRET in production.
 
 [[d1_databases]]
 binding = "DB"

@@ -184,6 +184,8 @@ export function registerAgentCoreRoutes(agentsRoute: AgentsRoute): void {
             llmModel: updated.llmModel ?? null,
             profileId: updated.profileId ?? null,
             personaMd: updated.personaMd ?? null,
+            chain: updated.chain ?? null,
+            isPaper: updated.isPaper ?? null,
           });
         } catch (err) {
           console.warn(`[agents route] Failed to push config to TRADING_AGENT DO cache for ${id}:`, err);

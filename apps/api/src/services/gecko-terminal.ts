@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import { geckoOhlcvKey, geckoSearchKey } from '../cache/keys.js';
-import { HOT_CACHE_TTL_MS, MARKET_DATA_CACHE_TTL_SECONDS } from '../cache/ttl.js';
+import { CHART_DISPLAY_CACHE_TTL_SECONDS, HOT_CACHE_TTL_MS, MARKET_DATA_CACHE_TTL_SECONDS } from '../cache/ttl.js';
 
 const GECKO_BASE = 'https://api.geckoterminal.com/api/v2';
 const HOT_CACHE_MAX_ENTRIES = 2_000;
@@ -144,7 +144,7 @@ export interface OHLCVCandle {
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = false } = {}) {
-  async function cachedFetch<T>(cacheKey: string, url: string, schema: z.ZodType<T>): Promise<T> {
+  async function cachedFetch<T>(cacheKey: string, url: string, schema: z.ZodType<T>, ttl = MARKET_DATA_CACHE_TTL_SECONDS): Promise<T> {
     if (!bypassCache) {
       const hot = getHotCached<T>(cacheKey);
       if (hot !== null) {
@@ -186,7 +186,7 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
     }
     setHotCached(cacheKey, parsed.data);
     try {
-      await cache.put(cacheKey, JSON.stringify(json), { expirationTtl: MARKET_DATA_CACHE_TTL_SECONDS });
+      await cache.put(cacheKey, JSON.stringify(json), { expirationTtl: ttl });
     } catch (err) {
       console.warn(`cache_error service=gecko-terminal op=put key=${cacheKey}`, err);
     }
@@ -249,7 +249,7 @@ export function createGeckoTerminalService(cache: KVNamespace, { bypassCache = f
   ): Promise<OHLCVCandle[]> {
     const cacheKey = `gecko:ohlcv-full:base:${address.toLowerCase()}:${timeframe}:${limit}`;
     const url = `${GECKO_BASE}/networks/base/pools/${address}/ohlcv/${timeframe}?limit=${limit}&currency=usd`;
-    const data = await cachedFetch(cacheKey, url, GeckoOHLCVSchema);
+    const data = await cachedFetch(cacheKey, url, GeckoOHLCVSchema, CHART_DISPLAY_CACHE_TTL_SECONDS);
     return data.data.attributes.ohlcv_list
       .map(([t, o, h, l, c]) => ({ t: t * 1000, o, h, l, c }))
       .reverse(); // oldest first

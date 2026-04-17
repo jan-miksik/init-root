@@ -52,6 +52,8 @@ function makeSampleAgentRow(): CachedAgentRow {
     llmModel: 'nvidia/nemotron-3-super-120b-a12b:free',
     profileId: null,
     personaMd: null,
+    chain: 'base',
+    isPaper: true,
   };
 }
 
@@ -69,6 +71,8 @@ describe('CachedAgentRow type', () => {
     expect('llmModel' in row).toBe(true);
     expect('profileId' in row).toBe(true);
     expect('personaMd' in row).toBe(true);
+    expect('chain' in row).toBe(true);
+    expect('isPaper' in row).toBe(true);
   });
 
   it('accepts null for optional fields', () => {
@@ -78,11 +82,15 @@ describe('CachedAgentRow type', () => {
       llmModel: null,
       profileId: null,
       personaMd: null,
+      chain: null,
+      isPaper: null,
     };
     expect(row.ownerAddress).toBeNull();
     expect(row.llmModel).toBeNull();
     expect(row.profileId).toBeNull();
     expect(row.personaMd).toBeNull();
+    expect(row.chain).toBeNull();
+    expect(row.isPaper).toBeNull();
   });
 });
 
