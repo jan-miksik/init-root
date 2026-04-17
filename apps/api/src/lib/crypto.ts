@@ -2,9 +2,16 @@
  * AES-GCM encrypt/decrypt for storing user API keys in D1.
  * Uses Web Crypto API (available in Cloudflare Workers).
  *
- * If no secret is provided, falls back to plain-text (dev mode only).
  * Stored format: base64(iv[12 bytes] + ciphertext)
  */
+
+function requireEncryptionSecret(secret: string | undefined): string {
+  if (!secret) {
+    throw new Error('KEY_ENCRYPTION_SECRET is required to encrypt or decrypt user API keys');
+  }
+
+  return secret;
+}
 
 async function deriveKey(secret: string): Promise<CryptoKey> {
   if (!/^[0-9a-fA-F]{64}$/.test(secret)) {
@@ -23,8 +30,7 @@ export async function encryptKey(
   plaintext: string,
   secret: string | undefined
 ): Promise<string> {
-  if (!secret) return plaintext;
-  const key = await deriveKey(secret);
+  const key = await deriveKey(requireEncryptionSecret(secret));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const enc = new TextEncoder();
   const ciphertext = await crypto.subtle.encrypt(
@@ -46,11 +52,10 @@ export async function decryptKey(
   stored: string,
   secret: string | undefined
 ): Promise<string> {
-  if (!secret) return stored;
+  const key = await deriveKey(requireEncryptionSecret(secret));
   const buf = Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
   const iv = buf.slice(0, 12);
   const ciphertext = buf.slice(12);
-  const key = await deriveKey(secret);
   const dec = new TextDecoder();
   const plain = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv },

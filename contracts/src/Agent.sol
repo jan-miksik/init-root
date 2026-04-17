@@ -103,8 +103,6 @@ contract Agent {
         uint256 executionDeadline
     );
 
-    event NativeReceived(address indexed from, uint256 amount);
-
     error AgentNotFound(uint256 agentId);
     error NotAgentOwner(uint256 agentId, address caller);
     error NotAuthorizedTickExecutor(uint256 agentId, address caller);
@@ -126,6 +124,7 @@ contract Agent {
     error Reentrancy();
     error ExecutionPlanExpired(uint256 executionDeadline, uint256 nowTs);
     error PerpPositionNotTracked(uint256 agentId, uint256 perpPositionId);
+    error DirectNativeTransferDisabled();
 
     modifier nonReentrant() {
         if (_reentrancyState != 1) revert Reentrancy();
@@ -135,7 +134,7 @@ contract Agent {
     }
 
     receive() external payable {
-        emit NativeReceived(msg.sender, msg.value);
+        revert DirectNativeTransferDisabled();
     }
 
     // ─────────────────────────── Agent Lifecycle ───────────────────────────

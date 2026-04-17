@@ -78,6 +78,12 @@ contract AgentEntryPointTest is Test {
         agent.withdrawNative(agentId, 0.2 ether, payable(bob));
     }
 
+    function test_receive_revertsOnDirectNativeTransfer() external {
+        vm.expectRevert(Agent.DirectNativeTransferDisabled.selector);
+        vm.prank(alice);
+        payable(address(agent)).transfer(1 ether);
+    }
+
     function test_setDelegatedExecutionEnabled() external {
         uint256 agentId = _createAliceAgent(bytes("delegated-exec"));
 

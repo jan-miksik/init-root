@@ -35,7 +35,12 @@ export async function resolveStoredOpenRouterKey(
   }
 
   if (isLikelyLegacyPlaintextOpenRouterKey(trimmedKey)) {
-    if (encryptionSecret && persistEncrypted) {
+    if (!encryptionSecret) {
+      console.warn(`${logPrefix} refusing to use legacy plaintext user OR key because KEY_ENCRYPTION_SECRET is missing; using server fallback`);
+      return { apiKey: serverKey, source: 'server' };
+    }
+
+    if (persistEncrypted) {
       try {
         const encryptedKey = await encryptKey(trimmedKey, encryptionSecret);
         await persistEncrypted(encryptedKey);

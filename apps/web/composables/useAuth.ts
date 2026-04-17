@@ -130,28 +130,6 @@ export function useAuth() {
     }
   }
 
-  /** Dev/test bypass sign-in flow: create session directly from connected wallet. */
-  async function signInHackathon(): Promise<void> {
-    let addr = wallet.walletAddress.value;
-    if (!addr) {
-      addr = await wallet.connectWallet();
-    }
-    if (!addr) throw new Error('No wallet connected');
-
-    authLoading.value = true;
-    try {
-      const user = await $fetch<AuthUser>('/api/auth/hackathon-session', {
-        method: 'POST',
-        body: { walletAddress: addr },
-        credentials: 'include',
-      });
-      authUser.value = user;
-      authResolved.value = true;
-    } finally {
-      authLoading.value = false;
-    }
-  }
-
   /** Sign out: invalidate server session + clear local wallet state cache. */
   async function signOut(opts?: SignOutOptions): Promise<void> {
     try {
@@ -176,7 +154,6 @@ export function useAuth() {
     authResolved,
     fetchMe,
     signIn,
-    signInHackathon,
     signOut,
   };
 }

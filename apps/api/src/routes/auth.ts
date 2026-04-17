@@ -24,7 +24,6 @@ import { validateBody } from '../lib/validation.js';
 import { z } from 'zod';
 import { encryptKey } from '../lib/crypto.js';
 import { generateId, nowIso } from '../lib/utils.js';
-import { normalizeSupportedWalletAddress } from '../lib/wallet-address.js';
 import { forbiddenJson, internalServerErrorJson, notFoundJson, unauthorizedJson, upstreamFailureJson } from './_shared/json-response.js';
 
 const authRoute = new Hono<{ Bindings: Env }>();
@@ -75,21 +74,6 @@ const VerifySchema = z.object({
   avatarUrl: z.string().url().optional(),
 });
 
-const HackathonSessionSchema = z.object({
-  walletAddress: z.string().trim().min(4).max(128),
-  displayName: z.string().max(100).optional(),
-});
-
-function isHackathonBypassAllowed(env: Pick<Env, 'HACKATHON_AUTH_BYPASS'>): boolean {
-  if (env.HACKATHON_AUTH_BYPASS === 'true') return true;
-  if (env.HACKATHON_AUTH_BYPASS) {
-    console.warn(
-      `[auth] HACKATHON_AUTH_BYPASS is set to "${env.HACKATHON_AUTH_BYPASS}" which is not "true" — bypass is NOT active. Use the exact string "true" to enable it.`,
-    );
-  }
-  return false;
-}
-
 /** POST /api/auth/verify — verify SIWE, create session, set cookie, return user */
 authRoute.post('/verify', async (c) => {
   const body = await validateBody(c, VerifySchema);
@@ -118,57 +102,6 @@ authRoute.post('/verify', async (c) => {
   c.header('Set-Cookie', buildSessionCookie(result.sessionToken, isHttps));
 
   return c.json(serializeAuthUser(result.user));
-});
-
-/** POST /api/auth/hackathon-session — bootstrap a session from connected wallet in localhost/hackathon mode. */
-authRoute.post('/hackathon-session', async (c) => {
-  if (!isHackathonBypassAllowed(c.env)) {
-    return notFoundJson(c);
-  }
-
-  // Always log when this bypass endpoint is reached so it is visible in Cloudflare logs.
-  const requestHost = new URL(c.req.url).hostname;
-  const isLocalhost = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(requestHost);
-  if (!isLocalhost) {
-    console.error('[auth/hackathon-session] HACKATHON_AUTH_BYPASS is active on a non-localhost host:', requestHost);
-  } else {
-    console.warn('[auth/hackathon-session] Hackathon bypass used — no SIWE verification.');
-  }
-
-  const body = await validateBody(c, HackathonSessionSchema);
-  const walletAddress = normalizeSupportedWalletAddress(body.walletAddress);
-  if (!walletAddress) {
-    return c.json({ error: 'Invalid wallet address.' }, 400);
-  }
-  const orm = drizzle(c.env.DB);
-
-  let [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
-  if (!user) {
-    const userId = generateId('user');
-    await orm.insert(users).values({
-      id: userId,
-      walletAddress,
-      displayName: body.displayName ?? null,
-      authProvider: 'wallet',
-      email: null,
-      avatarUrl: null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    });
-    [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
-  } else if (body.displayName && !user.displayName) {
-    await orm.update(users).set({
-      displayName: body.displayName,
-      updatedAt: nowIso(),
-    }).where(eq(users.id, user.id));
-    [user] = await orm.select().from(users).where(eq(users.walletAddress, walletAddress));
-  }
-
-  const sessionToken = await createSession(c.env.CACHE, user.id, walletAddress, c.env.DB);
-  const isHttps = c.req.url.startsWith('https://');
-  c.header('Set-Cookie', buildSessionCookie(sessionToken, isHttps));
-
-  return c.json(serializeAuthUser(user));
 });
 
 /** GET /api/auth/me — return currently authenticated user */
@@ -204,6 +137,11 @@ const OpenRouterExchangeSchema = z.object({
 authRoute.post('/openrouter/exchange', async (c) => {
   const auth = await requireAuthenticatedSession(c);
   if ('response' in auth) return auth.response;
+
+  if (!c.env.KEY_ENCRYPTION_SECRET) {
+    console.error('[auth/openrouter/exchange] KEY_ENCRYPTION_SECRET is missing; refusing to persist user OpenRouter key');
+    return internalServerErrorJson(c, 'OpenRouter key storage is not configured');
+  }
 
   const body = await validateBody(c, OpenRouterExchangeSchema);
 

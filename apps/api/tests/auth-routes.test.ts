@@ -21,6 +21,8 @@ const orm = {
 
 const createSessionMock = vi.fn(async () => 'session_token');
 const buildSessionCookieMock = vi.fn(() => 'session=session_token; HttpOnly; Path=/');
+const getSessionMock = vi.fn();
+const parseCookieValueMock = vi.fn();
 
 vi.mock('drizzle-orm/d1', () => ({
   drizzle: vi.fn(() => orm),
@@ -29,9 +31,9 @@ vi.mock('drizzle-orm/d1', () => ({
 vi.mock('../src/auth/session.js', () => ({
   createNonce: vi.fn(),
   createSession: createSessionMock,
-  getSession: vi.fn(),
+  getSession: getSessionMock,
   deleteSession: vi.fn(),
-  parseCookieValue: vi.fn(),
+  parseCookieValue: parseCookieValueMock,
   buildSessionCookie: buildSessionCookieMock,
   buildExpiredSessionCookie: vi.fn(() => 'session=; Max-Age=0; Path=/'),
   verifySiweAndCreateSession: vi.fn(),
@@ -41,6 +43,7 @@ describe('auth routes hardening', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     orm.select.mockReturnValue({
       from: () => ({
         where: async () => [user],
@@ -48,42 +51,34 @@ describe('auth routes hardening', () => {
     });
   });
 
-  it('does not enable hackathon bypass from localhost origin headers alone', async () => {
+  it('refuses to exchange and store OpenRouter keys when encryption is not configured', async () => {
     const { default: authRoute } = await import('../src/routes/auth.js');
 
+    parseCookieValueMock.mockReturnValue('session_token');
+    getSessionMock.mockResolvedValue({ userId: user.id, walletAddress: user.walletAddress });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
     const response = await authRoute.request(
-      'http://api.test/hackathon-session',
+      'http://api.test/openrouter/exchange',
       {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          origin: 'http://localhost:3000',
-          referer: 'http://localhost:3000/',
+          cookie: 'session=session_token',
         },
-        body: JSON.stringify({ walletAddress: user.walletAddress }),
+        body: JSON.stringify({
+          code: 'code',
+          code_verifier: 'verifier',
+        }),
       },
-      { HACKATHON_AUTH_BYPASS: 'false' } as any,
+      { DB: {}, CACHE: {} } as any,
     );
 
-    expect(response.status).toBe(404);
-  });
-
-  it('rejects malformed hackathon wallet identities before any lookup', async () => {
-    const { default: authRoute } = await import('../src/routes/auth.js');
-
-    const response = await authRoute.request(
-      'http://api.test/hackathon-session',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ walletAddress: 'not-a-wallet' }),
-      },
-      { HACKATHON_AUTH_BYPASS: 'true' } as any,
-    );
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: 'Invalid wallet address.' });
-    expect(orm.select).not.toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'OpenRouter key storage is not configured' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(orm.update).not.toHaveBeenCalled();
   });
 
   it('keeps the dev-session token in the cookie only', async () => {

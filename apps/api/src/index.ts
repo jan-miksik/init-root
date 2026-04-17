@@ -72,6 +72,7 @@ const defaultOrigins = [
   'http://127.0.0.1:5173',
   'http://0.0.0.0:4173',
   'http://0.0.0.0:5173',
+  'https://init-root.pages.dev',
   'https://something-in-loop.pages.dev',
 ];
 app.use(

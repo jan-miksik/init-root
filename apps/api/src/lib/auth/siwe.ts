@@ -16,6 +16,7 @@ const ALLOWED_SIWE_DOMAINS = [
   'localhost:4173',
   '127.0.0.1',
   '0.0.0.0',
+  'init-root.pages.dev',
   'something-in-loop.market',
   'something-in-loop.pages.dev',
 ];

@@ -1,4 +1,4 @@
-import { parse as markedParse } from 'marked';
+import { parse as markedParse, Renderer } from 'marked';
 
 export function escapeHtml(text: string): string {
   return text
@@ -8,9 +8,12 @@ export function escapeHtml(text: string): string {
     .replace(/\n/g, '<br>');
 }
 
+const safeMarkdownRenderer = new Renderer();
+safeMarkdownRenderer.html = (token) => escapeHtml(token.text);
+
 export function renderMarkdown(text: string): string {
   try {
-    return markedParse(text, { async: false }) as string;
+    return markedParse(text, { async: false, renderer: safeMarkdownRenderer }) as string;
   } catch {
     return escapeHtml(text);
   }

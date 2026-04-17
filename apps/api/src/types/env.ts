@@ -32,12 +32,10 @@ export interface Env {
   INITIA_EXECUTOR_PRIVATE_KEY?: string;
   /** Optional MockPerpDEX address used by Initia perp execution plans. */
   MOCK_PERP_DEX_ADDRESS?: string;
-  /** 64-char hex (32 bytes). Used to AES-GCM encrypt user API keys at rest. If absent, keys stored plain (dev only). */
+  /** 64-char hex (32 bytes). Used to AES-GCM encrypt user API keys at rest. Required for user-managed OpenRouter keys. */
   KEY_ENCRYPTION_SECRET?: string;
   /** Dev/test only. When set, enables POST /api/auth/dev-session for Playwright. Never set in production. */
   PLAYWRIGHT_SECRET?: string;
-  /** Hackathon/dev only. When true, allows wallet-address session bootstrap without SIWE. */
-  HACKATHON_AUTH_BYPASS?: string;
   /** Optional debug flag to log full LLM prompts/responses. Keep unset/false in production. */
   LOG_LLM_DEBUG?: string;
   /** Max agents one user can create. If unset, unlimited. */

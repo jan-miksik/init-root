@@ -53,6 +53,24 @@ describe('resolveStoredOpenRouterKey', () => {
     await expect(decryptKey(reEncryptedValue, SECRET)).resolves.toBe(USER_KEY);
   });
 
+  it('refuses legacy plaintext keys when the encryption secret is missing', async () => {
+    const persistEncrypted = vi.fn(async () => {});
+
+    const resolved = await resolveStoredOpenRouterKey({
+      storedKey: USER_KEY,
+      serverKey: SERVER_KEY,
+      encryptionSecret: undefined,
+      logPrefix: '[test]',
+      persistEncrypted,
+    });
+
+    expect(resolved).toEqual({
+      apiKey: SERVER_KEY,
+      source: 'server',
+    });
+    expect(persistEncrypted).not.toHaveBeenCalled();
+  });
+
   it('falls back to the server key when encrypted data cannot be decrypted', async () => {
     const storedKey = await encryptKey(USER_KEY, SECRET);
 
@@ -67,5 +85,11 @@ describe('resolveStoredOpenRouterKey', () => {
       apiKey: SERVER_KEY,
       source: 'server',
     });
+  });
+
+  it('fails closed when trying to encrypt without a configured secret', async () => {
+    await expect(encryptKey(USER_KEY, undefined)).rejects.toThrow(
+      'KEY_ENCRYPTION_SECRET is required to encrypt or decrypt user API keys',
+    );
   });
 });

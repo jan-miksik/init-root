@@ -71,6 +71,7 @@ describe('SIWE domain validation', () => {
   });
 
   it('allows production domain', () => {
+    expect(isAllowedSiweDomain('init-root.pages.dev')).toBe(true);
     expect(isAllowedSiweDomain('something-in-loop.market')).toBe(true);
     expect(isAllowedSiweDomain('something-in-loop.pages.dev')).toBe(true);
   });
