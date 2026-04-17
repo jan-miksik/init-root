@@ -48,9 +48,13 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 - Nuxt configured for **Cloudflare Pages** in `apps/web/nuxt.config.ts`:
   - `nitro.preset = 'cloudflare-pages'`
   - `compatibilityDate: '2026-02-17'`
+- Root Pages configuration in [`wrangler.toml`](../wrangler.toml):
+  - `pages_build_output_dir = "./apps/web/dist"`
+  - `compatibility_flags = ["nodejs_compat"]`
+  - `[[services]] binding = "API"`, `service = "something-in-loop-api"`
 - Deploy script from repository root (`package.json`):
   - `npm run deploy:web` → builds the web app and runs
-    `npx wrangler pages deploy dist --project-name=something-in-loop`.
+    `npx wrangler pages deploy apps/web/dist --project-name=something-in-loop`.
 - **Pages Functions**:
   - `apps/web/server/api/[...path].ts` is a Nitro/Pages Function that:
     - Uses the **Cloudflare Service Binding** `API` when deployed on Pages (calls `cfEnv.API.fetch()`).
@@ -112,7 +116,7 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 
 ### 7. Service Bindings (internal-only API)
 
-- Service binding from Pages → Worker (see `docs/DEPLOY.md` and `apps/web/wrangler.toml`):
+- Service binding from Pages → Worker (see `docs/DEPLOY.md` and root `wrangler.toml`):
   - `[[services]] binding = "API"`, `service = "something-in-loop-api"`.
 - Pages Function (`apps/web/server/api/[...path].ts`) expects `event.context.cloudflare.env.API`:
   - When present (production on Pages), requests are routed internally:
@@ -258,4 +262,3 @@ apps/web/pages/
 ```
 
 ---
-

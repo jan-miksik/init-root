@@ -130,16 +130,20 @@ npm run deploy -- --env production
 
 The frontend calls `/api/*` on your Pages domain; a server route proxies to the Worker via the binding.
 
-**Option 1 — Wrangler (recommended if you deploy from CLI)**  
-The repo already has `apps/web/wrangler.toml` with:
+**Option 1 — Wrangler (recommended if you deploy from CLI or from a root-level Pages build)**  
+The repo includes a root `wrangler.toml` with:
 
 ```toml
+pages_build_output_dir = "./apps/web/dist"
+compatibility_flags = ["nodejs_compat"]
+
 [[services]]
 binding = "API"
 service = "something-in-loop-api"
 ```
 
-If you deploy with `wrangler pages deploy dist` from `apps/web`, this binding is used. Ensure the Worker name `something-in-loop-api` matches `apps/api/wrangler.toml`.
+This is important for monorepo builds: Cloudflare Pages will look for `apps/web/dist`, not a repo-root `dist`.
+Ensure the Worker name `something-in-loop-api` matches `apps/api/wrangler.toml`.
 
 **Option 2 — Cloudflare Dashboard (Git-based Pages)**  
 1. Workers & Pages → your Pages project → **Settings** → **Functions**.
@@ -159,10 +163,15 @@ Two options: **Git integration** (recommended) or **Direct upload**.
 1. Push your repo to **GitHub** or **GitLab**.
 2. In [Cloudflare Dashboard](https://dash.cloudflare.com) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
 3. Select the repo and configure:
-   - **Root directory:** `apps/web` (so the build runs in the web app).
-   - **Production branch:** `main`
-   - **Build command:** `npm run build`
-   - **Build output directory:** `dist`
+   - **Preferred monorepo setup:**
+     - **Root directory:** repository root
+     - **Production branch:** `main`
+     - **Build command:** `npm run build`
+     - **Build output directory:** `apps/web/dist`
+   - **Alternative single-app setup:**
+     - **Root directory:** `apps/web`
+     - **Build command:** `npm run build`
+     - **Build output directory:** `dist`
 4. **Environment variables** (Settings → Environment variables):  
    When using the Service Binding (internal API), you do **not** need `API_BASE_URL` in production.  
    For **local dev** only, you can set `API_BASE_URL=http://localhost:8787` so the dev server proxy knows where the API runs.
@@ -180,13 +189,12 @@ npm run build --workspace=@something-in-loop/web
 Then deploy the built output. Nuxt outputs to `apps/web/dist`. Use the [Pages direct upload](https://developers.cloudflare.com/pages/get-started/direct-upload/) flow, or:
 
 ```bash
-cd apps/web
-npx wrangler pages deploy dist --project-name=something-in-loop
+npx wrangler pages deploy apps/web/dist --project-name=something-in-loop
 ```
 
 (Replace `something-in-loop` with your Pages project name if different.)
 
-After the first deploy, add the **Service Binding** in the dashboard (step 1.6) if not using `apps/web/wrangler.toml`. You do not need `API_BASE_URL` in production when using the internal API.
+After the first deploy, add the **Service Binding** in the dashboard (step 1.6) if you are not using the repo `wrangler.toml` as the source of truth. You do not need `API_BASE_URL` in production when using the internal API.
 
 ---
 
@@ -231,6 +239,12 @@ Convenience scripts are in the root `package.json`:
 
 - **API deploy fails with "rootDir" or missing shared types**  
   Build the shared package first: `npm run build --workspace=@something-in-loop/shared`, then deploy the API.
+
+- **Pages build says `Output directory "dist" not found`**  
+  Your Pages project is likely building from the repo root while still validating a root-level `dist`. In that setup, use:
+  - **Build command:** `npm run build`
+  - **Build output directory:** `apps/web/dist`
+  Or set **Root directory** to `apps/web` and keep output directory as `dist`.
 
 - **D1 migrations prompt about creating remote DB**  
   Use the same `database_name` as in your wrangler.toml and the `database_id` you copied from `wrangler d1 create`.
