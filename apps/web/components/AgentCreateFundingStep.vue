@@ -20,7 +20,6 @@ const emit = defineEmits<{
   withdraw: [];
   bridge: [];
   mintFaucet: [];
-  topUpGas: [];
   clearFeedback: [];
 }>();
 </script>
@@ -46,6 +45,10 @@ const emit = defineEmits<{
         <span class="fund-step__bal-key">wallet fee balance</span>
         <span class="fund-step__bal-val">{{ walletGasDisplay }} GAS</span>
       </div>
+
+      <p v-if="toppingUpGas" class="fund-step__status">
+        Adding test GAS to your wallet so this action can pay fees. The action will continue automatically.
+      </p>
 
       <div class="fund-step__input-row">
         <input
@@ -84,17 +87,6 @@ const emit = defineEmits<{
           We still keep bridge in this flow because it demonstrates the hackathon path: bridge assets from L1 to appchain, then deposit into the agent vault.
           This improves onboarding speed, liquidity access, and immediate utility.
         </p>
-      </div>
-
-      <div class="fund-step__faucet fund-step__faucet--gas">
-        <div class="fund-step__faucet-title">Test GAS top-up</div>
-        <p class="fund-step__hint">
-          Contract actions pay fees in native GAS. If this wallet is empty, top it up before minting or depositing.
-        </p>
-        <button class="fund-step__btn fund-step__btn--gas" :disabled="busy" @click="emit('topUpGas')">
-          <span v-if="toppingUpGas" class="spinner" style="width:12px;height:12px;" />
-          {{ toppingUpGas ? 'Funding...' : 'Get Test GAS' }}
-        </button>
       </div>
 
       <div class="fund-step__faucet">
@@ -177,6 +169,18 @@ const emit = defineEmits<{
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
   color: var(--text, #e0e0e0);
+}
+
+.fund-step__status {
+  margin: -4px 0 0;
+  padding: 9px 10px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, #38bdf8 25%, transparent);
+  background: color-mix(in srgb, #38bdf8 8%, transparent);
+  color: #7dd3fc;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .fund-step__input-row {

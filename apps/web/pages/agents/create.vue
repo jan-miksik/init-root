@@ -24,6 +24,7 @@ const {
   onchainStatus,
   walletIusdDisplay,
   walletGasDisplay,
+  shouldShowGasTopUpHelp,
   fundingBusy,
   consentModalOpen,
   goToStep,
@@ -35,7 +36,6 @@ const {
   handleWithdraw,
   handleBridge,
   handleMintFaucet,
-  handleTopUpGas,
   handleCancel,
   handleOpenAgent,
 } = useAgentCreateFlow();
@@ -134,6 +134,10 @@ function backToPaper() {
       <span>Paper Trading — simulated balance, no wallet or on-chain transaction needed. You can set your starting balance under Trading Config bellow.</span>
     </div>
 
+    <div v-else-if="step === 1 && shouldShowGasTopUpHelp" class="live-callout">
+      <span>Live create checks your wallet fee balance first. If needed, the app adds a small local test GAS top-up automatically before asking you to sign the create transaction.</span>
+    </div>
+
     <div v-show="step === 1" class="edit-page__body">
       <div class="edit-page__left">
         <AgentConfigForm
@@ -168,7 +172,6 @@ function backToPaper() {
         @withdraw="handleWithdraw"
         @bridge="handleBridge"
         @mint-faucet="handleMintFaucet"
-        @top-up-gas="handleTopUpGas"
         @clear-feedback="clearFundingFeedback"
       />
     </div>
@@ -206,7 +209,10 @@ function backToPaper() {
           <span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" />
           <span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" />
         </div>
-        <span class="create-overlay__label">Creating agent…</span>
+        <span class="create-overlay__label">{{ onchainStatus || 'Creating agent…' }}</span>
+        <p v-if="shouldShowGasTopUpHelp" class="create-overlay__hint">
+          Wallet checks and a small test GAS top-up can happen automatically before the on-chain create transaction is submitted.
+        </p>
       </div>
     </div>
   </Teleport>
@@ -440,6 +446,22 @@ function backToPaper() {
   width: 100%;
 }
 
+.live-callout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, #38bdf8 8%, transparent);
+  border: 1px solid color-mix(in srgb, #38bdf8 30%, transparent);
+  border-radius: 4px;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: #7dd3fc;
+  max-width: 740px;
+  margin: 0 auto;
+  width: 100%;
+}
+
 .paper-callout__icon { font-style: normal; flex-shrink: 0; }
 
 .edit-page__body {
@@ -489,6 +511,16 @@ function backToPaper() {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted, #666);
+}
+
+.create-overlay__hint {
+  max-width: 360px;
+  margin: 0;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a8a8a;
 }
 
 /* Live blocked modal */

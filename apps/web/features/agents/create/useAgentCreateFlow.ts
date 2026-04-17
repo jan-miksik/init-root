@@ -4,6 +4,8 @@ import { useAutoSignConsent } from '~/composables/useAutoSignConsent';
 
 const WALLET_STATE_TIMEOUT_MS = 30_000;
 const WALLET_STATE_POLL_MS = 250;
+const GAS_TOPUP_SETTLE_TIMEOUT_MS = 20_000;
+const GAS_TOPUP_SETTLE_POLL_MS = 500;
 const BRIDGE_SRC_CHAIN_ID = 'initiation-2';
 const BRIDGE_SRC_DENOM = 'uinit';
 const MIN_TEST_GAS_BALANCE_WEI = 20_000_000_000_000_000n;
@@ -81,9 +83,23 @@ export function useAgentCreateFlow() {
 
   const walletIusdDisplay = computed(() => formatWei(initiaState.value.walletShowcaseTokenBalanceWei));
   const walletGasDisplay = computed(() => formatWei(initiaState.value.walletBalanceWei));
+  const shouldShowGasTopUpHelp = computed(() => {
+    const balanceWei = initiaState.value.walletBalanceWei;
+    if (!balanceWei) return true;
+    try {
+      return BigInt(balanceWei) < MIN_TEST_GAS_BALANCE_WEI;
+    } catch {
+      return true;
+    }
+  });
   const fundingBusy = computed(() =>
     funding.value || withdrawing.value || bridging.value || mintingFaucet.value || toppingUpGas.value,
   );
+
+  function setCreateStatus(status: string) {
+    if (!creating.value) return;
+    onchainStatus.value = status;
+  }
 
   function goToStep(nextStep: 1 | 2) {
     if (nextStep === 2 && !createdAgentId.value) return;
@@ -151,8 +167,30 @@ export function useAgentCreateFlow() {
     throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
   }
 
+  async function waitForWalletGasReady(minBalanceWei = MIN_TEST_GAS_BALANCE_WEI) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < GAS_TOPUP_SETTLE_TIMEOUT_MS) {
+      await refresh();
+      const balanceWei = initiaState.value.walletBalanceWei;
+      if (balanceWei) {
+        try {
+          if (BigInt(balanceWei) >= minBalanceWei) {
+            await syncInitiaState('wallet-test-gas-ready');
+            return;
+          }
+        } catch {
+          // Keep polling until the wallet balance shape is usable.
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, GAS_TOPUP_SETTLE_POLL_MS));
+    }
+
+    throw new Error('Test GAS was sent, but the wallet balance is still updating. Please wait a few seconds and try again.');
+  }
+
   async function ensureTestGas(options?: { force?: boolean; silent?: boolean }) {
     await ensureWalletConnected();
+    setCreateStatus('Checking wallet fee balance...');
 
     const evmAddress = initiaState.value.evmAddress;
     if (!evmAddress) return { funded: false, reason: 'missing_evm_address' };
@@ -170,6 +208,7 @@ export function useAgentCreateFlow() {
 
     toppingUpGas.value = true;
     try {
+      setCreateStatus('Adding test GAS to wallet...');
       const result = await request<{
         ok: boolean;
         funded: boolean;
@@ -180,15 +219,33 @@ export function useAgentCreateFlow() {
         body: { evmAddress },
         silent: true,
       });
+
       await refresh();
+      if (result.funded || result.reason === 'balance_sufficient') {
+        const refreshedBalanceWei = initiaState.value.walletBalanceWei;
+        let balanceReady = false;
+        if (refreshedBalanceWei) {
+          try {
+            balanceReady = BigInt(refreshedBalanceWei) >= MIN_TEST_GAS_BALANCE_WEI;
+          } catch {
+            balanceReady = false;
+          }
+        }
+        if (!balanceReady) {
+          setCreateStatus(result.funded ? 'Waiting for GAS top-up confirmation...' : 'Refreshing wallet fee balance...');
+          await waitForWalletGasReady();
+        }
+      }
+
       await syncInitiaState('wallet-test-gas-topup');
+      setCreateStatus('Fee balance ready. Preparing transaction...');
 
       if (!options?.silent) {
         if (result.funded) {
           showNotification({
             type: 'success',
             title: 'Test GAS Added',
-            message: `Native GAS was added to your wallet.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+            message: `Native GAS was added to your wallet and is ready to use.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
           });
         } else if (options?.force) {
           showNotification({
@@ -223,6 +280,7 @@ export function useAgentCreateFlow() {
     }
 
     const metadataPointer = buildMetadataPointer();
+    setCreateStatus('Submitting create transaction...');
     onchainStatus.value = 'Waiting for block confirmation...';
     const { txHash, onchainAgentId } = await createAgentOnchain(metadataPointer, { autoSign: options?.autoSign });
 
@@ -260,10 +318,13 @@ export function useAgentCreateFlow() {
     creating.value = true;
     let createdLocalAgentId: string | null = null;
     try {
+      setCreateStatus('Connecting wallet...');
       await ensureWalletConnected();
+      setCreateStatus('Checking wallet fee balance...');
       await ensureTestGas({ silent: true });
 
       if (!createdAgentId.value) {
+        setCreateStatus('Preparing agent record...');
         const agent = await createAgent({
           ...requireCreateAgentPayload({ ...payload, paperBalance: 0 }),
           chain: 'initia',
@@ -353,12 +414,23 @@ export function useAgentCreateFlow() {
     }
 
     clearFundingFeedback();
+    try {
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Deposit Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+      return;
+    }
+
     await runWithAutoSignCheck('depositShowcaseToken', async () => {
-        funding.value = true;
+      funding.value = true;
       try {
         const balanceBeforeDeposit = currentPaperBalance.value;
-        await ensureWalletConnected();
-        await ensureTestGas({ silent: true });
         const autoSign = autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
         await ensureOnchainAgent({ autoSign });
         const result = await depositShowcaseToken(String(amount), { autoSign });
@@ -515,11 +587,6 @@ export function useAgentCreateFlow() {
     }
   }
 
-  async function handleTopUpGas() {
-    clearFundingFeedback();
-    await ensureTestGas({ force: true });
-  }
-
   function handleCancel() {
     router.push('/agents');
   }
@@ -545,6 +612,7 @@ export function useAgentCreateFlow() {
     onchainStatus,
     walletIusdDisplay,
     walletGasDisplay,
+    shouldShowGasTopUpHelp,
     fundingBusy,
     consentModalOpen,
     goToStep,
@@ -556,7 +624,6 @@ export function useAgentCreateFlow() {
     handleWithdraw,
     handleBridge,
     handleMintFaucet,
-    handleTopUpGas,
     handleCancel,
     handleOpenAgent,
   };
