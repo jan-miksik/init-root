@@ -15,7 +15,7 @@ const {
   faucetAmount,
   createdAgentId,
   currentPaperBalance,
-  creating,
+  createBusy,
   funding,
   withdrawing,
   bridging,
@@ -115,11 +115,11 @@ function backToPaper() {
             form="agent-config-form"
             class="edit-bar__save"
             :class="{ 'edit-bar__save--paper': isPaper }"
-            :disabled="creating || (!isPaper && !isLocalhost)"
+            :disabled="createBusy || (!isPaper && !isLocalhost)"
             @click="!isPaper && !isLocalhost ? liveBlockedModalOpen = true : undefined"
           >
-            <span v-if="creating" class="spinner" style="width:13px;height:13px;border-color:#fff3;border-top-color:#fff" />
-            {{ creating ? 'Creating...' : (isPaper ? 'Create Paper Agent →' : (onchainStatus || 'Create Agent →')) }}
+            <span v-if="createBusy" class="spinner" style="width:13px;height:13px;border-color:#fff3;border-top-color:#fff" />
+            {{ createBusy ? 'Creating...' : (isPaper ? 'Create Paper Agent →' : (onchainStatus || 'Create Agent →')) }}
           </button>
         </template>
         <template v-else>
@@ -203,7 +203,7 @@ function backToPaper() {
   </Teleport>
 
   <Teleport to="body">
-    <div v-if="creating" class="create-overlay">
+    <div v-if="createBusy" class="create-overlay">
       <div class="create-overlay__inner">
         <div class="page-loader-track">
           <span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" /><span class="page-loader-block" />

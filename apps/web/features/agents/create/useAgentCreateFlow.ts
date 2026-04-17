@@ -63,8 +63,8 @@ export function useAgentCreateFlow() {
   const {
     consentModalOpen,
     runWithAutoSignCheck,
-    handleConsentProceed,
-    handleConsentCancel,
+    handleConsentProceed: handleConsentProceedBase,
+    handleConsentCancel: handleConsentCancelBase,
   } = useAutoSignConsent({ autoSignMgr, enableAutoSign });
 
   const step = ref<1 | 2>(1);
@@ -73,6 +73,7 @@ export function useAgentCreateFlow() {
   const faucetAmount = ref('1000');
   const createdAgentId = ref<string | null>(null);
   const currentPaperBalance = ref(0);
+  const createPreparing = ref(false);
   const creating = ref(false);
   const funding = ref(false);
   const withdrawing = ref(false);
@@ -92,12 +93,13 @@ export function useAgentCreateFlow() {
       return true;
     }
   });
+  const createBusy = computed(() => createPreparing.value || creating.value);
   const fundingBusy = computed(() =>
     funding.value || withdrawing.value || bridging.value || mintingFaucet.value || toppingUpGas.value,
   );
 
   function setCreateStatus(status: string) {
-    if (!creating.value) return;
+    if (!createPreparing.value && !creating.value) return;
     onchainStatus.value = status;
   }
 
@@ -167,6 +169,21 @@ export function useAgentCreateFlow() {
     throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
   }
 
+  async function ensureWalletFeeCheckReady() {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+      await refresh();
+      const initiaAddress = initiaState.value.initiaAddress;
+      const evmAddress = initiaState.value.evmAddress;
+      if (initiaAddress && evmAddress) {
+        return evmAddress;
+      }
+      await new Promise((resolve) => setTimeout(resolve, WALLET_STATE_POLL_MS));
+    }
+
+    throw new Error('Wallet connected, but the app is still loading its EVM address. Please wait a moment and try again.');
+  }
+
   async function waitForWalletGasReady(minBalanceWei = MIN_TEST_GAS_BALANCE_WEI) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < GAS_TOPUP_SETTLE_TIMEOUT_MS) {
@@ -190,10 +207,9 @@ export function useAgentCreateFlow() {
 
   async function ensureTestGas(options?: { force?: boolean; silent?: boolean }) {
     await ensureWalletConnected();
+    setCreateStatus('Preparing wallet fee check...');
+    const evmAddress = await ensureWalletFeeCheckReady();
     setCreateStatus('Checking wallet fee balance...');
-
-    const evmAddress = initiaState.value.evmAddress;
-    if (!evmAddress) return { funded: false, reason: 'missing_evm_address' };
 
     const currentBalanceWei = initiaState.value.walletBalanceWei;
     if (!options?.force && currentBalanceWei) {
@@ -314,14 +330,19 @@ export function useAgentCreateFlow() {
     }
   }
 
-  async function executeCreateStep(payload: Partial<CreateAgentPayload>) {
+  async function executeCreateStep(
+    payload: Partial<CreateAgentPayload>,
+    options?: { skipPreflight?: boolean },
+  ) {
     creating.value = true;
     let createdLocalAgentId: string | null = null;
     try {
-      setCreateStatus('Connecting wallet...');
-      await ensureWalletConnected();
-      setCreateStatus('Checking wallet fee balance...');
-      await ensureTestGas({ silent: true });
+      if (!options?.skipPreflight) {
+        setCreateStatus('Connecting wallet...');
+        await ensureWalletConnected();
+        setCreateStatus('Checking wallet fee balance...');
+        await ensureTestGas({ silent: true });
+      }
 
       if (!createdAgentId.value) {
         setCreateStatus('Preparing agent record...');
@@ -368,6 +389,20 @@ export function useAgentCreateFlow() {
     }
   }
 
+  async function handleConsentProceed(useAutoSignChoice: boolean, dontShowAgain: boolean) {
+    if (createPreparing.value) {
+      onchainStatus.value = 'Configuring auto-sign...';
+    }
+    await handleConsentProceedBase(useAutoSignChoice, dontShowAgain);
+  }
+
+  function handleConsentCancel() {
+    handleConsentCancelBase();
+    if (!createPreparing.value) return;
+    createPreparing.value = false;
+    onchainStatus.value = '';
+  }
+
   async function handleNextPaper(payload: Partial<CreateAgentPayload>) {
     creating.value = true;
     try {
@@ -396,8 +431,28 @@ export function useAgentCreateFlow() {
       await handleNextPaper(payload);
       return;
     }
+
+    createPreparing.value = true;
+    try {
+      setCreateStatus('Connecting wallet...');
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+      setCreateStatus('Fee balance ready. Choose how to sign the create transaction...');
+    } catch (err) {
+      createPreparing.value = false;
+      onchainStatus.value = '';
+      showNotification({
+        type: 'error',
+        title: 'Agent Creation Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+      return;
+    }
+
     await runWithAutoSignCheck('createAgentOnchain', async () => {
-      await executeCreateStep(payload);
+      createPreparing.value = false;
+      await executeCreateStep(payload, { skipPreflight: true });
     });
   }
 
@@ -603,6 +658,8 @@ export function useAgentCreateFlow() {
     faucetAmount,
     createdAgentId,
     currentPaperBalance,
+    createPreparing,
+    createBusy,
     creating,
     funding,
     withdrawing,

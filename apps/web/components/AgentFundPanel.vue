@@ -75,8 +75,6 @@ function formatWei(wei: string | null | undefined): string {
 }
 
 const walletDisplay = computed(() => formatWei(initiaState.value.walletShowcaseTokenBalanceWei));
-const walletGasDisplay = computed(() => formatWei(initiaState.value.walletBalanceWei));
-
 function clearMessages() {
   error.value = '';
   successMsg.value = '';
@@ -99,11 +97,22 @@ async function ensureWalletConnected() {
   throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
 }
 
+async function ensureWalletFeeCheckReady() {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+    await refresh();
+    const initiaAddress = initiaState.value.initiaAddress;
+    const evmAddress = initiaState.value.evmAddress;
+    if (initiaAddress && evmAddress) return evmAddress;
+    await new Promise((resolve) => setTimeout(resolve, WALLET_STATE_POLL_MS));
+  }
+
+  throw new Error('Wallet connected, but the app is still loading its EVM address. Please wait a moment and try again.');
+}
+
 async function ensureTestGas(options?: { force?: boolean; silent?: boolean }) {
   await ensureWalletConnected();
-
-  const evmAddress = initiaState.value.evmAddress;
-  if (!evmAddress) return { funded: false, reason: 'missing_evm_address' };
+  const evmAddress = await ensureWalletFeeCheckReady();
 
   const currentBalanceWei = initiaState.value.walletBalanceWei;
   if (!options?.force && currentBalanceWei) {
@@ -281,11 +290,6 @@ async function handleMintFaucet() {
   });
 }
 
-async function handleTopUpGas() {
-  clearMessages();
-  await ensureTestGas({ force: true });
-}
-
 const busy = computed(() => funding.value || withdrawing.value || bridging.value || mintingFaucet.value || toppingUpGas.value);
 </script>
 
@@ -313,11 +317,6 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
             <div v-if="walletDisplay" class="fund-step__wallet-row">
               <span class="fund-step__bal-key">wallet balance</span>
               <span class="fund-step__bal-val">{{ walletDisplay }} iUSD-demo</span>
-            </div>
-
-            <div v-if="walletGasDisplay" class="fund-step__wallet-row">
-              <span class="fund-step__bal-key">wallet fee balance</span>
-              <span class="fund-step__bal-val">{{ walletGasDisplay }} GAS</span>
             </div>
 
             <div class="fund-step__input-row">
@@ -371,21 +370,6 @@ const busy = computed(() => funding.value || withdrawing.value || bridging.value
                 We still keep bridge in this flow because it demonstrates the hackathon path: bridge assets from L1 to appchain, then deposit into the agent vault.
                 This improves onboarding speed, liquidity access, and immediate utility.
               </p>
-            </div>
-
-            <div class="fund-step__faucet fund-step__faucet--gas">
-              <div class="fund-step__faucet-title">Test GAS top-up</div>
-              <p class="fund-step__hint">
-                Contract actions pay fees in native GAS. If this wallet is empty, top it up before minting or depositing.
-              </p>
-              <button
-                class="fund-step__btn fund-step__btn--gas"
-                :disabled="busy"
-                @click="handleTopUpGas"
-              >
-                <span v-if="toppingUpGas" class="spinner" style="width:12px;height:12px;" />
-                {{ toppingUpGas ? 'Funding…' : 'Get Test GAS' }}
-              </button>
             </div>
 
             <div class="fund-step__faucet">
