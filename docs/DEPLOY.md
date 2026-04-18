@@ -101,7 +101,7 @@ Edit `apps/api/wrangler.toml` and replace the placeholders in the `[env.producti
 
 ```bash
 cd apps/api
-wrangler d1 migrations apply trading-agents --env production
+wrangler d1 migrations apply trading-agents --env production --remote
 ```
 
 (First time may prompt to create the remote DB; use the same `database_name` and the `database_id` you put in wrangler.toml.)
@@ -220,7 +220,7 @@ After the first deploy, add the **Service Binding** in the dashboard (step 1.6) 
 | Create D1         | `wrangler d1 create trading-agents` (in `apps/api`) |
 | Create KV         | `wrangler kv namespace create "CACHE"` (in `apps/api`) |
 | Edit wrangler.toml| Set production `database_id` and KV `id` under `[env.production]` |
-| Apply migrations  | `wrangler d1 migrations apply trading-agents --env production` (in `apps/api`) |
+| Apply migrations  | `wrangler d1 migrations apply trading-agents --env production --remote` (in `apps/api`) |
 | Set API key       | `wrangler secret put OPENROUTER_API_KEY --env production` (in `apps/api`) |
 | Deploy API        | `npm run deploy -- --env production` in `apps/api` |
 | Deploy Web        | Git connect or `wrangler pages deploy` with built output |
