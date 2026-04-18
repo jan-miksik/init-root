@@ -11,6 +11,8 @@ export interface Agent {
   id: string;
   name: string;
   status: 'running' | 'stopped' | 'paused';
+  chain: 'base' | 'initia';
+  isPaper: boolean;
   llmModel: string;
   config: {
     pairs: string[];
@@ -24,7 +26,9 @@ export interface Agent {
     slippageSimulation: number;
     temperature: number;
     allowFallback?: boolean;
-    behavior?: Record<string, unknown>;  };
+    behavior?: Record<string, unknown>;
+    profileId?: string;
+  };
   managerId?: string | null;
   profileId?: string | null;
   personaMd?: string | null;
@@ -33,7 +37,10 @@ export interface Agent {
 }
 
 export interface CreateAgentPayload {
-  name: string;  pairs?: string[];
+  name: string;
+  pairs?: string[];
+  chain?: 'base' | 'initia';
+  isPaper?: boolean;
   paperBalance?: number;
   strategies?: string[];
   analysisInterval?: string;
@@ -48,6 +55,9 @@ export interface CreateAgentPayload {
   profileId?: string;
   personaMd?: string;
   behaviorMd?: string;
+  initiaWalletAddress?: string;
+  initiaMetadataHash?: string;
+  initiaMetadataVersion?: number;
 }
 
 export function useAgents() {

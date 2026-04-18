@@ -3,12 +3,12 @@
     <div class="edit-bar">
       <NuxtLink to="/managers" class="edit-bar__back">&larr; back</NuxtLink>
       <span class="edit-bar__sep">/</span>
-      <span class="edit-bar__name">New Manager</span>
+      <span class="edit-bar__name">New Paper Manager</span>
       <div class="edit-bar__actions">
         <button type="button" class="edit-bar__cancel" @click="$router.push('/managers')">Cancel</button>
         <button type="submit" form="manager-config-form" class="edit-bar__save" :disabled="creating">
           <span v-if="creating" class="spinner" style="width:13px;height:13px;border-color:#fff3;border-top-color:#fff" />
-          {{ creating ? 'Creating...' : 'Create Manager' }}
+          {{ creating ? 'Creating...' : 'Create Paper Manager' }}
         </button>
       </div>
     </div>
@@ -27,6 +27,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import ManagerConfigForm from '~/components/ManagerConfigForm.vue';
 
 const router = useRouter();
 const { createManager } = useManagers();

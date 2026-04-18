@@ -40,15 +40,15 @@ export function buildManagerPrompt(ctx: BuildManagerPromptParams): string {
   const marketSummary =
     marketData.length > 0
       ? marketData
-          .map((m) => `${m.pair}: $${m.priceUsd} (1h: ${m.priceChange.h1 ?? 'N/A'}%, 24h: ${m.priceChange.h24 ?? 'N/A'}%)`)
-          .join('\n')
+        .map((m) => `${m.pair}: $${m.priceUsd} (1h: ${m.priceChange.h1 ?? 'N/A'}%, 24h: ${m.priceChange.h24 ?? 'N/A'}%)`)
+        .join('\n')
       : 'No market data available';
 
   const memorySummary =
     memory.hypotheses.length > 0
       ? memory.hypotheses
-          .map((h) => `- "${h.description}" (tested: ${h.tested_at}, outcome: ${h.outcome}, valid: ${h.still_valid})`)
-          .join('\n')
+        .map((h) => `- "${h.description}" (tested: ${h.tested_at}, outcome: ${h.outcome}, valid: ${h.still_valid})`)
+        .join('\n')
       : 'No prior hypotheses.';
 
   const riskSummary = `MaxDrawdown: ${(managerConfig.riskParams.maxTotalDrawdown * 100).toFixed(0)}%, MaxAgents: ${managerConfig.riskParams.maxAgents}, MaxCorrelated: ${managerConfig.riskParams.maxCorrelatedPositions}`;
@@ -65,6 +65,7 @@ export function buildManagerPrompt(ctx: BuildManagerPromptParams): string {
   const personaSection = managerPersonaMd ? `## Your Persona\n${managerPersonaMd}\n` : '';
 
   return `${personaSection}You are an Agent Manager overseeing a portfolio of paper trading agents on Base chain DEXes.
+Managers are paper-only in this product: you may create and manage paper agents only, and you must never request live, onchain, or Initia-linked agents.
 
 ## Managed Agents (${managedAgents.length})
 ${agentSummaries || 'No agents yet.'}
@@ -87,15 +88,13 @@ When creating or modifying agents, "analysisInterval" MUST be one of:
 - "1h"
 - "4h"
 - "1d"
-Do not use unsupported legacy values like "1m", "5m", "15m", "30m", or numeric seconds/minutes.
 
 ## Available LLM Models For Agents
-Use only these llmModel IDs when creating or modifying agents:
+${hasUserOpenRouterKey
+      ? 'The user has OpenRouter connected, use any supported llmModel ID. More specific model setup belongs in the Edit context, if not specified use low-cost free models or paid models (up to $3 per 1M tokens). '
+      : 'The user has no connected OpenRouter key, so you must use one of these free llmModel IDs when creating or modifying agents:'}
 ${availableModels.map((m) => `- "${m}"`).join('\n')}
 
-${hasUserOpenRouterKey
-  ? 'The user has OpenRouter connected, so you may use free models and low-cost paid models (up to $3 per 1M tokens).'
-  : 'The user has no connected OpenRouter key, so you must use free models only.'}
 If unsure, default to "${DEFAULT_FREE_AGENT_MODEL}".
 
 ## Available Agent Profiles
@@ -106,11 +105,11 @@ ${AGENT_PROFILES.map((p) => `- "${p.id}" ${p.emoji} ${p.name}: ${p.description}`
 Evaluate each agent's performance and decide what actions to take this cycle.
 
 Valid actions:
-- "create_agent": spawn a new agent. Params: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Choose risk parameters that reflect your own risk tolerance.
-- "start_agent": start a stopped or paused agent (provide agentId)
-- "pause_agent": pause an underperforming agent (provide agentId)
-- "modify_agent": change agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc.
-- "terminate_agent": permanently stop an agent (provide agentId)
+- "create_agent": spawn a new paper agent. Params: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance; optional: profileId (from the list above — sets the agent's persona), personaMd (custom markdown persona, overrides profileId), stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, maxDailyLossPct, cooldownAfterLossMinutes. Never include live/onchain fields such as chain overrides, isPaper=false, Initia metadata, or wallet addresses.
+- "start_agent": start a stopped or paused paper agent (provide agentId)
+- "pause_agent": pause an underperforming paper agent (provide agentId)
+- "modify_agent": change paper-agent parameters (provide agentId + params). Params can include: name, pairs, llmModel, temperature, analysisInterval (1h|4h|1d), strategies, paperBalance, stopLossPct, takeProfitPct, maxPositionSizePct, maxOpenPositions, personaMd (markdown), profileId, etc. Never include live/onchain fields or any non-paper transition.
+- "terminate_agent": permanently stop a paper agent (provide agentId)
 - "hold": no action needed (provide agentId, or omit for portfolio-level hold)
 
 IMPORTANT: Respond with ONLY a valid JSON array — no markdown, no explanation.

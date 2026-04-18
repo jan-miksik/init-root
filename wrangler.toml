@@ -1,0 +1,10 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+
+name = "init-root"
+pages_build_output_dir = "./apps/web/dist"
+compatibility_date = "2026-02-17"
+compatibility_flags = ["nodejs_compat"]
+
+[[services]]
+binding = "API"
+service = "something-in-loop-api"

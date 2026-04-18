@@ -1,0 +1,84 @@
+diff --git a/dist/index.js b/dist/index.js
+index 980b531f24c3704437672f277404c6b567312f24..858402e01b8c063b18be609b6cfba327ad94c4d8 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -6,7 +6,7 @@ import U from "bignumber.js";
+ import { includes as Xi, path as xt, descend as ue, head as As, sortWith as bt, take as Xd, adjust as eu, prop as yn, isNil as tu, zipObj as uo, pick as nu, ascend as tn, pickBy as su, partition as ec, any as ou, last as au, has as ru } from "ramda";
+ import { createQueryKeys as Re } from "@lukemorales/query-key-factory";
+ import H, { HTTPError as Kn } from "ky";
+-import { createContext as on, useContext as Mt, useState as K, useCallback as Ie, useEffect as Q, useRef as Xe, useMemo as x, Suspense as iu, useEffectEvent as wn, createElement as Wn, Fragment as tc, useTransition as cu, memo as nc } from "react";
++import { createContext as on, useContext as Mt, useState as K, useCallback as Ie, useEffect as Q, useRef as Xe, useMemo as x, Suspense as iu, useEffectEvent as wn, createElement as Wn, Fragment as tc, useTransition as cu, memo as nc, forwardRef as _fwd } from "react";
+ import { toBase64 as mt, fromBase64 as Xt, toBech32 as sc, fromHex as hs, toHex as Pa, fromBech32 as oc } from "@cosmjs/encoding";
+ import { bcs as lu } from "@mysten/bcs";
+ import { atom as qe, useStore as ac, useAtom as Oe, useSetAtom as jn, useAtomValue as zn } from "jotai";
+@@ -19,18 +19,18 @@ import { ethers as gs, BrowserProvider as gu, computeAddress as _u, isAddress as
+ import { MsgExec as wu, MsgRevoke as bu, MsgGrant as vu } from "@initia/initia.proto/cosmos/authz/v1beta1/tx";
+ import { pubkeyType as Nu, encodeSecp256k1Pubkey as tr, pubkeyToAddress as ku, Secp256k1HdWallet as Cu } from "@cosmjs/amino";
+ import { encodePubkey as Iu, decodeOptionalPubkey as Au, Registry as Su, makeAuthInfoBytes as xu } from "@cosmjs/proto-signing";
+-import { PubKey as Ra } from "cosmjs-types/cosmos/crypto/secp256k1/keys.js";
+-import { Any as Tu } from "cosmjs-types/google/protobuf/any.js";
++import { PubKey as Ra } from "cosmjs-types/cosmos/crypto/secp256k1/keys";
++import { Any as Tu } from "cosmjs-types/google/protobuf/any";
+ import { hexToBytes as ua, keccak256 as Qr, bytesToHex as Yr, createWalletClient as $u, http as Eu, EIP1193ProviderRpcError as Zr } from "viem";
+ import { Int53 as Jr } from "@cosmjs/math";
+ import { accountFromAny as Lu, SigningStargateClient as lc, AminoTypes as qu, QueryClient as dc, setupTxExtension as uc, createProtobufRpcClient as Mu, calculateFee as Lo, GasPrice as qo } from "@cosmjs/stargate";
+ import { Comet38Client as Pu, HttpClient as Ru } from "@cosmjs/tendermint-rpc";
+-import { SignMode as mc } from "cosmjs-types/cosmos/tx/signing/v1beta1/signing.js";
+-import { TxRaw as mo, Tx as _o, TxBody as hc, AuthInfo as fc, Fee as Du } from "cosmjs-types/cosmos/tx/v1beta1/tx.js";
++import { SignMode as mc } from "cosmjs-types/cosmos/tx/signing/v1beta1/signing";
++import { TxRaw as mo, Tx as _o, TxBody as hc, AuthInfo as fc, Fee as Du } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+ import { aminoConverters as Ss, protoRegistry as Uu, aminoTypes as Ou } from "@initia/amino-converter";
+-import { BaseAccount as Bu } from "cosmjs-types/cosmos/auth/v1beta1/auth.js";
++import { BaseAccount as Bu } from "cosmjs-types/cosmos/auth/v1beta1/auth";
+ import { AllowedMsgAllowance as _s, BasicAllowance as Xr } from "@initia/initia.proto/cosmos/feegrant/v1beta1/feegrant";
+-import { ServiceClientImpl as Fu, SimulateRequest as Vu } from "cosmjs-types/cosmos/tx/v1beta1/service.js";
++import { ServiceClientImpl as Fu, SimulateRequest as Vu } from "cosmjs-types/cosmos/tx/v1beta1/service";
+ import { isFuture as xs, addMilliseconds as Ku, isPast as nr, format as pc, addSeconds as Wu, differenceInSeconds as ju } from "date-fns";
+ import { GenericAuthorization as ei } from "@initia/initia.proto/cosmos/authz/v1beta1/authz";
+ import { MsgRevokeAllowance as zu, MsgGrantAllowance as Hu } from "@initia/initia.proto/cosmos/feegrant/v1beta1/tx";
+@@ -59,7 +59,7 @@ import vm from "qr-code-styling";
+ import { Separator as Nm, Menu as Ht } from "@base-ui/react";
+ import { Tabs as Gt } from "@base-ui/react/tabs";
+ import { Popover as Mn } from "@base-ui/react/popover";
+-import { MsgSend as ni } from "cosmjs-types/cosmos/bank/v1beta1/tx.js";
++import { MsgSend as ni } from "cosmjs-types/cosmos/bank/v1beta1/tx";
+ import { mnemonicToAccount as km, privateKeyToAccount as Cm } from "viem/accounts";
+ import { mainnet as Im } from "viem/chains";
+ import { injected as Am } from "wagmi/connectors";
+@@ -3456,13 +3456,14 @@ function bp(e, t, n, s) {
+     for (const y of m) {
+       if (y.type === "unknown") {
+         if (!y.amount || y.amount === "0") continue;
++        const N = u?.nativeAssets?.find((I) => I.denom === y.denom), I = Number(N?.decimals ?? 0), T = I > 0 ? me(String(y.amount), { decimals: I }) : y.amount;
+         r.push({
+-          symbol: y.denom,
++          symbol: N?.symbol || y.denom,
+           logoUrl: "",
+           denom: y.denom,
+           amount: y.amount,
+-          decimals: 0,
+-          quantity: y.amount,
++          decimals: I,
++          quantity: T,
+           value: void 0,
+           unlisted: !0,
+           chain: {
+@@ -3670,7 +3671,8 @@ function Ap() {
+         chainId: n.chainId,
+         chainName: n.chain_name,
+         prettyName: n.name || n.chain_name,
+-        logoUrl: n.logoUrl || ""
++        logoUrl: n.logoUrl || "",
++        nativeAssets: n.native_assets || []
+       });
+     }
+     return t;
+@@ -3827,7 +3829,7 @@ const Ep = () => (Om(), Bm(), null), Lp = "_loader_1vxch_1", qp = {
+   /* @__PURE__ */ o("div", { className: pi.actions, children: n })
+ ] }), Wp = "_scrollable_13su7_1", jp = {
+   scrollable: Wp
+-}, Nt = ({ className: e, children: t, ref: n }) => /* @__PURE__ */ o("div", { ref: n, className: P(jp.scrollable, e), children: t }), zp = "interwovenkit:";
++}, Nt = _fwd(({ className: e, children: t }, n) => /* @__PURE__ */ o("div", { ref: n, className: P(jp.scrollable, e), children: t })), zp = "interwovenkit:";
+ function Hp(e) {
+   const [t] = e;
+   return typeof t == "string" && t.startsWith(zp);

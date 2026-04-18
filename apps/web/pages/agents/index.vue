@@ -1,17 +1,44 @@
 <script setup lang="ts">
 import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@something-in-loop/shared';
+import type { PaperMode } from '~/composables/usePaperModePreference';
 
 definePageMeta({ ssr: false });
 const { agents, loading, error, fetchAgents, createAgent, startAgent, stopAgent, deleteAgent, updateAgent } = useAgents();
 const { stats, error: tradesError, fetchStats } = useTrades();
+const { stats: paperStats, fetchStats: fetchPaperStats } = useTrades();
 const { request } = useApi();
+const { paperModePreference: storedPaperMode, setPaperModePreference } = usePaperModePreference();
 const router = useRouter();
 const refreshing = ref(false);
 
 const overviewError = computed(() => tradesError.value);
 const runningCount = computed(() => agents.value.filter((a) => a.status === 'running').length);
 
-const userAgents = computed(() => agents.value.filter((a) => !a.managerId));
+const realAgents = computed(() => agents.value.filter((a) => !a.isPaper));
+const paperAgents = computed(() => agents.value.filter((a) => a.isPaper));
+const hasRealAgents = computed(() => realAgents.value.length > 0);
+const hasPaperAgents = computed(() => paperAgents.value.length > 0);
+
+const paperMode = computed<PaperMode>(() => {
+  if (!hasRealAgents.value && hasPaperAgents.value) return 'paper';
+  if (hasRealAgents.value && !hasPaperAgents.value) return 'live';
+  return storedPaperMode.value ?? 'live';
+});
+
+const visibleAgents = computed(() => {
+  switch (paperMode.value) {
+    case 'live': return realAgents.value;
+    case 'paper': return paperAgents.value;
+    case 'all': return agents.value;
+    default: return realAgents.value;
+  }
+});
+
+const isPaperOnly = computed(() => paperMode.value === 'paper');
+const showPaperBand = computed(() => paperMode.value === 'all' && hasPaperAgents.value);
+const primaryTradeStats = computed(() => (isPaperOnly.value ? paperStats.value : stats.value));
+const primaryRealizedPnlUsd = computed(() => (isPaperOnly.value ? paperRealizedPnlUsd.value : realizedPnlUsd.value));
+
 const managedAgents = computed(() => agents.value.filter((a) => !!a.managerId));
 
 const editingAgent = ref<(typeof agents.value)[0] | null>(null);
@@ -19,8 +46,6 @@ const showEditModal = ref(false);
 const saving = ref(false);
 const saveError = ref('');
 
-// View mode: table (default) or grid
-const viewMode = ref<'table' | 'grid'>('table');
 
 // Column visibility for table view
 type ColumnKey =
@@ -34,17 +59,21 @@ type ColumnKey =
   | 'totalPnl'
   | 'actions';
 
-const visibleColumns = ref<Record<ColumnKey, boolean>>({
+const STORAGE_KEY = 'heppy:agents:visibleColumns';
+
+const defaultVisibleColumns: Record<ColumnKey, boolean> = {
   status: true,
-  pairs: false, // hidden by default
-  model: false, // hidden by default
+  pairs: false,
+  model: false,
   analysisInterval: true,
   paperBalance: true,
-  maxPositionSizePct: true,
-  slTp: true,
+  maxPositionSizePct: false,
+  slTp: false,
   totalPnl: true,
   actions: true,
-});
+};
+
+const visibleColumns = ref<Record<ColumnKey, boolean>>({ ...defaultVisibleColumns });
 
 const showColumnMenu = ref(false);
 const columnMenuRef = ref<HTMLElement | null>(null);
@@ -64,6 +93,16 @@ type SortKey =
 type SortDir = 'asc' | 'desc';
 const sortKey = ref<SortKey>('name');
 const sortDir = ref<SortDir>('asc');
+
+watch(
+  visibleColumns,
+  (val) => {
+    if (import.meta.client) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(val));
+    }
+  },
+  { deep: true },
+);
 
 function toggleSort(key: SortKey) {
   if (sortKey.value === key) {
@@ -86,8 +125,8 @@ function sortedList(list: typeof agents.value) {
       av = a.config.analysisInterval;
       bv = b.config.analysisInterval;
     } else if (sortKey.value === 'paperBalance') {
-      av = a.config.paperBalance;
-      bv = b.config.paperBalance;
+      av = agentBalance(a);
+      bv = agentBalance(b);
     } else if (sortKey.value === 'maxPositionSizePct') {
       av = a.config.maxPositionSizePct;
       bv = b.config.maxPositionSizePct;
@@ -105,14 +144,14 @@ function sortedList(list: typeof agents.value) {
   });
 }
 
-const sortedAgents = computed(() => sortedList(agents.value));
+const sortedAgents = computed(() => sortedList(visibleAgents.value));
 
 // Per-agent P&L (realized P&L from closed trades; synced with agent detail table)
 const agentPnl = ref<Record<string, { totalPnlUsd: number; totalPnlPct: number }>>({});
 
-const realizedPnlUsd = computed(() => {
-  if (agents.value.length === 0) return 0;
-  const ids = new Set(agents.value.map((a) => a.id));
+function sumPnlForAgents(agentList: typeof agents.value, fallback: number) {
+  if (agentList.length === 0) return 0;
+  const ids = new Set(agentList.map((a) => a.id));
   let sum = 0;
   let hasAny = false;
   for (const [agentId, pnl] of Object.entries(agentPnl.value)) {
@@ -120,10 +159,16 @@ const realizedPnlUsd = computed(() => {
     sum += pnl.totalPnlUsd;
     hasAny = true;
   }
-  // Fallback during first load before per-agent totals arrive.
-  if (!hasAny) return stats.value?.totalPnlUsd ?? 0;
+  if (!hasAny) return fallback;
   return sum;
-});
+}
+
+const realizedPnlUsd = computed(() =>
+  sumPnlForAgents(realAgents.value, stats.value?.totalPnlUsd ?? 0),
+);
+const paperRealizedPnlUsd = computed(() =>
+  sumPnlForAgents(paperAgents.value, paperStats.value?.totalPnlUsd ?? 0),
+);
 
 function formatUsdNoNegativeZero(value: number, digits = 0): string {
   const abs = Math.abs(value);
@@ -141,9 +186,17 @@ function formatPnlInline(usd?: number | null, pct?: number | null): string {
   return `${formatUsdNoNegativeZero(usd, 0)} (${normalizedPct.toFixed(1)}%)`;
 }
 
+function agentBalance(agent: (typeof agents.value)[0]): number {
+  return agent.config.paperBalance + (agentPnl.value[agent.id]?.totalPnlUsd ?? 0);
+}
+
 function winRateClass(rate?: number | null): 'positive' | 'negative' | 'neutral' {
   if (!rate) return 'neutral';
   return rate >= 50 ? 'positive' : 'negative';
+}
+
+function setPaperMode(value: PaperMode) {
+  setPaperModePreference(value);
 }
 
 async function loadAgentPerformance(agentId: string) {
@@ -159,7 +212,7 @@ async function loadAgentPerformance(agentId: string) {
     ).catch(() => null);
     const totalPnlUsd = (tradesRes?.trades ?? [])
       .filter((t) => t.status === 'closed')
-      .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+      .reduce((sum, t) => sum + (t.pnlUsd != null ? Number(t.pnlUsd) : 0), 0);
     const totalPnlPct = startingBalance > 0 ? (totalPnlUsd / startingBalance) * 100 : 0;
     if (!agents.value.some((a) => a.id === agentId)) return;
     agentPnl.value = {
@@ -187,11 +240,6 @@ watch(
   { immediate: true },
 );
 
-function agentEmoji(agent: (typeof agents.value)[0]) {
-  const configProfileId = (agent.config as { profileId?: string }).profileId;
-  const profileId = agent.profileId ?? configProfileId ?? DEFAULT_AGENT_PROFILE_ID;
-  return getAgentProfile(profileId)?.emoji ?? '🤖';
-}
 
 function handleGlobalClick(e: MouseEvent) {
   const target = e.target as Node | null;
@@ -212,6 +260,18 @@ function handleGlobalClick(e: MouseEvent) {
 }
 
 onMounted(() => {
+  if (import.meta.client) {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        visibleColumns.value = { ...defaultVisibleColumns, ...parsed };
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+  }
+
   refreshOverview(false);
   document.addEventListener('click', handleGlobalClick);
 });
@@ -223,7 +283,11 @@ onUnmounted(() => {
 async function refreshOverview(force = false) {
   refreshing.value = true;
   try {
-    await Promise.all([fetchAgents({ force }), fetchStats({ force })]);
+    await Promise.all([
+      fetchAgents({ force }),
+      fetchStats({ force, isPaper: false }),
+      fetchPaperStats({ force, isPaper: true }),
+    ]);
     await Promise.all(agents.value.map((a) => loadAgentPerformance(a.id)));
   } finally {
     refreshing.value = false;
@@ -235,7 +299,7 @@ async function handleDelete(id: string) {
   if (!confirm('Delete this agent? This cannot be undone.')) return;
   try {
     await deleteAgent(id);
-    await fetchStats({ force: true });
+    await Promise.all([fetchStats({ force: true, isPaper: false }), fetchPaperStats({ force: true, isPaper: true })]);
   } catch (e) {
     alert(`Failed to delete: ${extractApiError(e)}`);
   }
@@ -269,70 +333,15 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
     <div class="page-header">
       <div>
         <h1 class="page-title">Agents</h1>
-        <p class="page-subtitle">
-          {{ agents.length }} agents · {{ runningCount }} running<span v-if="managedAgents.length"> · {{ managedAgents.length }} managed</span>
-        </p>
       </div>
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="btn btn-ghost btn-sm" :disabled="refreshing" @click="refreshOverview(true)">
-          <span v-if="refreshing" class="spinner" />
-          <span v-else>↻</span>
-          Refresh
-        </button>
-        <!-- Column visibility menu -->
-        <div style="position: relative;" ref="columnMenuButtonRef">
-          <button
-            class="btn btn-ghost btn-sm"
-            style="padding-inline: 8px;"
-            title="Configure table columns"
-            @click="showColumnMenu = !showColumnMenu"
-          >
-            ⋯
-          </button>
-          <div
-            v-if="showColumnMenu"
-            ref="columnMenuRef"
-            style="position: absolute; right: 0; top: 110%; z-index: 60; background: var(--bg-card); border: 1px solid var(--border); padding: 8px 10px; min-width: 170px;"
-          >
-            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px;">
-              Visible columns
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.status" type="checkbox" /> Status
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.pairs" type="checkbox" /> Pairs
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.model" type="checkbox" /> Model
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.analysisInterval" type="checkbox" /> Interval
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.paperBalance" type="checkbox" /> Balance
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.maxPositionSizePct" type="checkbox" /> Max Pos
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.slTp" type="checkbox" /> SL / TP
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.totalPnl" type="checkbox" /> Total P&amp;L
-              </label>
-              <label style="display: flex; align-items: center; gap: 6px;">
-                <input v-model="visibleColumns.actions" type="checkbox" /> Actions
-              </label>
-            </div>
-          </div>
-        </div>
-        <!-- View toggle -->
-        <div class="view-toggle">
-          <button :class="['toggle-btn', { active: viewMode === 'table' }]" title="Table view" @click="viewMode = 'table'">☰</button>
-          <button :class="['toggle-btn', { active: viewMode === 'grid' }]" title="Grid view" @click="viewMode = 'grid'">⊞</button>
-        </div>
+      <div class="page-header__actions">
+        <PaperToggle
+          v-if="agents.length > 0"
+          :model-value="paperMode"
+          :has-live="hasRealAgents"
+          :has-paper="hasPaperAgents"
+          @update:model-value="setPaperMode"
+        />
         <button class="btn btn-primary" @click="$router.push('/agents/create')">
           + New Agent
         </button>
@@ -341,32 +350,84 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 
     <div v-if="overviewError" class="alert alert-error" style="margin-bottom: 12px;">{{ overviewError }}</div>
 
-    <div v-if="!loading" class="stats-grid" style="margin-bottom: 16px;">
-      <div class="stat-card">
-        <div class="stat-label">Total Agents</div>
-        <div class="stat-value">{{ agents.length }}</div>
-        <div class="stat-change">{{ runningCount }} running</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Total Trades</div>
-        <div class="stat-value">{{ stats?.totalTrades ?? '—' }}</div>
-        <div class="stat-change">{{ stats?.openTrades ?? 0 }} open</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Win Rate</div>
-        <div class="stat-value" :class="winRateClass(stats?.winRate)">
-          {{ stats?.winRate !== null && stats?.winRate !== undefined ? stats.winRate.toFixed(1) + '%' : '—' }}
+    <template v-if="!loading">
+      <div v-if="primaryTradeStats && visibleAgents.length > 0" class="stats-section" style="margin-bottom: 16px;">
+        <div class="stats-grid">
+          <div
+            class="stat-card"
+            :class="{
+              'stat-card--paper-split': showPaperBand && paperStats,
+              'stat-card--paper-only': isPaperOnly,
+              'stat-card--paper-lead': (showPaperBand && paperStats) || isPaperOnly,
+            }"
+          >
+            <div class="stat-card__band">
+              <div class="stat-label">Total Trades</div>
+              <div class="stat-value">{{ primaryTradeStats.totalTrades }}</div>
+              <div class="stat-change">{{ primaryTradeStats.openTrades }} open</div>
+            </div>
+            <Transition name="paper-band">
+              <div v-if="showPaperBand && paperStats" class="stat-card__band stat-card__band--paper stat-card__band--paper-lead">
+                <div class="stat-card__paper-label">Total Trades</div>
+                <div class="stat-card__paper-value">{{ paperStats.totalTrades }}</div>
+                <div class="stat-card__paper-meta">{{ paperStats.openTrades }} open</div>
+              </div>
+            </Transition>
+          </div>
+
+          <div
+            class="stat-card"
+            :class="{
+              'stat-card--paper-split': showPaperBand && paperStats,
+              'stat-card--paper-only': isPaperOnly,
+            }"
+          >
+            <div class="stat-card__band">
+              <div class="stat-label">Win Rate</div>
+              <div class="stat-value" :class="winRateClass(primaryTradeStats.winRate)">
+                {{ primaryTradeStats.winRate.toFixed(1) + '%' }}
+              </div>
+              <div class="stat-change">across closed trades</div>
+            </div>
+            <Transition name="paper-band">
+              <div v-if="showPaperBand && paperStats" class="stat-card__band stat-card__band--paper">
+                <div class="stat-card__paper-label">Win Rate</div>
+                <div class="stat-card__paper-value">{{ paperStats.winRate.toFixed(1) }}%</div>
+                <div class="stat-card__paper-meta">across closed trades</div>
+              </div>
+            </Transition>
+          </div>
+
+          <div
+            class="stat-card"
+            :class="{
+              'stat-card--paper-split': showPaperBand && paperStats,
+              'stat-card--paper-only': isPaperOnly,
+            }"
+          >
+            <div class="stat-card__band">
+              <div class="stat-label">Total P&amp;L</div>
+              <div class="stat-value" :class="primaryRealizedPnlUsd >= 0 ? 'positive' : 'negative'">
+                {{ formatUsdNoNegativeZero(primaryRealizedPnlUsd, 0) }}
+              </div>
+              <div class="stat-change">{{ isPaperOnly ? 'closed trades · simulated' : 'closed trades' }}</div>
+            </div>
+            <Transition name="paper-band">
+              <div v-if="showPaperBand && paperStats" class="stat-card__band stat-card__band--paper">
+                <div class="stat-card__paper-label">Total P&amp;L</div>
+                <div
+                  class="stat-card__paper-value"
+                  :class="paperRealizedPnlUsd >= 0 ? 'positive' : 'negative'"
+                >
+                  {{ formatUsdNoNegativeZero(paperRealizedPnlUsd, 0) }}
+                </div>
+                <div class="stat-card__paper-meta">closed trades · simulated</div>
+              </div>
+            </Transition>
+          </div>
         </div>
-        <div class="stat-change">across closed trades</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Total P&amp;L</div>
-        <div class="stat-value" :class="realizedPnlUsd >= 0 ? 'positive' : 'negative'">
-          {{ formatUsdNoNegativeZero(realizedPnlUsd, 0) }}
-        </div>
-        <div class="stat-change">closed trades</div>
-      </div>
-    </div>
+    </template>
 
     <div v-if="loading" class="page-loader">
       <div class="page-loader-track">
@@ -379,7 +440,20 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
     <div v-else-if="error" class="alert alert-error">{{ error }}</div>
 
     <div v-else-if="agents.length === 0" class="empty-state">
-      <div class="empty-icon">🤖</div>
+      <div class="empty-icon">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="16" cy="16" r="8" />
+          <circle cx="16" cy="16" r="2.5" fill="currentColor" stroke="none" />
+          <path d="M16 8 V5" />
+          <path d="M16 24 V27" />
+          <path d="M8 16 H5" />
+          <path d="M24 16 H27" />
+          <path d="M10.3 10.3 L8.2 8.2" />
+          <path d="M21.7 21.7 L23.8 23.8" />
+          <path d="M21.7 10.3 L23.8 8.2" />
+          <path d="M10.3 21.7 L8.2 23.8" />
+        </svg>
+      </div>
       <div class="empty-title">No agents yet</div>
       <p>Create your first AI trading agent to get started.</p>
       <button class="btn btn-primary" style="margin-top: 16px;" @click="$router.push('/agents/create')">
@@ -388,12 +462,12 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
     </div>
 
     <!-- TABLE VIEW -->
-    <div v-else-if="viewMode === 'table'">
+    <div v-else>
       <div class="table-wrap" style="overflow: visible;">
         <table>
           <thead>
             <tr>
-              <th style="width: 32px;"></th>
+              <th class="icon-col"></th>
               <th class="sortable" @click="toggleSort('name')">Name <span class="sort-icon">{{ sortIcon('name') }}</span></th>
               <th
                 v-if="visibleColumns.status"
@@ -434,6 +508,33 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 Total P&amp;L <span class="sort-icon">{{ sortIcon('totalPnl') }}</span>
               </th>
               <th v-if="visibleColumns.actions" style="text-align: right; white-space: nowrap;">Actions</th>
+              <th class="col-picker-th" ref="columnMenuButtonRef">
+                <button
+                  type="button"
+                  class="col-picker-btn"
+                  :class="{ active: showColumnMenu }"
+                  title="Configure visible columns"
+                  @click.stop="showColumnMenu = !showColumnMenu"
+                >⋮</button>
+                <div
+                  v-if="showColumnMenu"
+                  ref="columnMenuRef"
+                  class="col-picker-panel"
+                >
+                  <div class="col-picker-title">Columns</div>
+                  <div class="col-picker-list">
+                    <label><input v-model="visibleColumns.status" type="checkbox" /> Status</label>
+                    <label><input v-model="visibleColumns.pairs" type="checkbox" /> Pairs</label>
+                    <label><input v-model="visibleColumns.model" type="checkbox" /> Model</label>
+                    <label><input v-model="visibleColumns.analysisInterval" type="checkbox" /> Interval</label>
+                    <label><input v-model="visibleColumns.paperBalance" type="checkbox" /> Balance</label>
+                    <label><input v-model="visibleColumns.maxPositionSizePct" type="checkbox" /> Max Pos</label>
+                    <label><input v-model="visibleColumns.slTp" type="checkbox" /> SL / TP</label>
+                    <label><input v-model="visibleColumns.totalPnl" type="checkbox" /> Total P&amp;L</label>
+                    <label><input v-model="visibleColumns.actions" type="checkbox" /> Actions</label>
+                  </div>
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -441,12 +542,19 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               v-for="agent in sortedAgents"
               :key="agent.id"
               class="agent-table-row"
+              :class="{ 'row--paper': agent.isPaper }"
               @click="$router.push(`/agents/${agent.id}`)"
             >
-              <td style="font-size: 18px; line-height: 1;">{{ agentEmoji(agent) }}</td>
+              <td class="icon-col">
+                <ProfileIcon :profile-id="agent.profileId || agent.config?.profileId" :size="28" />
+              </td>
               <td>
                 <span style="font-weight: 500; color: var(--text);">{{ agent.name }}</span>
-                <span v-if="agent.managerId" class="managed-tag">🧠 managed</span>
+                <span v-if="agent.isPaper" class="paper-tag">PAPER</span>
+                <span v-if="agent.managerId" class="managed-tag">
+                  <ProfileIcon profile-id="passive_index" :size="12" style="margin-right: 4px;" />
+                  managed
+                </span>
               </td>
               <td v-if="visibleColumns.status">
                 <span class="badge" :class="`badge-${agent.status}`">{{ agent.status }}</span>
@@ -461,7 +569,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                 {{ agent.config.analysisInterval }}
               </td>
               <td v-if="visibleColumns.paperBalance" class="mono" style="font-size: 12px;">
-                ${{ agent.config.paperBalance.toLocaleString() }}
+                {{ formatUsdNoNegativeZero(agentBalance(agent), 0) }}
               </td>
               <td v-if="visibleColumns.maxPositionSizePct" class="mono" style="font-size: 12px;">
                 {{ agent.config.maxPositionSizePct }}%
@@ -469,7 +577,7 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
               <td v-if="visibleColumns.slTp" class="mono" style="font-size: 12px; white-space: nowrap;">
                 {{ agent.config.stopLossPct }}% / {{ agent.config.takeProfitPct }}%
               </td>
-              <td v-if="visibleColumns.totalPnl" class="mono" style="font-size: 12px;">
+              <td v-if="visibleColumns.totalPnl" class="mono" style="font-size: 12px; white-space: nowrap;">
                 <Transition name="pnl">
                   <span
                     v-if="agentPnl[agent.id]"
@@ -525,48 +633,13 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
                   </div>
                 </div>
               </td>
+              <td class="col-picker-td"></td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- GRID VIEW -->
-    <div v-else>
-      <div v-if="userAgents.length > 0">
-        <div v-if="managedAgents.length > 0" class="section-header">Your agents</div>
-        <div class="agents-grid">
-          <AgentCard
-            v-for="agent in userAgents"
-            :key="agent.id"
-            :agent="agent"
-            @click="$router.push(`/agents/${agent.id}`)"
-            @start="startAgent"
-            @stop="stopAgent"
-            @delete="handleDelete"
-            @edit="handleEditClick"
-          />
-        </div>
-      </div>
-      <div v-if="managedAgents.length > 0" :style="userAgents.length > 0 ? 'margin-top: 28px;' : ''">
-        <div class="section-header">
-          <span>Managed by Agent Manager</span>
-          <span class="section-count">{{ managedAgents.length }}</span>
-        </div>
-        <div class="agents-grid">
-          <AgentCard
-            v-for="agent in managedAgents"
-            :key="agent.id"
-            :agent="agent"
-            @click="$router.push(`/agents/${agent.id}`)"
-            @start="startAgent"
-            @stop="stopAgent"
-            @delete="handleDelete"
-            @edit="handleEditClick"
-          />
-        </div>
-      </div>
-    </div>
 
     <!-- Edit Modal -->
     <Teleport to="body">
@@ -605,54 +678,39 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 </template>
 
 <style scoped>
-.section-header {
+.stats-section {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 12px;
+  flex-direction: column;
+  gap: 6px;
 }
-.section-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+
+.stats-section-label {
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-dim);
 }
-.view-toggle {
+
+.stats-section-label--paper {
+  color: #d97706;
+  opacity: 0.8;
+}
+
+.page-header__actions {
   display: flex;
-  gap: 2px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 2px;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
 }
-.toggle-btn {
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: background 0.15s, color 0.15s;
-}
-.toggle-btn.active {
-  background: var(--accent);
-  color: #000;
+
+.icon-col {
+  width: 52px;
+  padding-left: 12px !important;
+  padding-right: 8px !important;
+  text-align: center;
+  vertical-align: middle;
 }
 .agent-table-row {
   cursor: pointer;
@@ -672,6 +730,22 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
   color: var(--text-muted);
   margin-left: 2px;
 }
+.paper-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: #d97706;
+  border: 1px solid color-mix(in srgb, #d97706 30%, transparent);
+}
+
 .managed-tag {
   display: inline-flex;
   align-items: center;
@@ -746,4 +820,81 @@ async function handleEditSubmit(payload: Parameters<typeof updateAgent>[1]) {
 .stat-pnl-breakdown .positive { color: var(--success, #4ade80); }
 .stat-pnl-breakdown .negative { color: var(--danger, #f87171); }
 .pnl-sep { color: var(--text-dim); }
+.col-picker-th {
+  position: relative;
+  width: 28px;
+  min-width: 28px;
+  padding: 0 4px;
+  text-align: center;
+  border-left: 1px solid var(--border, #2a2a2a);
+}
+.col-picker-td {
+  width: 28px;
+  min-width: 28px;
+  border-left: 1px solid var(--border, #2a2a2a);
+}
+.col-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 auto;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted, #555);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 150ms, color 150ms, background 150ms;
+}
+.col-picker-btn:hover,
+.col-picker-btn.active {
+  border-color: var(--border-light, #333);
+  color: var(--text, #eee);
+  background: color-mix(in srgb, var(--border, #2a2a2a) 40%, transparent);
+}
+.col-picker-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 200;
+  background: var(--bg-card, #1a1a1a);
+  border: 1px solid var(--border-light, #333);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 155px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.col-picker-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted, #555);
+  margin-bottom: 8px;
+}
+.col-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.col-picker-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms;
+}
+.col-picker-list label:hover {
+  color: var(--text, #eee);
+}
+input[type='checkbox'] {
+  width: auto;
+  height: unset;
+}
 </style>

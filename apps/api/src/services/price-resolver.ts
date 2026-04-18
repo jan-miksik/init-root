@@ -1,6 +1,14 @@
 import type { Env } from '../types/env.js';
 import { createDexDataService, getPriceUsd } from './dex-data.js';
 import { createGeckoTerminalService } from './gecko-terminal.js';
+import {
+  hasIndexedSpotPriceProvider,
+  resolveIndexedGeckoTerminalMarketContextForPair,
+  resolveCoinGeckoSpotUsdForPair,
+  resolveCoinPaprikaSpotUsdForPair,
+  resolveDemoFallbackSpotUsdForPair,
+  selectSaneSpotPriceUsd,
+} from './coingecko-price.js';
 
 /** "WETH/USDC" → "WETH USDC" */
 function pairToSearchQuery(pairName: string): string {
@@ -32,11 +40,49 @@ function poolMatchesPair(poolName: string, pairName: string): boolean {
 /**
  * Resolve a current USD price for a given pair label (Base chain).
  * Returns 0 when all providers fail.
+ *
+ * Pass `bypassCache: true` when the caller needs a fresh value (e.g. at the
+ * moment of opening a position) and cannot tolerate a KV-cached price that
+ * may be up to an hour old.
  */
-export async function resolveCurrentPriceUsd(env: Env, pairName: string): Promise<number> {
-  const geckoSvc = createGeckoTerminalService(env.CACHE);
-  const dexSvc = createDexDataService(env.CACHE);
+export async function resolveCurrentPriceUsd(
+  env: Env,
+  pairName: string,
+  options: { bypassCache?: boolean } = {},
+): Promise<number> {
+  const { bypassCache = false } = options;
+  const geckoSvc = createGeckoTerminalService(env.CACHE, { bypassCache });
+  const dexSvc = createDexDataService(env.CACHE, { bypassCache });
   const query = pairToSearchQuery(pairName);
+  const skipDexDiscovery = hasIndexedSpotPriceProvider(pairName);
+
+  if (skipDexDiscovery) {
+    const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
+    const [indexedGeckoCtx, coinGeckoSpot, coinPaprikaSpot] = await Promise.all([
+      resolveIndexedGeckoTerminalMarketContextForPair(env, pairName, { bypassCache }),
+      resolveCoinGeckoSpotUsdForPair(env, pairName, { bypassCache }),
+      resolveCoinPaprikaSpotUsdForPair(env, pairName, { bypassCache }),
+    ]);
+
+    if (indexedGeckoCtx && indexedGeckoCtx.spotUsd > 0) {
+      const indexedSpot = selectSaneSpotPriceUsd({
+        preferredSpotUsd: indexedGeckoCtx.spotUsd,
+        secondarySpotUsd: coinGeckoSpot > 0 ? coinGeckoSpot : coinPaprikaSpot,
+        hourlyPrices: indexedGeckoCtx.hourlyPrices,
+        dailyPrices: indexedGeckoCtx.dailyPrices,
+        demoSpotUsd: demoSpot,
+      });
+      if (indexedSpot > 0) return indexedSpot;
+    }
+
+    const indexedSpot = selectSaneSpotPriceUsd({
+      preferredSpotUsd: coinGeckoSpot,
+      secondarySpotUsd: coinPaprikaSpot,
+      demoSpotUsd: demoSpot,
+    });
+    if (indexedSpot > 0) return indexedSpot;
+    return 0;
+  }
 
   // GeckoTerminal first (network=base)
   try {
@@ -81,6 +127,8 @@ export async function resolveCurrentPriceUsd(env: Env, pairName: string): Promis
     }
   }
 
+  const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
+  if (demoSpot > 0) return demoSpot;
+
   return 0;
 }
-

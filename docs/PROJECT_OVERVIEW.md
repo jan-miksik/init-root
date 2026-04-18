@@ -1,6 +1,15 @@
-## Something in loop – Project Overview
+## initRoot – Project Overview
 
-**Something in loop** (monorepo name `something-in-loop`) is an AI‑assisted paper‑trading platform for DEXes on the Base chain.
+## TL;DR
+
+- **Frontend**: Nuxt SPA on **Cloudflare Pages**, with a Pages Function proxy and Service Binding to the API Worker.
+- **Backend**: Hono‑based **Cloudflare Worker** using **D1**, **KV**, **Durable Objects**, and **cron triggers**.
+- **Shared**: Single `packages/shared` package owns all validation schemas and prompt-builder functions — used by API and frontend.
+- **Security model**: API is **internal-only**; the browser talks only to the Pages origin, and Cloudflare's internal Service Binding handles communication to the Worker.
+
+
+
+**initRoot** (monorepo name `initRoot`) is an AI‑assisted paper‑trading platform for DEXes.
 
 - **Frontend (`apps/web`)**
   - **Nuxt 4 SPA** (no SSR) with Vue 3 `<script setup>` and TypeScript.
@@ -39,9 +48,13 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 - Nuxt configured for **Cloudflare Pages** in `apps/web/nuxt.config.ts`:
   - `nitro.preset = 'cloudflare-pages'`
   - `compatibilityDate: '2026-02-17'`
+- Root Pages configuration in [`wrangler.toml`](../wrangler.toml):
+  - `pages_build_output_dir = "./apps/web/dist"`
+  - `compatibility_flags = ["nodejs_compat"]`
+  - `[[services]] binding = "API"`, `service = "something-in-loop-api"`
 - Deploy script from repository root (`package.json`):
   - `npm run deploy:web` → builds the web app and runs
-    `npx wrangler pages deploy dist --project-name=something-in-loop`.
+    `npx wrangler pages deploy apps/web/dist --project-name=init-root --commit-dirty=true`.
 - **Pages Functions**:
   - `apps/web/server/api/[...path].ts` is a Nitro/Pages Function that:
     - Uses the **Cloudflare Service Binding** `API` when deployed on Pages (calls `cfEnv.API.fetch()`).
@@ -93,8 +106,6 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 
 - `apps/api/wrangler.toml`:
   - `[triggers] crons = [...]` registers five schedules:
-    - `*/5 * * * *` (every 5 minutes)
-    - `*/15 * * * *` (every 15 minutes)
     - `0 * * * *` (hourly)
     - `0 */4 * * *` (every 4 hours)
     - `0 0 * * *` (daily)
@@ -105,7 +116,7 @@ The API Worker is **internal-only** (no public route); the browser only talks to
 
 ### 7. Service Bindings (internal-only API)
 
-- Service binding from Pages → Worker (see `docs/DEPLOY.md` and `apps/web/wrangler.toml`):
+- Service binding from Pages → Worker (see `docs/DEPLOY.md` and root `wrangler.toml`):
   - `[[services]] binding = "API"`, `service = "something-in-loop-api"`.
 - Pages Function (`apps/web/server/api/[...path].ts`) expects `event.context.cloudflare.env.API`:
   - When present (production on Pages), requests are routed internally:
@@ -251,10 +262,3 @@ apps/web/pages/
 ```
 
 ---
-
-## TL;DR
-
-- **Frontend**: Nuxt SPA on **Cloudflare Pages**, with a Pages Function proxy and Service Binding to the API Worker.
-- **Backend**: Hono‑based **Cloudflare Worker** using **D1**, **KV**, **Durable Objects**, and **cron triggers**.
-- **Shared**: Single `packages/shared` package owns all validation schemas and prompt-builder functions — used by API and frontend.
-- **Security model**: API is **internal-only**; the browser talks only to the Pages origin, and Cloudflare's internal Service Binding handles communication to the Worker.

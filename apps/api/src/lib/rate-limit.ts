@@ -116,6 +116,11 @@ export function createRateLimitMiddleware<E extends { Bindings: { CACHE: KVNames
   config: Omit<RateLimitConfig, 'key'> & { strategy?: RateLimitStrategy }
 ): MiddlewareHandler<E> {
   return (async (c: Context<E>, next) => {
+    // CORS preflight requests are browser bookkeeping and shouldn't consume quota.
+    if (c.req.method === 'OPTIONS') {
+      return next();
+    }
+
     // Derive a best-effort client identifier:
     // - Prefer Cloudflare's CF-Connecting-IP header in production (not user-controllable)
     // - Fall back to X-Forwarded-For for local/dev proxies

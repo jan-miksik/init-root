@@ -1,0 +1,16 @@
+[
+  {
+    "category": "north-star",
+    "description": "",
+    "passes": true
+  },
+  {
+    "category": "product-definition",
+    "description": "",
+    "steps": [
+    ],
+    "acceptance_criteria": [
+    ],
+    "passes": false
+  }
+]

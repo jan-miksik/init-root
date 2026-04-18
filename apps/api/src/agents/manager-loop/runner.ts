@@ -4,9 +4,16 @@ import { generateText } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { Env } from '../../types/env.js';
 import { agentManagerLogs, agentManagers, agents, performanceSnapshots, trades, users } from '../../db/schema.js';
-import { decryptKey } from '../../lib/crypto.js';
+import { resolveStoredOpenRouterKey } from '../../lib/openrouter-key.js';
 import { createDexDataService, getPriceUsd } from '../../services/dex-data.js';
 import { createGeckoTerminalService } from '../../services/gecko-terminal.js';
+import {
+  hasIndexedSpotPriceProvider,
+  resolveIndexedGeckoTerminalMarketContextForPair,
+  resolveCoinGeckoMarketContextForPair,
+  resolveCoinPaprikaMarketContextForPair,
+  resolveDemoMarketContextForPair,
+} from '../../services/coingecko-price.js';
 import { generateId, nowIso } from '../../lib/utils.js';
 import { normalizeManagerDecisionInterval } from '../../lib/manager-interval-sync.js';
 import type { ManagerConfig } from '@something-in-loop/shared';
@@ -20,6 +27,9 @@ const MANAGER_LLM_TIMEOUT_MS = 60_000; // generous for manager's larger prompt
 /** Run one full manager decision cycle */
 export async function runManagerLoop(managerId: string, env: Env, ctx: DurableObjectState): Promise<void> {
   const db = drizzle(env.DB);
+  // Manager always needs fresh market data — stale KV cache would produce
+  // outdated prices for a decision that may reconfigure running agents.
+  const bypassCache = true;
   try {
     await db.run(sql`PRAGMA foreign_keys = ON`);
   } catch {
@@ -117,40 +127,84 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
 
   const allPairs = [...new Set(agentSnapshots.flatMap((a) => a.config.pairs))].slice(0, 5);
 
-  const geckoSvc = createGeckoTerminalService(env.CACHE);
-  const dexSvc = createDexDataService(env.CACHE);
+  const geckoSvc = createGeckoTerminalService(env.CACHE, { bypassCache });
+  const dexSvc = createDexDataService(env.CACHE, { bypassCache });
   const marketData: Array<{ pair: string; priceUsd: number; priceChange: Record<string, number | undefined> }> = [];
 
   for (const pairName of allPairs) {
     const query = pairName.replace('/', ' ');
-    try {
-      const pools = await geckoSvc.searchPools(query);
-      const pool = pools.find((p: any) => {
-        const tokens = pairName.split('/').map((t: string) => t.trim().toUpperCase());
-        return tokens.every((t: string) => p.name.toUpperCase().includes(t));
-      });
-      if (pool && pool.priceUsd > 0) {
-        marketData.push({ pair: pairName, priceUsd: pool.priceUsd, priceChange: pool.priceChange });
-        continue;
+    const skipDexDiscovery = hasIndexedSpotPriceProvider(pairName);
+
+    if (!skipDexDiscovery) {
+      try {
+        const pools = await geckoSvc.searchPools(query);
+        const pool = pools.find((p: any) => {
+          const tokens = pairName.split('/').map((t: string) => t.trim().toUpperCase());
+          return tokens.every((t: string) => p.name.toUpperCase().includes(t));
+        });
+        if (pool && pool.priceUsd > 0) {
+          marketData.push({ pair: pairName, priceUsd: pool.priceUsd, priceChange: pool.priceChange });
+          continue;
+        }
+      } catch {
+        // fallthrough
       }
-    } catch {
-      // fallthrough
+
+      try {
+        const results = await dexSvc.searchPairs(query);
+        const basePair = results
+          .filter((p: any) => p.chainId === 'base')
+          .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] as any;
+        if (basePair) {
+          marketData.push({
+            pair: pairName,
+            priceUsd: getPriceUsd(basePair),
+            priceChange: { h1: basePair.priceChange?.h1, h24: basePair.priceChange?.h24 },
+          });
+          continue;
+        }
+      } catch {
+        // skip
+      }
     }
 
-    try {
-      const results = await dexSvc.searchPairs(query);
-      const basePair = results
-        .filter((p: any) => p.chainId === 'base')
-        .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] as any;
-      if (basePair) {
-        marketData.push({
-          pair: pairName,
-          priceUsd: getPriceUsd(basePair),
-          priceChange: { h1: basePair.priceChange?.h1, h24: basePair.priceChange?.h24 },
-        });
-      }
-    } catch {
-      // skip
+    const indexedGeckoCtx = await resolveIndexedGeckoTerminalMarketContextForPair(env, pairName, { bypassCache });
+    if (indexedGeckoCtx && indexedGeckoCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: indexedGeckoCtx.spotUsd,
+        priceChange: indexedGeckoCtx.priceChange,
+      });
+      continue;
+    }
+
+    const coinGeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName, { bypassCache });
+    if (coinGeckoCtx && coinGeckoCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: coinGeckoCtx.spotUsd,
+        priceChange: coinGeckoCtx.priceChange,
+      });
+      continue;
+    }
+
+    const coinPaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName, { bypassCache });
+    if (coinPaprikaCtx && coinPaprikaCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: coinPaprikaCtx.spotUsd,
+        priceChange: coinPaprikaCtx.priceChange,
+      });
+      continue;
+    }
+
+    const demoCtx = resolveDemoMarketContextForPair(pairName);
+    if (demoCtx && demoCtx.spotUsd > 0) {
+      marketData.push({
+        pair: pairName,
+        priceUsd: demoCtx.spotUsd,
+        priceChange: demoCtx.priceChange,
+      });
     }
   }
 
@@ -164,7 +218,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
 
   const ownerAddr = managerRow.ownerAddress?.toLowerCase();
   const [ownerUser] = ownerAddr
-    ? await db.select({ openRouterKey: users.openRouterKey }).from(users).where(eq(users.walletAddress, ownerAddr))
+    ? await db.select({ id: users.id, openRouterKey: users.openRouterKey }).from(users).where(eq(users.walletAddress, ownerAddr))
     : [];
   const hasUserOpenRouterKey = !!ownerUser?.openRouterKey;
 
@@ -196,11 +250,19 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
       let orApiKey = env.OPENROUTER_API_KEY;
       if (ownerAddr) {
         if (ownerUser?.openRouterKey) {
-          try {
-            orApiKey = await decryptKey(ownerUser.openRouterKey, env.KEY_ENCRYPTION_SECRET);
-          } catch {
-            console.warn('[manager-loop] failed to decrypt user OR key, using server fallback');
-          }
+          const resolved = await resolveStoredOpenRouterKey({
+            storedKey: ownerUser.openRouterKey,
+            serverKey: env.OPENROUTER_API_KEY,
+            encryptionSecret: env.KEY_ENCRYPTION_SECRET,
+            logPrefix: '[manager-loop]',
+            persistEncrypted: async (encryptedKey) => {
+              await db
+                .update(users)
+                .set({ openRouterKey: encryptedKey, updatedAt: nowIso() })
+                .where(eq(users.id, ownerUser.id));
+            },
+          });
+          orApiKey = resolved.apiKey;
         }
       }
       const openrouter = createOpenRouter({ apiKey: orApiKey });

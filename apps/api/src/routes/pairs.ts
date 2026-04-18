@@ -6,12 +6,31 @@ import {
   filterBaseChainPairs,
 } from '../services/dex-data.js';
 import { createGeckoTerminalService } from '../services/gecko-terminal.js';
+import {
+  resolveIndexedGeckoTerminalMarketContextForPair,
+  resolveCoinGeckoMarketContextForPair,
+  resolveCoinPaprikaMarketContextForPair,
+  resolveDemoMarketContextForPair,
+} from '../services/coingecko-price.js';
 import { resolveCurrentPriceUsd } from '../services/price-resolver.js';
 import { validateQuery } from '../lib/validation.js';
 import { ValidationError } from '../lib/validation.js';
 import { normalizePairForDex } from '../lib/pairs.js';
+import { badRequestJson, internalServerErrorJson, notFoundJson, upstreamFailureJson } from './_shared/json-response.js';
 
 const pairs = new Hono<{ Bindings: Env }>();
+type OhlcvSource = 'coingecko' | 'coinpaprika' | 'geckoterminal' | 'demo' | 'none';
+
+function buildPricesResponse(
+  normalizedByInput: Record<string, string>,
+  pricesByNormalized: Record<string, number>,
+) {
+  const prices: Record<string, number> = { ...pricesByNormalized };
+  for (const [input, normalized] of Object.entries(normalizedByInput)) {
+    prices[input] = pricesByNormalized[normalized] ?? 0;
+  }
+  return { prices, normalizedByInput };
+}
 
 /**
  * GET /api/pairs/gecko-search?q=WETH+USDC
@@ -19,13 +38,13 @@ const pairs = new Hono<{ Bindings: Env }>();
  */
 pairs.get('/gecko-search', async (c) => {
   const q = c.req.query('q');
-  if (!q) return c.json({ error: 'q param required' }, 400);
+  if (!q) return badRequestJson(c, 'q param required');
   const svc = createGeckoTerminalService(c.env.CACHE);
   try {
     const pools = await svc.searchPools(q);
     return c.json({ query: q, count: pools.length, pools });
   } catch (err) {
-    return c.json({ error: String(err) }, 502);
+    return upstreamFailureJson(c, String(err));
   }
 });
 
@@ -68,7 +87,7 @@ pairs.post('/prices', async (c) => {
   const body = await c.req.json().catch(() => null) as unknown;
   const parsed = z.object({ pairs: z.array(z.string().min(1)).min(1).max(50) }).safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: 'pairs must be a non-empty string[] (max 50)' }, 400);
+    return badRequestJson(c, 'pairs must be a non-empty string[] (max 50)');
   }
 
   const normalizedByInput: Record<string, string> = {};
@@ -91,12 +110,75 @@ pairs.post('/prices', async (c) => {
   );
 
   const pricesByNormalized = Object.fromEntries(entries) as Record<string, number>;
-  const prices: Record<string, number> = { ...pricesByNormalized };
-  for (const [input, normalized] of Object.entries(normalizedByInput)) {
-    prices[input] = pricesByNormalized[normalized] ?? 0;
+  return c.json(buildPricesResponse(normalizedByInput, pricesByNormalized));
+});
+
+/**
+ * GET /api/pairs/ohlcv?pair=INIT/USD&timeframe=1h
+ * Pair-name based fallback OHLCV for pairs without on-chain pairAddress.
+ */
+pairs.get('/ohlcv', async (c) => {
+  const query = validateQuery(
+    c,
+    z.object({
+      pair: z.string().min(1),
+      timeframe: z.enum(['1h', '4h', '1d']).default('1h'),
+    }),
+  );
+
+  const pair = normalizePairForDex(query.pair);
+  const [indexedGecko, coingecko, coinpaprika] = await Promise.all([
+    resolveIndexedGeckoTerminalMarketContextForPair(c.env, pair),
+    resolveCoinGeckoMarketContextForPair(c.env, pair),
+    resolveCoinPaprikaMarketContextForPair(c.env, pair),
+  ]);
+  const demo = resolveDemoMarketContextForPair(pair);
+
+  // Prefer real providers; use demo only when both providers miss a series.
+  const hourlySource: OhlcvSource =
+    (indexedGecko?.hourlyPrices?.length ?? 0) > 0
+      ? 'geckoterminal'
+      : (coingecko?.hourlyPrices?.length ?? 0) > 0
+      ? 'coingecko'
+      : (coinpaprika?.hourlyPrices?.length ?? 0) > 0
+      ? 'coinpaprika'
+      : (demo?.hourlyPrices?.length ?? 0) > 0
+      ? 'demo'
+      : 'none';
+  const dailySource: OhlcvSource =
+    (indexedGecko?.dailyPrices?.length ?? 0) > 0
+      ? 'geckoterminal'
+      : (coingecko?.dailyPrices?.length ?? 0) > 0
+      ? 'coingecko'
+      : (coinpaprika?.dailyPrices?.length ?? 0) > 0
+      ? 'coinpaprika'
+      : (demo?.dailyPrices?.length ?? 0) > 0
+      ? 'demo'
+      : 'none';
+  const hourlyPrices =
+    (indexedGecko?.hourlyPrices?.length ?? 0) > 0
+      ? indexedGecko!.hourlyPrices
+      : (coingecko?.hourlyPrices?.length ?? 0) > 0
+      ? coingecko!.hourlyPrices
+      : (coinpaprika?.hourlyPrices?.length ?? 0) > 0
+      ? coinpaprika!.hourlyPrices
+      : (demo?.hourlyPrices ?? []);
+  const dailyPrices =
+    (indexedGecko?.dailyPrices?.length ?? 0) > 0
+      ? indexedGecko!.dailyPrices
+      : (coingecko?.dailyPrices?.length ?? 0) > 0
+      ? coingecko!.dailyPrices
+      : (coinpaprika?.dailyPrices?.length ?? 0) > 0
+      ? coinpaprika!.dailyPrices
+      : (demo?.dailyPrices ?? []);
+  const source: OhlcvSource = query.timeframe === '1d' ? dailySource : hourlySource;
+
+  if (hourlyPrices.length === 0 && dailyPrices.length === 0) {
+    return c.json({ candles: [], timeframe: query.timeframe, pair, source: 'none' as OhlcvSource }, 200);
   }
 
-  return c.json({ prices, normalizedByInput });
+  const candles = toCandlesForTimeframe(hourlyPrices, dailyPrices, query.timeframe);
+  return c.json({ candles, timeframe: query.timeframe, pair, source }, 200);
 });
 
 /**
@@ -116,7 +198,7 @@ pairs.get('/:chain/:address/ohlcv', async (c) => {
   };
 
   const config = tfMap[tf];
-  if (!config) return c.json({ error: `Invalid timeframe: ${tf}. Use 15m, 1h, 4h, 1d` }, 400);
+  if (!config) return badRequestJson(c, `Invalid timeframe: ${tf}. Use 15m, 1h, 4h, 1d`);
 
   const gecko = createGeckoTerminalService(c.env.CACHE);
   const candles = await gecko.getPoolOHLCV(address, config.limit, config.api);
@@ -124,7 +206,7 @@ pairs.get('/:chain/:address/ohlcv', async (c) => {
   // For 4h: downsample hourly candles to 4h buckets
   const result = tf === '4h' ? downsample(candles, 4) : candles;
 
-  return c.json({ candles: result, timeframe: tf });
+  return c.json({ candles: result, timeframe: tf, source: 'geckoterminal' as OhlcvSource });
 });
 
 /** GET /api/pairs/:chain/:address */
@@ -136,7 +218,7 @@ pairs.get('/:chain/:address', async (c) => {
   const results = await svc.getPairsByChain(chain, address);
 
   if (results.length === 0) {
-    return c.json({ error: 'Pair not found' }, 404);
+    return notFoundJson(c, 'Pair');
   }
 
   return c.json({ pair: results[0], allResults: results });
@@ -159,6 +241,44 @@ function downsample(candles: Array<{ t: number; o: number; h: number; l: number;
   return buckets;
 }
 
+function toCandlesForTimeframe(
+  hourlyPrices: number[],
+  dailyPrices: number[],
+  timeframe: '1h' | '4h' | '1d',
+): Array<{ t: number; o: number; h: number; l: number; c: number }> {
+  if (timeframe === '1d') {
+    return toSyntheticCandles(dailyPrices, 24 * 60 * 60 * 1000);
+  }
+
+  const baseHourly = toSyntheticCandles(hourlyPrices, 60 * 60 * 1000);
+  if (timeframe === '1h') return baseHourly;
+  return downsample(baseHourly, 4);
+}
+
+function toSyntheticCandles(
+  closes: number[],
+  stepMs: number,
+): Array<{ t: number; o: number; h: number; l: number; c: number }> {
+  const clean = closes.filter((v) => Number.isFinite(v) && v > 0);
+  if (clean.length === 0) return [];
+
+  const end = Date.now();
+  const start = end - stepMs * (clean.length - 1);
+  return clean.map((close, i) => {
+    const previousClose = i > 0 ? clean[i - 1] : close;
+    const open = previousClose;
+    const high = Math.max(open, close);
+    const low = Math.min(open, close);
+    return {
+      t: start + i * stepMs,
+      o: open,
+      h: high,
+      l: low,
+      c: close,
+    };
+  });
+}
+
 /** GET /api/pairs/token/:address */
 pairs.get('/token/:address', async (c) => {
   const address = c.req.param('address');
@@ -172,10 +292,10 @@ pairs.get('/token/:address', async (c) => {
 // Error handler for this router
 pairs.onError((err, c) => {
   if (err instanceof ValidationError) {
-    return c.json({ error: err.message, fieldErrors: err.fieldErrors }, 400);
+    return badRequestJson(c, err.message, { fieldErrors: err.fieldErrors });
   }
   console.error('[pairs route]', err);
-  return c.json({ error: 'Failed to fetch pair data' }, 502);
+  return internalServerErrorJson(c, 'Failed to fetch pair data');
 });
 
 export default pairs;

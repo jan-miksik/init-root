@@ -1,0 +1,687 @@
+import { computed, ref } from 'vue';
+import type { CreateAgentPayload } from '~/composables/useAgents';
+import { useAutoSignConsent } from '~/composables/useAutoSignConsent';
+
+const WALLET_STATE_TIMEOUT_MS = 30_000;
+const WALLET_STATE_POLL_MS = 250;
+const GAS_TOPUP_SETTLE_TIMEOUT_MS = 20_000;
+const GAS_TOPUP_SETTLE_POLL_MS = 500;
+const BRIDGE_SRC_CHAIN_ID = 'initiation-2';
+const BRIDGE_SRC_DENOM = 'uinit';
+const MIN_TEST_GAS_BALANCE_WEI = 20_000_000_000_000_000n;
+
+function formatWei(wei: string | null | undefined): string | null {
+  if (!wei) return null;
+  try {
+    const n = BigInt(wei);
+    const e18 = 1_000_000_000_000_000_000n;
+    const whole = n / e18;
+    const frac = n % e18;
+    return `${whole}.${frac.toString().padStart(18, '0').slice(0, 2)}`;
+  } catch {
+    return null;
+  }
+}
+
+function requireCreateAgentPayload(payload: Partial<CreateAgentPayload>): CreateAgentPayload {
+  if (
+    !payload.name
+    || !payload.pairs
+    || !payload.strategies
+    || !payload.analysisInterval
+    || payload.paperBalance === undefined
+    || payload.maxPositionSizePct === undefined
+    || payload.stopLossPct === undefined
+    || payload.takeProfitPct === undefined
+    || payload.maxOpenPositions === undefined
+    || !payload.llmModel
+    || payload.temperature === undefined
+    || payload.allowFallback === undefined
+  ) {
+    throw new Error('Missing required agent configuration');
+  }
+  return payload as CreateAgentPayload;
+}
+
+export function useAgentCreateFlow() {
+  const router = useRouter();
+  const { request } = useApi();
+  const { createAgent, updateAgent, startAgent, deleteAgent } = useAgents();
+  const { showNotification, clearNotification } = useNotification();
+  const {
+    state: initiaState,
+    openConnect,
+    openBridge,
+    refresh,
+    createAgentOnchain,
+    depositShowcaseToken,
+    withdrawShowcaseToken,
+    mintShowcaseToken,
+    enableAutoSign,
+  } = useInitiaBridge();
+  const autoSignMgr = useAutoSign();
+  const {
+    consentModalOpen,
+    runWithAutoSignCheck,
+    handleConsentProceed: handleConsentProceedBase,
+    handleConsentCancel: handleConsentCancelBase,
+  } = useAutoSignConsent({ autoSignMgr, enableAutoSign });
+
+  const step = ref<1 | 2>(1);
+  const isPaper = ref(true);
+  const fundAmount = ref('1000');
+  const faucetAmount = ref('1000');
+  const createdAgentId = ref<string | null>(null);
+  const currentPaperBalance = ref(0);
+  const createPreparing = ref(false);
+  const creating = ref(false);
+  const funding = ref(false);
+  const withdrawing = ref(false);
+  const bridging = ref(false);
+  const mintingFaucet = ref(false);
+  const toppingUpGas = ref(false);
+  const onchainStatus = ref('');
+
+  const walletIusdDisplay = computed(() => formatWei(initiaState.value.walletShowcaseTokenBalanceWei));
+  const walletGasDisplay = computed(() => formatWei(initiaState.value.walletBalanceWei));
+  const shouldShowGasTopUpHelp = computed(() => {
+    const balanceWei = initiaState.value.walletBalanceWei;
+    if (!balanceWei) return true;
+    try {
+      return BigInt(balanceWei) < MIN_TEST_GAS_BALANCE_WEI;
+    } catch {
+      return true;
+    }
+  });
+  const createBusy = computed(() => createPreparing.value || creating.value);
+  const fundingBusy = computed(() =>
+    funding.value || withdrawing.value || bridging.value || mintingFaucet.value || toppingUpGas.value,
+  );
+
+  function setCreateStatus(status: string) {
+    if (!createPreparing.value && !creating.value) return;
+    onchainStatus.value = status;
+  }
+
+  function goToStep(nextStep: 1 | 2) {
+    if (nextStep === 2 && !createdAgentId.value) return;
+    step.value = nextStep;
+  }
+
+  function clearFundingFeedback() {
+    clearNotification();
+  }
+
+  function buildMetadataPointer() {
+    const agentId = createdAgentId.value ?? `pending-${Date.now()}`;
+    return {
+      agentId,
+      version: 1,
+      configHash: `cfg_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`,
+      labels: {
+        source: 'initroot',
+        flow: 'create-step-2',
+      },
+    };
+  }
+
+  async function syncInitiaState(trigger: string) {
+    if (!createdAgentId.value || !initiaState.value.initiaAddress) return;
+    try {
+      await request(`/api/agents/${createdAgentId.value}/initia/sync`, {
+        method: 'POST',
+        body: {
+          state: {
+            walletAddress: initiaState.value.initiaAddress,
+            evmAddress: initiaState.value.evmAddress ?? undefined,
+            onchainAgentId: initiaState.value.onchainAgentId ?? undefined,
+            chainOk: initiaState.value.chainOk,
+            existsOnchain: initiaState.value.agentExists,
+            autoSignEnabled: initiaState.value.autoSignEnabled,
+            walletBalanceWei: initiaState.value.walletBalanceWei ?? undefined,
+            walletShowcaseTokenBalanceWei: initiaState.value.walletShowcaseTokenBalanceWei ?? undefined,
+            showcaseTokenBalanceWei: initiaState.value.showcaseTokenBalanceWei ?? undefined,
+            vaultBalanceWei: initiaState.value.vaultBalanceWei ?? undefined,
+            lastTxHash: initiaState.value.lastTxHash ?? undefined,
+            syncTrigger: trigger,
+          },
+        },
+        silent: true,
+      });
+    } catch (err) {
+      console.warn('[create-flow] failed to sync initia state', err);
+    }
+  }
+
+  async function ensureWalletConnected() {
+    await refresh();
+    if (initiaState.value.initiaAddress) return;
+
+    await openConnect();
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+      await refresh();
+      if (initiaState.value.initiaAddress) return;
+      await new Promise((resolve) => setTimeout(resolve, WALLET_STATE_POLL_MS));
+    }
+
+    throw new Error('Wallet connection was not detected. Finish wallet connect and try again.');
+  }
+
+  async function ensureWalletFeeCheckReady() {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < WALLET_STATE_TIMEOUT_MS) {
+      await refresh();
+      const initiaAddress = initiaState.value.initiaAddress;
+      const evmAddress = initiaState.value.evmAddress;
+      if (initiaAddress && evmAddress) {
+        return evmAddress;
+      }
+      await new Promise((resolve) => setTimeout(resolve, WALLET_STATE_POLL_MS));
+    }
+
+    throw new Error('Wallet connected, but the app is still loading its EVM address. Please wait a moment and try again.');
+  }
+
+  async function waitForWalletGasReady(minBalanceWei = MIN_TEST_GAS_BALANCE_WEI) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < GAS_TOPUP_SETTLE_TIMEOUT_MS) {
+      await refresh();
+      const balanceWei = initiaState.value.walletBalanceWei;
+      if (balanceWei) {
+        try {
+          if (BigInt(balanceWei) >= minBalanceWei) {
+            await syncInitiaState('wallet-test-gas-ready');
+            return;
+          }
+        } catch {
+          // Keep polling until the wallet balance shape is usable.
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, GAS_TOPUP_SETTLE_POLL_MS));
+    }
+
+    throw new Error('Test GAS was sent, but the wallet balance is still updating. Please wait a few seconds and try again.');
+  }
+
+  async function ensureTestGas(options?: { force?: boolean; silent?: boolean }) {
+    await ensureWalletConnected();
+    setCreateStatus('Preparing wallet fee check...');
+    const evmAddress = await ensureWalletFeeCheckReady();
+    setCreateStatus('Checking wallet fee balance...');
+
+    const currentBalanceWei = initiaState.value.walletBalanceWei;
+    if (!options?.force && currentBalanceWei) {
+      try {
+        if (BigInt(currentBalanceWei) >= MIN_TEST_GAS_BALANCE_WEI) {
+          return { funded: false, reason: 'balance_sufficient' };
+        }
+      } catch {
+        // Fall through to the backend top-up path.
+      }
+    }
+
+    toppingUpGas.value = true;
+    try {
+      setCreateStatus('Adding test GAS to wallet...');
+      const result = await request<{
+        ok: boolean;
+        funded: boolean;
+        txHash: string | null;
+        reason: string | null;
+      }>('/api/agents/initia/test-gas', {
+        method: 'POST',
+        body: { evmAddress },
+        silent: true,
+      });
+
+      await refresh();
+      if (result.funded || result.reason === 'balance_sufficient') {
+        const refreshedBalanceWei = initiaState.value.walletBalanceWei;
+        let balanceReady = false;
+        if (refreshedBalanceWei) {
+          try {
+            balanceReady = BigInt(refreshedBalanceWei) >= MIN_TEST_GAS_BALANCE_WEI;
+          } catch {
+            balanceReady = false;
+          }
+        }
+        if (!balanceReady) {
+          setCreateStatus(result.funded ? 'Waiting for GAS top-up confirmation...' : 'Refreshing wallet fee balance...');
+          await waitForWalletGasReady();
+        }
+      }
+
+      await syncInitiaState('wallet-test-gas-topup');
+      setCreateStatus('Fee balance ready. Preparing transaction...');
+
+      if (!options?.silent) {
+        if (result.funded) {
+          showNotification({
+            type: 'success',
+            title: 'Test GAS Added',
+            message: `Native GAS was added to your wallet and is ready to use.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+          });
+        } else if (options?.force) {
+          showNotification({
+            type: 'success',
+            title: 'Wallet Already Funded',
+            message: 'This wallet already has enough GAS for local test transactions.',
+          });
+        }
+      }
+
+      return result;
+    } catch (err) {
+      if (!options?.silent) {
+        showNotification({
+          type: 'error',
+          title: 'Test GAS Funding Failed',
+          message: extractApiError(err),
+          durationMs: 8_000,
+        });
+      }
+      throw err;
+    } finally {
+      toppingUpGas.value = false;
+    }
+  }
+
+  async function ensureOnchainAgent(options?: { forceCreate?: boolean; autoSign?: boolean }) {
+    if (!options?.forceCreate && initiaState.value.agentExists) return;
+
+    if (!initiaState.value.chainOk) {
+      throw new Error('Local rollup chain is not reachable. Ensure the chain is running at the configured RPC endpoint.');
+    }
+
+    const metadataPointer = buildMetadataPointer();
+    setCreateStatus('Submitting create transaction...');
+    onchainStatus.value = 'Waiting for block confirmation...';
+    const { txHash, onchainAgentId } = await createAgentOnchain(metadataPointer, { autoSign: options?.autoSign });
+
+    if (onchainAgentId) {
+      onchainStatus.value = 'Agent confirmed onchain';
+    } else {
+      onchainStatus.value = 'Confirming transaction...';
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await refresh();
+      if (!initiaState.value.agentExists) {
+        throw new Error('Transaction submitted but agent not yet confirmed. Please check your wallet and try again.');
+      }
+      onchainStatus.value = 'Agent confirmed onchain';
+    }
+
+    if (createdAgentId.value && initiaState.value.initiaAddress && txHash) {
+      try {
+        await request(`/api/agents/${createdAgentId.value}/initia/link`, {
+          method: 'POST',
+          body: {
+            initiaWalletAddress: initiaState.value.initiaAddress,
+            evmAddress: initiaState.value.evmAddress ?? undefined,
+            txHash,
+            metadataPointer,
+          },
+          silent: true,
+        });
+      } catch (err) {
+        console.warn('[create-flow] failed to persist initia link state', err);
+      }
+    }
+  }
+
+  async function executeCreateStep(
+    payload: Partial<CreateAgentPayload>,
+    options?: { skipPreflight?: boolean },
+  ) {
+    creating.value = true;
+    let createdLocalAgentId: string | null = null;
+    try {
+      if (!options?.skipPreflight) {
+        setCreateStatus('Connecting wallet...');
+        await ensureWalletConnected();
+        setCreateStatus('Checking wallet fee balance...');
+        await ensureTestGas({ silent: true });
+      }
+
+      if (!createdAgentId.value) {
+        setCreateStatus('Preparing agent record...');
+        const agent = await createAgent({
+          ...requireCreateAgentPayload({ ...payload, paperBalance: 0 }),
+          chain: 'initia',
+          initiaWalletAddress: initiaState.value.initiaAddress ?? undefined,
+        });
+        createdAgentId.value = agent.id;
+        createdLocalAgentId = agent.id;
+        currentPaperBalance.value = 0;
+      }
+
+      const autoSign = autoSignMgr.isEnabled('createAgentOnchain') && autoSignMgr.chainAutoSignGrantEnabled.value;
+      await ensureOnchainAgent({ forceCreate: true, autoSign });
+      await refresh();
+      await syncInitiaState('create-step-onchain');
+      step.value = 2;
+      showNotification({
+        type: 'success',
+        title: 'Agent Created',
+        message: 'Agent setup was created successfully. Continue with funding in step 2.',
+      });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Agent Creation Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+      if (createdLocalAgentId) {
+        try {
+          await deleteAgent(createdLocalAgentId);
+        } catch (cleanupErr) {
+          console.warn('[create-flow] failed to delete local agent after onchain create error', cleanupErr);
+        }
+        if (createdAgentId.value === createdLocalAgentId) {
+          createdAgentId.value = null;
+        }
+      }
+    } finally {
+      creating.value = false;
+      onchainStatus.value = '';
+    }
+  }
+
+  async function handleConsentProceed(useAutoSignChoice: boolean, dontShowAgain: boolean) {
+    if (createPreparing.value) {
+      onchainStatus.value = 'Configuring auto-sign...';
+    }
+    await handleConsentProceedBase(useAutoSignChoice, dontShowAgain);
+  }
+
+  function handleConsentCancel() {
+    handleConsentCancelBase();
+    if (!createPreparing.value) return;
+    createPreparing.value = false;
+    onchainStatus.value = '';
+  }
+
+  async function handleNextPaper(payload: Partial<CreateAgentPayload>) {
+    creating.value = true;
+    try {
+      const agent = await createAgent({
+        ...requireCreateAgentPayload(payload),
+        isPaper: true,
+        chain: 'base',
+      });
+      createdAgentId.value = agent.id;
+      await startAgent(agent.id);
+      router.push(`/agents/${agent.id}?justCreated=1`);
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Agent Creation Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+    } finally {
+      creating.value = false;
+    }
+  }
+
+  async function handleNext(payload: Partial<CreateAgentPayload>) {
+    if (isPaper.value) {
+      await handleNextPaper(payload);
+      return;
+    }
+
+    createPreparing.value = true;
+    try {
+      setCreateStatus('Connecting wallet...');
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+      setCreateStatus('Fee balance ready. Choose how to sign the create transaction...');
+    } catch (err) {
+      createPreparing.value = false;
+      onchainStatus.value = '';
+      showNotification({
+        type: 'error',
+        title: 'Agent Creation Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+      return;
+    }
+
+    await runWithAutoSignCheck('createAgentOnchain', async () => {
+      createPreparing.value = false;
+      await executeCreateStep(payload, { skipPreflight: true });
+    });
+  }
+
+  async function handleDeposit() {
+    if (!createdAgentId.value) return;
+    const amount = Number(fundAmount.value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showNotification({
+        type: 'error',
+        title: 'Invalid Amount',
+        message: 'Enter a valid amount greater than zero.',
+      });
+      return;
+    }
+
+    clearFundingFeedback();
+    try {
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Deposit Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+      return;
+    }
+
+    await runWithAutoSignCheck('depositShowcaseToken', async () => {
+      funding.value = true;
+      try {
+        const balanceBeforeDeposit = currentPaperBalance.value;
+        const autoSign = autoSignMgr.isEnabled('depositShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
+        await ensureOnchainAgent({ autoSign });
+        const result = await depositShowcaseToken(String(amount), { autoSign });
+        await refresh();
+        currentPaperBalance.value += amount;
+        await updateAgent(createdAgentId.value!, { paperBalance: currentPaperBalance.value });
+        await syncInitiaState('create-step-deposit');
+
+        const shouldAutoStart = balanceBeforeDeposit <= 0 && currentPaperBalance.value > 0;
+        let autoStartError: string | null = null;
+        if (shouldAutoStart) {
+          try {
+            await startAgent(createdAgentId.value!);
+          } catch (err) {
+            autoStartError = `Deposit succeeded, but auto-start failed: ${extractApiError(err)}`;
+          }
+          if (!autoStartError) {
+            request(`/api/agents/${createdAgentId.value!}/analyze`, {
+              method: 'POST',
+              silent: true,
+              timeout: 90_000,
+            }).catch((err) => {
+              console.warn('[create-flow] background initial analysis failed:', err);
+            });
+          }
+        }
+
+        const txSuffix = result.txHash ? ` tx: ${result.txHash}` : '';
+        if (autoStartError) {
+          showNotification({
+            type: 'error',
+            title: 'Deposit Completed With Warning',
+            message: `Deposited ${amount.toLocaleString()} iUSD-demo.${txSuffix}\n${autoStartError}`,
+            durationMs: 8_500,
+          });
+        } else {
+          showNotification({
+            type: 'success',
+            title: 'Deposit Successful',
+            message: `Deposited ${amount.toLocaleString()} iUSD-demo.${txSuffix}${shouldAutoStart ? ' Agent started and first analysis triggered.' : ''}`,
+          });
+        }
+      } catch (err) {
+        showNotification({
+          type: 'error',
+          title: 'Deposit Failed',
+          message: extractApiError(err),
+          durationMs: 8_000,
+        });
+      } finally {
+        funding.value = false;
+      }
+    });
+  }
+
+  async function handleWithdraw() {
+    if (!createdAgentId.value) return;
+    const amount = Number(fundAmount.value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showNotification({
+        type: 'error',
+        title: 'Invalid Amount',
+        message: 'Enter a valid amount greater than zero.',
+      });
+      return;
+    }
+
+    clearFundingFeedback();
+    withdrawing.value = true;
+    try {
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+      await ensureOnchainAgent();
+      const autoSign = autoSignMgr.isEnabled('withdrawShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
+      const result = await withdrawShowcaseToken(String(amount), { autoSign });
+      await refresh();
+      currentPaperBalance.value = Math.max(0, currentPaperBalance.value - amount);
+      await updateAgent(createdAgentId.value, { paperBalance: currentPaperBalance.value });
+      await syncInitiaState('create-step-withdraw');
+      showNotification({
+        type: 'success',
+        title: 'Withdraw Successful',
+        message: `Withdrew ${amount.toLocaleString()} iUSD-demo.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+      });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Withdraw Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+    } finally {
+      withdrawing.value = false;
+    }
+  }
+
+  async function handleBridge() {
+    clearFundingFeedback();
+    bridging.value = true;
+    try {
+      await ensureWalletConnected();
+      await openBridge({ srcChainId: BRIDGE_SRC_CHAIN_ID, srcDenom: BRIDGE_SRC_DENOM, quantity: '0' });
+      showNotification({
+        type: 'success',
+        title: 'Bridge Opened',
+        message: 'Bridge dialog opened. Continue the transfer flow in your wallet.',
+      });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Bridge Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+    } finally {
+      bridging.value = false;
+    }
+  }
+
+  async function handleMintFaucet() {
+    const amount = Number(faucetAmount.value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showNotification({
+        type: 'error',
+        title: 'Invalid Faucet Amount',
+        message: 'Enter a valid faucet amount greater than zero.',
+      });
+      return;
+    }
+
+    clearFundingFeedback();
+    mintingFaucet.value = true;
+    try {
+      await ensureWalletConnected();
+      await ensureTestGas({ silent: true });
+      const autoSign = autoSignMgr.isEnabled('mintShowcaseToken') && autoSignMgr.chainAutoSignGrantEnabled.value;
+      const result = await mintShowcaseToken(String(amount), { autoSign });
+      await refresh();
+      await syncInitiaState('create-step-mint-iusd-faucet');
+      showNotification({
+        type: 'success',
+        title: 'Faucet Mint Successful',
+        message: `Minted ${amount.toLocaleString()} iUSD-demo.${result.txHash ? ` tx: ${result.txHash}` : ''}`,
+      });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        title: 'Faucet Mint Failed',
+        message: extractApiError(err),
+        durationMs: 8_000,
+      });
+    } finally {
+      mintingFaucet.value = false;
+    }
+  }
+
+  function handleCancel() {
+    router.push('/agents');
+  }
+
+  function handleOpenAgent() {
+    if (!createdAgentId.value) return;
+    router.push(`/agents/${createdAgentId.value}`);
+  }
+
+  return {
+    step,
+    isPaper,
+    fundAmount,
+    faucetAmount,
+    createdAgentId,
+    currentPaperBalance,
+    createPreparing,
+    createBusy,
+    creating,
+    funding,
+    withdrawing,
+    bridging,
+    mintingFaucet,
+    toppingUpGas,
+    onchainStatus,
+    walletIusdDisplay,
+    walletGasDisplay,
+    shouldShowGasTopUpHelp,
+    fundingBusy,
+    consentModalOpen,
+    goToStep,
+    clearFundingFeedback,
+    handleConsentProceed,
+    handleConsentCancel,
+    handleNext,
+    handleDeposit,
+    handleWithdraw,
+    handleBridge,
+    handleMintFaucet,
+    handleCancel,
+    handleOpenAgent,
+  };
+}

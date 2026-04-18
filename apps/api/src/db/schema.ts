@@ -25,12 +25,21 @@ export const agents = sqliteTable('agents', {
   name: text('name').notNull(),
   status: text('status').notNull().default('stopped'),
   autonomyLevel: integer('autonomy_level').notNull(),
+  chain: text('chain').notNull().default('base'),
   config: text('config').notNull(),
   llmModel: text('llm_model').notNull(),
   ownerAddress: text('owner_address'),
   managerId: text('manager_id'),
   personaMd: text('persona_md'),
   profileId: text('profile_id'),
+  isPaper: integer('is_paper', { mode: 'boolean' }).notNull().default(false),
+  initiaWalletAddress: text('initia_wallet_address'),
+  initiaMetadataHash: text('initia_metadata_hash'),
+  initiaMetadataVersion: integer('initia_metadata_version'),
+  initiaLinkTxHash: text('initia_link_tx_hash'),
+  initiaLinkedAt: text('initia_linked_at'),
+  initiaSyncState: text('initia_sync_state'),
+  initiaLastSyncedAt: text('initia_last_synced_at'),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -65,7 +74,7 @@ export const trades = sqliteTable('trades', {
 
 export const agentDecisions = sqliteTable('agent_decisions', {
   id: text('id').primaryKey(),
-  agentId: text('agent_id').notNull(),
+  agentId: text('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
   decision: text('decision').notNull(),
   confidence: real('confidence').notNull(),
   reasoning: text('reasoning').notNull(),
@@ -82,7 +91,7 @@ export const agentDecisions = sqliteTable('agent_decisions', {
 
 export const performanceSnapshots = sqliteTable('performance_snapshots', {
   id: text('id').primaryKey(),
-  agentId: text('agent_id').notNull(),
+  agentId: text('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
   balance: real('balance').notNull(),
   totalPnlPct: real('total_pnl_pct').notNull(),
   winRate: real('win_rate').notNull(),
@@ -125,7 +134,7 @@ export const agentManagerLogs = sqliteTable('agent_manager_logs', {
 
 export const agentSelfModifications = sqliteTable('agent_self_modifications', {
   id:             text('id').primaryKey(),
-  agentId:        text('agent_id').notNull(),
+  agentId:        text('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
   decisionId:     text('decision_id').notNull(),
   reason:         text('reason').notNull(),
   changes:        text('changes').notNull(),

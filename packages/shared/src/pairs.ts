@@ -5,6 +5,7 @@
  * market-data providers can resolve reliably. We can make this dynamic later.
  */
 export const SUPPORTED_BASE_PAIRS = [
+  'INIT/USD',
   'WETH/USDC',
   'WETH/USDbC',
   'cbBTC/USDC',
@@ -29,4 +30,3 @@ export function filterSupportedBasePairs(pairs: string[]): string[] {
   }
   return out;
 }
-

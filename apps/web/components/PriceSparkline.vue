@@ -10,12 +10,14 @@ import {
   Filler,
   Tooltip,
 } from 'chart.js';
+import { formatCompactPrice } from '~/utils/formatting';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
 const props = defineProps<{
   chain: string;
   pairAddress: string;
+  pairName?: string;
   openTimestamps?: string[];
 }>();
 
@@ -23,8 +25,10 @@ const { request } = useApi();
 
 const timeframe = ref<'1h' | '4h' | '1d'>('1h');
 const candles = ref<Array<{ t: number; o: number; h: number; l: number; c: number }>>([]);
+const dataSource = ref<'coingecko' | 'coinpaprika' | 'geckoterminal' | 'demo' | 'none' | ''>('');
 const loading = ref(false);
 const error = ref(false);
+const isDemoData = computed(() => dataSource.value === 'demo');
 
 const currentPrice = computed(() => {
   if (candles.value.length === 0) return null;
@@ -46,29 +50,38 @@ const priceChangePct = computed(() => {
 });
 
 async function fetchOHLCV() {
-  if (!props.pairAddress) return;
   loading.value = true;
   error.value = false;
   try {
-    const data = await request<{ candles: typeof candles.value }>(
-      `/api/pairs/${props.chain}/${props.pairAddress}/ohlcv?timeframe=${timeframe.value}`,
-    );
+    const endpoint = props.pairAddress
+      ? `/api/pairs/${props.chain}/${props.pairAddress}/ohlcv?timeframe=${timeframe.value}`
+      : props.pairName
+      ? `/api/pairs/ohlcv?pair=${encodeURIComponent(props.pairName)}&timeframe=${timeframe.value}`
+      : '';
+    if (!endpoint) {
+      candles.value = [];
+      return;
+    }
+
+    const data = await request<{
+      candles: typeof candles.value;
+      source?: 'coingecko' | 'coinpaprika' | 'geckoterminal' | 'demo' | 'none';
+    }>(endpoint);
     candles.value = data.candles;
+    dataSource.value = data.source ?? (props.pairAddress ? 'geckoterminal' : '');
   } catch {
     error.value = true;
     candles.value = [];
+    dataSource.value = '';
   } finally {
     loading.value = false;
   }
 }
 
-watch([() => props.pairAddress, timeframe], () => fetchOHLCV(), { immediate: true });
+watch([() => props.pairAddress, () => props.pairName, timeframe], () => fetchOHLCV(), { immediate: true });
 
 function formatPrice(price: number): string {
-  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (price >= 1) return price.toFixed(4);
-  if (price >= 0.0001) return price.toFixed(6);
-  return price.toExponential(3);
+  return formatCompactPrice(price);
 }
 
 function formatTime(ts: number): string {
@@ -251,6 +264,9 @@ const tfLabels: Record<string, string> = { '1h': '1H', '4h': '4H', '1d': '1D' };
 
     <!-- Chart -->
     <div class="sparkline-chart" :class="{ 'sparkline-loading': loading }">
+      <div v-if="candles.length > 0 && isDemoData" class="sparkline-source-badge mono" title="Using fallback demo price series">
+        Demo data
+      </div>
       <Line v-if="candles.length > 0" :data="chartData" :options="chartOptions" />
       <div v-else-if="error" class="sparkline-empty">Failed to load</div>
       <div v-else-if="loading" class="sparkline-empty">Loading...</div>
@@ -337,5 +353,20 @@ const tfLabels: Record<string, string> = { '1h': '1H', '4h': '4H', '1d': '1D' };
   font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+}
+
+.sparkline-source-badge {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 2;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 999px;
+  color: #a36c10;
+  background: rgba(245, 166, 35, 0.18);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  letter-spacing: 0.03em;
 }
 </style>

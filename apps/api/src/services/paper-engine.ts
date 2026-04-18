@@ -1,4 +1,16 @@
 import { generateId, nowIso } from '../lib/utils.js';
+import type { PerpPositionState } from '../agents/perp-state-machine.js';
+
+const MAX_PRICE_SCALE_RATIO = 1_000_000;
+
+function isPositiveFiniteNumber(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function hasComparablePriceScale(referencePrice: number, marketPrice: number): boolean {
+  if (!isPositiveFiniteNumber(referencePrice) || !isPositiveFiniteNumber(marketPrice)) return false;
+  return Math.abs(Math.log(referencePrice) - Math.log(marketPrice)) <= Math.log(MAX_PRICE_SCALE_RATIO);
+}
 
 export interface Position {
   id: string;
@@ -56,12 +68,29 @@ export interface PaperEngineState {
   lastDailyReset: string;
 }
 
+export function hasValidPositionPricing(position: Pick<Position, 'entryPrice' | 'effectiveEntryPrice' | 'tokenAmount'>): boolean {
+  return isPositiveFiniteNumber(position.entryPrice)
+    && isPositiveFiniteNumber(position.effectiveEntryPrice)
+    && isPositiveFiniteNumber(position.tokenAmount);
+}
+
+export function isPositionPricingSaneForMarket(
+  position: Pick<Position, 'entryPrice' | 'effectiveEntryPrice' | 'tokenAmount'>,
+  marketPrice: number,
+): boolean {
+  return hasValidPositionPricing(position)
+    && hasComparablePriceScale(position.entryPrice, marketPrice)
+    && hasComparablePriceScale(position.effectiveEntryPrice, marketPrice);
+}
+
 export class PaperEngine {
   private state: PaperEngineState;
   private slippagePct: number;
+  private mode: 'long-short' | 'spot-only';
 
-  constructor(params: { balance: number; slippage: number }) {
+  constructor(params: { balance: number; slippage: number; mode?: 'long-short' | 'spot-only' }) {
     this.slippagePct = params.slippage / 100; // convert 0.3% → 0.003
+    this.mode = params.mode ?? 'long-short';
     this.state = {
       balance: params.balance,
       initialBalance: params.balance,
@@ -84,8 +113,23 @@ export class PaperEngine {
     return this.state.closedPositions;
   }
 
+  /** Returns LONG, SHORT or FLAT based on open positions. */
+  getCurrentPositionState(pair: string): PerpPositionState {
+    const openBuy = Array.from(this.state.openPositions.values()).find(
+      (p) => p.pair === pair && p.side === 'buy',
+    );
+    const openSell = Array.from(this.state.openPositions.values()).find(
+      (p) => p.pair === pair && p.side === 'sell',
+    );
+    return openBuy ? 'LONG' : openSell ? 'SHORT' : 'FLAT';
+  }
+
   /** Open a new paper position. Throws if constraints are violated. */
   openPosition(params: OpenPositionParams): Position {
+    if (this.mode === 'spot-only' && params.side === 'sell') {
+      throw new Error('spot-only mode: short positions are not allowed');
+    }
+
     if (params.amountUsd > this.state.balance) {
       throw new Error(
         `Insufficient balance: $${this.state.balance.toFixed(2)} < $${params.amountUsd.toFixed(2)}`
@@ -106,6 +150,10 @@ export class PaperEngine {
       throw new Error('Position amount must be positive');
     }
 
+    if (!isPositiveFiniteNumber(params.price)) {
+      throw new Error('Position price must be a positive finite number');
+    }
+
     // Apply slippage (buy at slightly higher price, sell at slightly lower)
     const slippage = params.slippagePct !== undefined
       ? params.slippagePct / 100
@@ -116,7 +164,15 @@ export class PaperEngine {
         ? params.price * (1 + slippage)
         : params.price * (1 - slippage);
 
+    if (!isPositiveFiniteNumber(effectiveEntryPrice)) {
+      throw new Error('Effective entry price must be a positive finite number');
+    }
+
     const tokenAmount = params.amountUsd / effectiveEntryPrice;
+
+    if (!isPositiveFiniteNumber(tokenAmount)) {
+      throw new Error('Position token amount must be a positive finite number');
+    }
 
     const position: Position = {
       id: generateId('pos'),
@@ -153,6 +209,29 @@ export class PaperEngine {
       throw new Error(`Position ${positionId} not found or already closed`);
     }
 
+    if (!isPositiveFiniteNumber(params.price)) {
+      throw new Error('Close price must be a positive finite number');
+    }
+
+    if (!isPositionPricingSaneForMarket(position, params.price)) {
+      const closed: Position = {
+        ...position,
+        status: 'closed',
+        closeReason: params.closeReason,
+        exitPrice: params.price,
+        effectiveExitPrice: params.price,
+        pnlPct: 0,
+        pnlUsd: 0,
+        confidenceAfter: params.confidence,
+        closedAt: nowIso(),
+      };
+
+      this.state.balance += position.amountUsd;
+      this.state.openPositions.delete(positionId);
+      this.state.closedPositions.push(closed);
+      return closed;
+    }
+
     // Apply slippage on exit (inverse of entry)
     const effectiveExitPrice =
       position.side === 'buy'
@@ -173,7 +252,8 @@ export class PaperEngine {
     } else {
       // Shorted (sold), now buying back
       const buyBackCost = position.tokenAmount * effectiveExitPrice;
-      proceedsUsd = position.amountUsd * 2 - buyBackCost;
+      // Clamp to 0: if price rose past 2× entry the collateral is fully lost, balance cannot go negative
+      proceedsUsd = Math.max(0, position.amountUsd * 2 - buyBackCost);
       pnlPct =
         ((position.effectiveEntryPrice - effectiveExitPrice) /
           position.effectiveEntryPrice) *
@@ -221,6 +301,7 @@ export class PaperEngine {
     currentPrice: number,
     stopLossPct: number
   ): boolean {
+    if (!isPositionPricingSaneForMarket(position, currentPrice)) return false;
     const threshold = stopLossPct / 100;
     const effectiveExit = this.effectiveExitPrice(position, currentPrice);
     if (position.side === 'buy') {
@@ -242,6 +323,7 @@ export class PaperEngine {
     currentPrice: number,
     takeProfitPct: number
   ): boolean {
+    if (!isPositionPricingSaneForMarket(position, currentPrice)) return false;
     const threshold = takeProfitPct / 100;
     const effectiveExit = this.effectiveExitPrice(position, currentPrice);
     if (position.side === 'buy') {
@@ -257,13 +339,17 @@ export class PaperEngine {
     }
   }
 
-  /** Calculate daily P&L percentage */
-  getDailyPnlPct(): number {
+  /** Reset daily tracking if the calendar date has changed. Call once per tick before reading getDailyPnlPct(). */
+  resetDailyTrackingIfNeeded(): void {
     const today = nowIso().slice(0, 10);
     if (today !== this.state.lastDailyReset) {
       this.state.dailyStartBalance = this.state.balance;
       this.state.lastDailyReset = today;
     }
+  }
+
+  /** Calculate daily P&L percentage. Call resetDailyTrackingIfNeeded() once per tick before reading this. */
+  getDailyPnlPct(): number {
     return (
       ((this.state.balance - this.state.dailyStartBalance) /
         this.state.dailyStartBalance) *
@@ -297,6 +383,7 @@ export class PaperEngine {
     dailyStartBalance: number;
     lastDailyReset: string;
     slippagePct: number;
+    mode: 'long-short' | 'spot-only';
   } {
     return {
       balance: this.state.balance,
@@ -306,6 +393,7 @@ export class PaperEngine {
       dailyStartBalance: this.state.dailyStartBalance,
       lastDailyReset: this.state.lastDailyReset,
       slippagePct: this.slippagePct * 100,
+      mode: this.mode,
     };
   }
 
@@ -314,6 +402,7 @@ export class PaperEngine {
     const engine = new PaperEngine({
       balance: data.balance,
       slippage: data.slippagePct,
+      mode: data.mode,
     });
     engine.state.initialBalance = data.initialBalance;
     engine.state.dailyStartBalance = data.dailyStartBalance;

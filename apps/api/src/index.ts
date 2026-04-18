@@ -17,6 +17,10 @@ import { getSession, parseCookieValue } from './lib/auth.js';
 import comparisonRoute from './routes/comparison.js';
 import managersRoute from './routes/managers.js';
 import profilesRoute from './routes/profiles.js';
+import { ValidationError } from './lib/validation.js';
+import { drizzle } from 'drizzle-orm/d1';
+import { agents } from './db/schema.js';
+import { eq } from 'drizzle-orm';
 
 // Export Durable Object class (required for Workers runtime to register it)
 export { TradingAgentDO } from './agents/trading-agent.js';
@@ -62,6 +66,13 @@ const defaultOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:3002',
+  'http://localhost:4173',
+  'http://localhost:5173',
+  'http://127.0.0.1:4173',
+  'http://127.0.0.1:5173',
+  'http://0.0.0.0:4173',
+  'http://0.0.0.0:5173',
+  'https://init-root.pages.dev',
   'https://something-in-loop.pages.dev',
 ];
 app.use(
@@ -139,7 +150,7 @@ app.get('/api/models', async (c) => {
 // Root catch-all
 app.get('/', (c) =>
   c.json({
-    name: 'Something in loop API',
+    name: 'initRoot API',
     version: '0.1.0',
     docs: '/api/health',
     routes: [
@@ -153,6 +164,10 @@ app.get('/', (c) =>
       'POST /api/agents',
       'GET  /api/agents/:id',
       'PATCH /api/agents/:id',
+      'POST /api/agents/:id/initia/link',
+      'POST /api/agents/:id/initia/sync',
+      'GET  /api/agents/:id/initia/status',
+      'POST /api/agents/initia/test-gas',
       'DELETE /api/agents/:id',
       'POST /api/agents/:id/start',
       'POST /api/agents/:id/stop',
@@ -181,6 +196,15 @@ app.get('/', (c) =>
 app.notFound((c) => c.json({ error: 'Not Found' }, 404));
 
 app.onError((err, c) => {
+  if (err instanceof ValidationError) {
+    return c.json(
+      {
+        error: err.message,
+        fieldErrors: err.fieldErrors ?? {},
+      },
+      400
+    );
+  }
   console.error('Unhandled error:', err);
   return c.json({ error: 'Internal Server Error' }, 500);
 });
@@ -214,16 +238,13 @@ async function handleAgentWebSocket(request: Request, env: Env): Promise<Respons
 
   // Verify agent ownership before proxying to DO
   try {
-    const { drizzle } = await import('drizzle-orm/d1');
-    const { agents } = await import('./db/schema.js');
-    const { eq, or, isNull } = await import('drizzle-orm');
     const db = drizzle(env.DB);
     const [agent] = await db
       .select({ ownerAddress: agents.ownerAddress })
       .from(agents)
       .where(eq(agents.id, agentId));
     if (!agent) return new Response('Agent Not Found', { status: 404 });
-    if (agent.ownerAddress && agent.ownerAddress.toLowerCase() !== session.walletAddress.toLowerCase()) {
+    if (!agent.ownerAddress || agent.ownerAddress.toLowerCase() !== session.walletAddress.toLowerCase()) {
       return new Response('Forbidden', { status: 403 });
     }
   } catch (err) {

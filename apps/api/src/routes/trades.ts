@@ -9,7 +9,7 @@ import { validateQuery } from '../lib/validation.js';
 
 const tradesRoute = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
-/** Shared ownership check: owns or legacy unowned */
+/** Shared ownership check: agent must belong to the authenticated wallet. */
 async function requireAgentOwnership(
   db: ReturnType<typeof drizzle>,
   agentId: string,
@@ -17,7 +17,8 @@ async function requireAgentOwnership(
 ): Promise<typeof agents.$inferSelect | null> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
   if (!agent) return null;
-  if (agent.ownerAddress && agent.ownerAddress !== walletAddress) return null;
+  if (!agent.ownerAddress) return null;
+  if (agent.ownerAddress.toLowerCase() !== walletAddress.toLowerCase()) return null;
   return agent;
 }
 
@@ -28,6 +29,7 @@ tradesRoute.get('/', async (c) => {
     z.object({
       status: z.enum(['open', 'closed']).optional(),
       pair: z.string().optional(),
+      isPaper: z.enum(['true', 'false']).optional(),
       limit: z.coerce.number().min(1).max(500).default(100),
     })
   );
@@ -37,10 +39,14 @@ tradesRoute.get('/', async (c) => {
 
   // Look up the caller's agents and scope trades to those IDs to avoid
   // leaking other users' trade history in multi-tenant deployments.
+  const agentFilter = [eq(agents.ownerAddress, walletAddress)] as ReturnType<typeof eq>[];
+  if (query.isPaper === 'true') agentFilter.push(eq(agents.isPaper, true));
+  else if (query.isPaper === 'false') agentFilter.push(eq(agents.isPaper, false));
+
   const ownedAgents = await db
     .select({ id: agents.id })
     .from(agents)
-    .where(eq(agents.ownerAddress, walletAddress));
+    .where(and(...agentFilter));
 
   if (ownedAgents.length === 0) {
     return c.json({ trades: [], count: 0 });
@@ -74,6 +80,7 @@ tradesRoute.get('/', async (c) => {
       openedAt: trades.openedAt,
       closedAt: trades.closedAt,
       agentName: agents.name,
+      isPaper: agents.isPaper,
     })
     .from(trades)
     .innerJoin(agents, eq(trades.agentId, agents.id))
@@ -122,11 +129,16 @@ tradesRoute.post('/:id/close', async (c) => {
 tradesRoute.get('/stats', async (c) => {
   const walletAddress = c.get('walletAddress');
   const db = drizzle(c.env.DB);
+  const isPaperParam = c.req.query('isPaper');
+
+  const agentFilter = [eq(agents.ownerAddress, walletAddress)] as ReturnType<typeof eq>[];
+  if (isPaperParam === 'true') agentFilter.push(eq(agents.isPaper, true));
+  else if (isPaperParam === 'false') agentFilter.push(eq(agents.isPaper, false));
 
   const ownedAgents = await db
     .select({ id: agents.id })
     .from(agents)
-    .where(eq(agents.ownerAddress, walletAddress));
+    .where(and(...agentFilter));
 
   if (ownedAgents.length === 0) {
     return c.json({ totalTrades: 0, openTrades: 0, closedTrades: 0, winRate: 0, totalPnlUsd: 0, avgPnlPct: 0 });

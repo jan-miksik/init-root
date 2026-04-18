@@ -22,6 +22,7 @@ const showDropdown = ref(false);
 const allPairs = ref(false);
 
 const POPULAR_PAIRS = [
+  'INIT/USD',
   'WETH/USDC',
   'cbBTC/WETH',
   'AERO/USDC',
@@ -106,7 +107,7 @@ function toggleAllPairs() {
   if (allPairs.value) {
     emit('update:modelValue', ['*']);
   } else {
-    emit('update:modelValue', ['WETH/USDC']);
+    emit('update:modelValue', ['INIT/USD']);
   }
 }
 

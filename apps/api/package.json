@@ -2,6 +2,7 @@
   "name": "@something-in-loop/api",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev --port 8787 --ip 0.0.0.0",
@@ -11,7 +12,7 @@
     "test:watch": "vitest",
     "migration:create": "wrangler d1 migrations create trading-agents",
     "migration:apply:local": "wrangler d1 migrations apply trading-agents --local",
-    "migration:apply": "wrangler d1 migrations apply trading-agents"
+    "migration:apply": "wrangler d1 migrations apply trading-agents --remote"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",

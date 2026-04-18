@@ -1,6 +1,7 @@
 # Service-only Worker: do NOT add routes. Access only via Cloudflare Pages Service Binding.
 # No custom domain, no workers.dev exposure — keeps the API internal and more secure.
 name = "something-in-loop-api"
+workers_dev = false
 # Built from monorepo root so node_modules and @something-in-loop/shared resolve (see build command)
 main = "dist/worker.js"
 compatibility_date = "2026-02-12"
@@ -17,9 +18,8 @@ cwd = "../.."
 [triggers]
 crons = ["0 * * * *"]
 
-# Local-only vars — never set PLAYWRIGHT_SECRET in [env.production]
-[vars]
-PLAYWRIGHT_SECRET = "playwright-dev-secret"
+# Local secrets should live in apps/api/.dev.vars.
+# Do not set PLAYWRIGHT_SECRET in production.
 
 [[d1_databases]]
 binding = "DB"

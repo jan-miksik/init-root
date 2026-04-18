@@ -6,14 +6,16 @@ import { TRADES_LIST_PREFIX, TRADES_STATS_KEY } from './cacheKeys';
 
 const TRADES_TTL = 15 * 60 * 1000; // 15 min
 
-function tradesKey(params?: { status?: string; limit?: number }): string {
-  return `${TRADES_LIST_PREFIX}${params?.status ?? ''}:${params?.limit ?? ''}`;
+function tradesKey(params?: { status?: string; limit?: number; isPaper?: boolean }): string {
+  const paperKey = params?.isPaper === undefined ? 'all' : params.isPaper ? 'paper' : 'real';
+  return `${TRADES_LIST_PREFIX}${params?.status ?? ''}:${params?.limit ?? ''}:${paperKey}`;
 }
 
 export interface Trade {
   id: string;
   agentId: string;
   agentName?: string;
+  isPaper?: boolean;
   pair: string;
   dex: string;
   side: 'buy' | 'sell';
@@ -53,6 +55,7 @@ export function useTrades() {
     params?: {
       status?: string;
       limit?: number;
+      isPaper?: boolean;
     },
     opts?: { force?: boolean }
   ) {
@@ -68,6 +71,7 @@ export function useTrades() {
       const query = new URLSearchParams();
       if (params?.status) query.set('status', params.status);
       if (params?.limit) query.set('limit', String(params.limit));
+      if (params?.isPaper !== undefined) query.set('isPaper', String(params.isPaper));
       const qs = query.toString() ? `?${query.toString()}` : '';
       const res = await request<{ trades: Trade[] }>(`/api/trades${qs}`);
       cache.set(key, res, TRADES_TTL);
@@ -79,15 +83,21 @@ export function useTrades() {
     }
   }
 
-  async function fetchStats(opts?: { force?: boolean }) {
+  async function fetchStats(opts?: { force?: boolean; isPaper?: boolean }) {
     try {
-      const cached = opts?.force ? null : cache.get<TradeStats>(TRADES_STATS_KEY);
+      const cacheKey = opts?.isPaper === true
+        ? `${TRADES_STATS_KEY}:paper`
+        : opts?.isPaper === false
+          ? `${TRADES_STATS_KEY}:real`
+          : TRADES_STATS_KEY;
+      const cached = opts?.force ? null : cache.get<TradeStats>(cacheKey);
       if (cached && !opts?.force) {
         stats.value = cached;
         return;
       }
-      const result = await request<TradeStats>('/api/trades/stats');
-      cache.set(TRADES_STATS_KEY, result, TRADES_TTL);
+      const qs = opts?.isPaper !== undefined ? `?isPaper=${opts.isPaper}` : '';
+      const result = await request<TradeStats>(`/api/trades/stats${qs}`);
+      cache.set(cacheKey, result, TRADES_TTL);
       stats.value = result;
     } catch (e) {
       error.value = extractApiError(e);

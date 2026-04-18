@@ -49,7 +49,7 @@ export function useSelfModifications() {
   );
 
   const modDecisionIds = computed(
-    () => new Set(modifications.value.map((m) => m.decisionId).filter(Boolean)),
+    () => new Set(modifications.value.flatMap((m) => (m.decisionId ? [m.decisionId] : []))),
   );
 
   return {

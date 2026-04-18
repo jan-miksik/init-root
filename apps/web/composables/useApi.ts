@@ -50,13 +50,28 @@ export function useApi() {
   ): Promise<T> {
     const { silent, fresh, ...rest } = (options ?? {}) as Record<string, unknown> & { silent?: boolean; fresh?: boolean };
     const method = (rest?.method as string) ?? 'GET';
+    const normalizedMethod = method.toUpperCase();
+    const shouldBypassCache = fresh === true && (normalizedMethod === 'GET' || normalizedMethod === 'HEAD');
+    const freshSuffix = shouldBypassCache
+      ? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+      : '';
+    const url = shouldBypassCache
+      ? `${base}${path}${path.includes('?') ? '&' : '?'}_fresh=${freshSuffix}`
+      : `${base}${path}`;
     try {
-      const res = await $fetch<T>(`${base}${path}`, {
+      const res = await $fetch<T>(url, {
         ...rest,
         timeout: (rest?.timeout as number) ?? DEFAULT_TIMEOUT_MS,
+        ...(shouldBypassCache ? { cache: 'no-store' as RequestCache } : {}),
         headers: {
           'Content-Type': 'application/json',
-          ...(fresh ? { 'Cache-Control': 'no-cache' } : {}),
+          ...(shouldBypassCache
+            ? {
+                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                Pragma: 'no-cache',
+                Expires: '0',
+              }
+            : {}),
           ...((rest?.headers as Record<string, string>) ?? {}),
         },
       } as Parameters<typeof $fetch>[1]);

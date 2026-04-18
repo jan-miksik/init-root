@@ -10,6 +10,11 @@ dist/
 apps/*/node_modules/
 packages/*/node_modules/
 .worktrees/
+.DS_Store
+.playwright-cli/
+contracts/broadcast/
+.api.log
+.web.log
 
 # Playwright
 e2e/.auth/user.json

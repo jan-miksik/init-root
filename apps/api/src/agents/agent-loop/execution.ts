@@ -1,10 +1,14 @@
 import { drizzle } from 'drizzle-orm/d1';
-import { agentDecisions, trades } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { agentDecisions, agents, trades } from '../../db/schema.js';
 import { generateId, nowIso } from '../../lib/utils.js';
 import { normalizePairForDex } from '../../lib/pairs.js';
 import { createLogger } from '../../lib/logger.js';
 import { getTradeDecision } from '../../services/llm-router.js';
+import { tryExecuteInitiaTick } from '../../services/initia-executor.js';
 import { PaperEngine, type Position } from '../../services/paper-engine.js';
+import { resolveCurrentPriceUsd } from '../../services/price-resolver.js';
+import type { Env } from '../../types/env.js';
 import type { MarketDataItem, RecentDecision } from './types.js';
 
 export type ExecuteDecisionParams = {
@@ -20,11 +24,33 @@ export type ExecuteDecisionParams = {
   dexes: string[];
   strategies: string[];
   slippageSimulation: number;
+  /** Agent chain — passed from cached agent row to avoid an extra D1 query. */
+  chain?: string | null;
+  /** Whether agent is in paper mode — passed from cached agent row to avoid an extra D1 query. */
+  isPaper?: boolean | null;
+  env: Env;
   db: ReturnType<typeof drizzle>;
   ctx: DurableObjectState;
   tickStart?: number;
   log: ReturnType<typeof createLogger>;
 };
+
+const SNAPSHOT_MAX_BYTES = 8192;
+function snapshotMarketData(data: unknown): string {
+  const full = JSON.stringify(data);
+  return full.length > SNAPSHOT_MAX_BYTES ? full.slice(0, SNAPSHOT_MAX_BYTES) : full;
+}
+
+function parseInitiaSyncState(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Execute a trade decision returned by the LLM.
@@ -46,6 +72,9 @@ export async function executeTradeDecision(
     dexes,
     strategies,
     slippageSimulation,
+    chain,
+    isPaper,
+    env,
     db,
     ctx,
     tickStart,
@@ -63,6 +92,20 @@ export async function executeTradeDecision(
     executionNote = `Execution: skipped (already at max open positions: ${engine.openPositions.length}/${maxOpenPositions}).`;
   }
 
+  // Only fetch initiaSyncState from D1 when running an Initia onchain agent.
+  // chain/isPaper come from the cached agent row passed by the caller.
+  const shouldAttemptOnchain = chain === 'initia' && !isPaper;
+  let initiaSyncState: Record<string, unknown> | null = null;
+  if (shouldAttemptOnchain) {
+    const [agentRow] = await db
+      .select({ initiaSyncState: agents.initiaSyncState })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    initiaSyncState = parseInitiaSyncState(agentRow?.initiaSyncState ?? null);
+  }
+  let executedPaperTrade = false;
+
   const decisionId = generateId('dec');
   await db.insert(agentDecisions).values({
     id: decisionId,
@@ -75,7 +118,7 @@ export async function executeTradeDecision(
     llmTokensUsed: decision.tokensUsed,
     llmPromptTokens: decision.tokensIn ?? null,
     llmCompletionTokens: decision.tokensOut ?? null,
-    marketDataSnapshot: JSON.stringify(marketData),
+    marketDataSnapshot: snapshotMarketData(marketData),
     llmPromptText: decision.llmPromptText ?? null,
     llmRawResponse: decision.llmRawResponse ?? null,
     createdAt: nowIso(),
@@ -124,6 +167,23 @@ export async function executeTradeDecision(
       return;
     }
 
+    // The marketData snapshot may be up to 1h old (KV cache) or up to 5 min
+    // frozen inside pendingLlmContext on the queued /receive-decision path.
+    // Re-resolve at open-time so entryPrice reflects the true current price.
+    let entryPriceUsd = 0;
+    try {
+      entryPriceUsd = await resolveCurrentPriceUsd(env, targetPairName, { bypassCache: true });
+    } catch (err) {
+      console.warn(`[agent-loop] ${agentId}: Fresh price resolve threw for ${targetPairName}:`, err);
+    }
+    if (entryPriceUsd <= 0) {
+      console.warn(
+        `[agent-loop] ${agentId}: Fresh price unavailable for ${targetPairName}; skipping open to avoid stale entry.`,
+      );
+      log.info('trade_open_skipped', { pair: targetPairName, reason: 'fresh_price_unavailable' });
+      return;
+    }
+
     const positionSizePct = Math.min(decision.suggestedPositionSizePct ?? 10, maxPositionSizePct);
     const amountUsd = (engine.balance * positionSizePct) / 100;
 
@@ -133,7 +193,7 @@ export async function executeTradeDecision(
         pair: targetPairName,
         dex: dexes[0] ?? 'aerodrome',
         side: decision.action as 'buy' | 'sell',
-        price: pairData.priceUsd,
+        price: entryPriceUsd,
         amountUsd,
         maxPositionSizePct,
         balance: engine.balance,
@@ -149,10 +209,12 @@ export async function executeTradeDecision(
         pair: targetPairName,
         side: decision.action,
         amount_usd: amountUsd,
-        price_usd: pairData.priceUsd,
+        price_usd: entryPriceUsd,
+        quoted_price_usd: pairData.priceUsd,
         position_size_pct: positionSizePct,
         confidence: decision.confidence,
       });
+      executedPaperTrade = true;
       broadcastAgentEvent(ctx, {
         type: 'trade',
         event: 'open',
@@ -160,16 +222,17 @@ export async function executeTradeDecision(
         pair: targetPairName,
         side: decision.action,
         amountUsd,
-        priceUsd: pairData.priceUsd,
+        priceUsd: entryPriceUsd,
         balance: engine.balance,
         openPositions: engine.openPositions.length,
       });
-      console.log(`[agent-loop] ${agentId}: Opened ${decision.action} ${targetPairName} $${amountUsd.toFixed(2)} @ $${pairData.priceUsd}`);
+      console.log(`[agent-loop] ${agentId}: Opened ${decision.action} ${targetPairName} $${amountUsd.toFixed(2)} @ $${entryPriceUsd}`);
     } catch (err) {
       console.error(`[agent-loop] ${agentId}: Failed to open position:`, err);
       log.error('trade_open_failed', { pair: targetPairName, side: decision.action, error: String(err) });
     }
   } else if (decision.action === 'close' && engine.openPositions.length > 0) {
+    let closedAnyPosition = false;
     for (const position of engine.openPositions) {
       const pairData = marketData.find((m) => m.pair === position.pair);
       if (!pairData) continue;
@@ -204,9 +267,23 @@ export async function executeTradeDecision(
           openPositions: engine.openPositions.length,
         });
         console.log(`[agent-loop] ${agentId}: Closed ${position.pair} PnL=${closed.pnlPct?.toFixed(2)}%`);
+        closedAnyPosition = true;
       } catch (err) {
         console.warn(`[agent-loop] ${agentId}: Failed to close position:`, err);
       }
+    }
+    if (closedAnyPosition) executedPaperTrade = true;
+  }
+
+  if (shouldAttemptOnchain && wantsTrade && meetsConfidence && executedPaperTrade) {
+    const onchainResult = await tryExecuteInitiaTick({
+      env,
+      log,
+      agentId,
+      syncState: initiaSyncState,
+    });
+    if (!onchainResult.executed) {
+      log.info('initia_tick_skipped', { reason: onchainResult.reason ?? 'unknown' });
     }
   }
 

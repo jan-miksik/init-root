@@ -29,9 +29,14 @@ describe('AgentConfigSchema — boundaries', () => {
     expect(r.success).toBe(true);
   });
 
-  it('rejects paperBalance below minimum (100)', () => {
-    const r = AgentConfigSchema.safeParse({ name: 'Test', paperBalance: 50 });
+  it('rejects paperBalance below minimum (0)', () => {
+    const r = AgentConfigSchema.safeParse({ name: 'Test', paperBalance: -1 });
     expect(r.success).toBe(false);
+  });
+
+  it('accepts paperBalance at minimum (0)', () => {
+    const r = AgentConfigSchema.safeParse({ name: 'Test', paperBalance: 0 });
+    expect(r.success).toBe(true);
   });
 
   it('rejects paperBalance above maximum (1_000_000)', () => {
@@ -122,6 +127,21 @@ describe('AgentConfigSchema — defaults', () => {
 
   it('defaults chain to base', () => {
     expect(parsed.chain).toBe('base');
+  });
+
+  it('accepts initia chain + initia metadata fields', () => {
+    const r = AgentConfigSchema.safeParse({
+      name: 'Initia Agent',
+      chain: 'initia',
+      initiaWalletAddress: 'init1abcdefghijklmn1234567890',
+      initiaMetadataHash: '0xabc123456789',
+      initiaMetadataVersion: 1,
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.chain).toBe('initia');
+      expect(r.data.initiaWalletAddress).toBe('init1abcdefghijklmn1234567890');
+    }
   });
 
   it('defaults allowFallback to false', () => {
