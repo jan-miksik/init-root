@@ -26,6 +26,9 @@ const MANAGER_LLM_TIMEOUT_MS = 60_000; // generous for manager's larger prompt
 /** Run one full manager decision cycle */
 export async function runManagerLoop(managerId: string, env: Env, ctx: DurableObjectState): Promise<void> {
   const db = drizzle(env.DB);
+  // Manager always needs fresh market data — stale KV cache would produce
+  // outdated prices for a decision that may reconfigure running agents.
+  const bypassCache = true;
   try {
     await db.run(sql`PRAGMA foreign_keys = ON`);
   } catch {
@@ -123,8 +126,8 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
 
   const allPairs = [...new Set(agentSnapshots.flatMap((a) => a.config.pairs))].slice(0, 5);
 
-  const geckoSvc = createGeckoTerminalService(env.CACHE);
-  const dexSvc = createDexDataService(env.CACHE);
+  const geckoSvc = createGeckoTerminalService(env.CACHE, { bypassCache });
+  const dexSvc = createDexDataService(env.CACHE, { bypassCache });
   const marketData: Array<{ pair: string; priceUsd: number; priceChange: Record<string, number | undefined> }> = [];
 
   for (const pairName of allPairs) {
@@ -164,7 +167,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
       }
     }
 
-    const coinGeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName);
+    const coinGeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName, { bypassCache });
     if (coinGeckoCtx && coinGeckoCtx.spotUsd > 0) {
       marketData.push({
         pair: pairName,
@@ -174,7 +177,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
       continue;
     }
 
-    const coinPaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName);
+    const coinPaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName, { bypassCache });
     if (coinPaprikaCtx && coinPaprikaCtx.spotUsd > 0) {
       marketData.push({
         pair: pairName,

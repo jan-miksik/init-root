@@ -7,21 +7,25 @@ import {
   fetchJsonWithTimeout,
   resolveCoinGeckoCoinIdForPair,
   sanitizeSeries,
+  type CacheOptions,
   type CoinGeckoMarketChartResponse,
   type CoinGeckoMarketContext,
 } from './shared.js';
 
 /** Fetch spot USD price for a CoinGecko coin id. Returns 0 on failure. */
-export async function fetchCoinGeckoSpotUsd(env: Env, coinId: string): Promise<number> {
+export async function fetchCoinGeckoSpotUsd(env: Env, coinId: string, options?: CacheOptions): Promise<number> {
   const cacheKey = `coingecko:spot:${coinId}:usd`;
-  try {
-    const cached = await env.CACHE.get(cacheKey, 'text');
-    if (cached) {
-      const parsed = Number.parseFloat(cached);
-      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  const bypassCache = options?.bypassCache === true;
+  if (!bypassCache) {
+    try {
+      const cached = await env.CACHE.get(cacheKey, 'text');
+      if (cached) {
+        const parsed = Number.parseFloat(cached);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+    } catch {
+      // non-fatal
     }
-  } catch {
-    // non-fatal
   }
 
   const json = await fetchJsonWithTimeout(
@@ -45,13 +49,17 @@ async function fetchCoinGeckoMarketChart(
   coinId: string,
   days: 2 | 30,
   interval: 'hourly' | 'daily',
+  options?: CacheOptions,
 ): Promise<CoinGeckoMarketChartResponse | null> {
   const cacheKey = `coingecko:chart:${coinId}:usd:${days}d:${interval}`;
-  try {
-    const cached = await env.CACHE.get(cacheKey, 'json');
-    if (cached && typeof cached === 'object') return cached as CoinGeckoMarketChartResponse;
-  } catch {
-    // non-fatal
+  const bypassCache = options?.bypassCache === true;
+  if (!bypassCache) {
+    try {
+      const cached = await env.CACHE.get(cacheKey, 'json');
+      if (cached && typeof cached === 'object') return cached as CoinGeckoMarketChartResponse;
+    } catch {
+      // non-fatal
+    }
   }
 
   let json = await fetchJsonWithTimeout(
@@ -78,23 +86,24 @@ async function fetchCoinGeckoMarketChart(
   return json;
 }
 
-export async function resolveCoinGeckoSpotUsdForPair(env: Env, pairName: string): Promise<number> {
+export async function resolveCoinGeckoSpotUsdForPair(env: Env, pairName: string, options?: CacheOptions): Promise<number> {
   const coinId = resolveCoinGeckoCoinIdForPair(pairName);
   if (!coinId) return 0;
-  return fetchCoinGeckoSpotUsd(env, coinId);
+  return fetchCoinGeckoSpotUsd(env, coinId, options);
 }
 
 export async function resolveCoinGeckoMarketContextForPair(
   env: Env,
   pairName: string,
+  options?: CacheOptions,
 ): Promise<CoinGeckoMarketContext | null> {
   const coinId = resolveCoinGeckoCoinIdForPair(pairName);
   if (!coinId) return null;
 
   const [spotUsd, hourlyChart, dailyChart] = await Promise.all([
-    fetchCoinGeckoSpotUsd(env, coinId),
-    fetchCoinGeckoMarketChart(env, coinId, 2, 'hourly'),
-    fetchCoinGeckoMarketChart(env, coinId, 30, 'daily'),
+    fetchCoinGeckoSpotUsd(env, coinId, options),
+    fetchCoinGeckoMarketChart(env, coinId, 2, 'hourly', options),
+    fetchCoinGeckoMarketChart(env, coinId, 30, 'daily', options),
   ]);
 
   const hourlyPrices = sanitizeSeries(hourlyChart?.prices, 48);

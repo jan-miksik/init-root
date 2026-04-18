@@ -6,16 +6,20 @@ import {
   calcPctChange,
   fetchJsonWithTimeout,
   resolveCoinPaprikaCoinIdForPair,
+  type CacheOptions,
   type CoinGeckoMarketContext,
 } from './shared.js';
 
-async function fetchCoinPaprikaTicker(env: Env, coinId: string): Promise<Record<string, unknown> | null> {
+async function fetchCoinPaprikaTicker(env: Env, coinId: string, options?: CacheOptions): Promise<Record<string, unknown> | null> {
   const cacheKey = `coinpaprika:ticker:${coinId}`;
-  try {
-    const cached = await env.CACHE.get(cacheKey, 'json');
-    if (cached && typeof cached === 'object') return cached as Record<string, unknown>;
-  } catch {
-    // non-fatal
+  const bypassCache = options?.bypassCache === true;
+  if (!bypassCache) {
+    try {
+      const cached = await env.CACHE.get(cacheKey, 'json');
+      if (cached && typeof cached === 'object') return cached as Record<string, unknown>;
+    } catch {
+      // non-fatal
+    }
   }
 
   const json = await fetchJsonWithTimeout(
@@ -41,16 +45,20 @@ async function fetchCoinPaprikaPriceSeries(
   coinId: string,
   interval: '1h' | '24h',
   points: number,
+  options?: CacheOptions,
 ): Promise<number[]> {
   const effectivePoints = interval === '1h' ? Math.min(points, 24) : points;
   const cacheKey = `coinpaprika:historical:${coinId}:${interval}:${effectivePoints}`;
-  try {
-    const cached = await env.CACHE.get(cacheKey, 'json');
-    if (Array.isArray(cached)) {
-      return cached.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+  const bypassCache = options?.bypassCache === true;
+  if (!bypassCache) {
+    try {
+      const cached = await env.CACHE.get(cacheKey, 'json');
+      if (Array.isArray(cached)) {
+        return cached.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+      }
+    } catch {
+      // non-fatal
     }
-  } catch {
-    // non-fatal
   }
 
   const now = Date.now();
@@ -88,10 +96,10 @@ function getCoinPaprikaUsdQuote(ticker: Record<string, unknown> | null): Record<
   return usdRaw as Record<string, unknown>;
 }
 
-export async function resolveCoinPaprikaSpotUsdForPair(env: Env, pairName: string): Promise<number> {
+export async function resolveCoinPaprikaSpotUsdForPair(env: Env, pairName: string, options?: CacheOptions): Promise<number> {
   const coinId = resolveCoinPaprikaCoinIdForPair(pairName);
   if (!coinId) return 0;
-  const ticker = await fetchCoinPaprikaTicker(env, coinId);
+  const ticker = await fetchCoinPaprikaTicker(env, coinId, options);
   const quote = getCoinPaprikaUsdQuote(ticker);
   const spot = Number(quote?.price);
   return Number.isFinite(spot) && spot > 0 ? spot : 0;
@@ -100,14 +108,15 @@ export async function resolveCoinPaprikaSpotUsdForPair(env: Env, pairName: strin
 export async function resolveCoinPaprikaMarketContextForPair(
   env: Env,
   pairName: string,
+  options?: CacheOptions,
 ): Promise<CoinGeckoMarketContext | null> {
   const coinId = resolveCoinPaprikaCoinIdForPair(pairName);
   if (!coinId) return null;
 
   const [ticker, hourlyPrices, dailyPrices] = await Promise.all([
-    fetchCoinPaprikaTicker(env, coinId),
-    fetchCoinPaprikaPriceSeries(env, coinId, '1h', 48),
-    fetchCoinPaprikaPriceSeries(env, coinId, '24h', 30),
+    fetchCoinPaprikaTicker(env, coinId, options),
+    fetchCoinPaprikaPriceSeries(env, coinId, '1h', 48, options),
+    fetchCoinPaprikaPriceSeries(env, coinId, '24h', 30, options),
   ]);
 
   const quote = getCoinPaprikaUsdQuote(ticker);

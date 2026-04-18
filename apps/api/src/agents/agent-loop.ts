@@ -39,15 +39,14 @@ export async function runAgentLoop(
 ): Promise<void> {
   const log = createLogger('agent-loop', agentId);
   const tickStart = Date.now();
-  log.info('tick_start', { forceRun: options?.forceRun ?? false, bypassCache: options?.bypassCache ?? false });
+  const bypassCache = options?.bypassCache === true;
+  log.info('tick_start', { forceRun: options?.forceRun ?? false, bypassCache });
   const db = drizzle(env.DB);
   try {
     await db.run(sql`PRAGMA foreign_keys = ON`);
   } catch {
     // non-fatal
   }
-  const bypassCache = options?.bypassCache ?? false;
-
   // 1. Load agent config from DO storage cache first; warm from D1 on miss.
   let agentRow: CachedAgentRow | (typeof agents.$inferSelect) | null = null;
 

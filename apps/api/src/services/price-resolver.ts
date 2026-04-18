@@ -6,6 +6,7 @@ import {
   resolveCoinGeckoSpotUsdForPair,
   resolveCoinPaprikaSpotUsdForPair,
   resolveDemoFallbackSpotUsdForPair,
+  selectSaneSpotPriceUsd,
 } from './coingecko-price.js';
 
 /** "WETH/USDC" → "WETH USDC" */
@@ -45,17 +46,18 @@ export async function resolveCurrentPriceUsd(env: Env, pairName: string): Promis
   const query = pairToSearchQuery(pairName);
   const skipDexDiscovery = hasIndexedSpotPriceProvider(pairName);
 
-  // Direct CoinGecko spot fallback for supported symbols (e.g. INIT/USD).
-  const coinGeckoSpot = await resolveCoinGeckoSpotUsdForPair(env, pairName);
-  if (coinGeckoSpot > 0) return coinGeckoSpot;
-
-  // CoinPaprika spot fallback for supported symbols (e.g. INIT/USD).
-  const coinPaprikaSpot = await resolveCoinPaprikaSpotUsdForPair(env, pairName);
-  if (coinPaprikaSpot > 0) return coinPaprikaSpot;
-
   if (skipDexDiscovery) {
     const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
-    if (demoSpot > 0) return demoSpot;
+    const [coinGeckoSpot, coinPaprikaSpot] = await Promise.all([
+      resolveCoinGeckoSpotUsdForPair(env, pairName),
+      resolveCoinPaprikaSpotUsdForPair(env, pairName),
+    ]);
+    const indexedSpot = selectSaneSpotPriceUsd({
+      preferredSpotUsd: coinGeckoSpot,
+      secondarySpotUsd: coinPaprikaSpot,
+      demoSpotUsd: demoSpot,
+    });
+    if (indexedSpot > 0) return indexedSpot;
     return 0;
   }
 

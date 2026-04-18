@@ -5,6 +5,11 @@ export const COINPAPRIKA_BASE = 'https://api.coinpaprika.com/v1';
 export const CACHE_TTL_SECONDS = COINGECKO_SPOT_CACHE_TTL_SECONDS;
 export const CHART_CACHE_TTL_SECONDS = COINGECKO_CHART_CACHE_TTL_SECONDS;
 export const FETCH_TIMEOUT_MS = 8_000;
+// When two candidates are within ln(2) of the consensus median in log-space,
+// treat them as equal quality and break the tie by provider priority instead.
+const LOG_PRIORITY_MARGIN = Math.log(2);
+
+export type CacheOptions = { bypassCache?: boolean };
 
 const STABLE_QUOTES = new Set(['USD', 'USDC', 'USDBC', 'USDT', 'DAI']);
 const SYMBOL_TO_COIN_ID: Record<string, string> = {
@@ -89,6 +94,85 @@ export function calcPctChange(current: number | undefined, previous: number | un
   return ((current - previous) / previous) * 100;
 }
 
+function toPositivePrice(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function lastPositivePrice(values: number[] | undefined): number | null {
+  if (!Array.isArray(values)) return null;
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const value = toPositivePrice(values[i]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+/**
+ * Pick the most credible USD spot price when providers disagree.
+ *
+ * Uses log-space median consensus: a single provider returning a wrong-decimal
+ * value (e.g. 0.000002 instead of 0.08) lands far from the cluster formed by
+ * the other sources and loses — no hard ratio threshold needed.
+ *
+ * All available values (live spots, chart candles, demo fallback) are ranked by
+ * their distance from the log-space median. When two sources are within ln(2)
+ * of each other in that distance (i.e. within 2× quality), provider priority
+ * breaks the tie so that fresh live data beats stale chart candles.
+ */
+export function selectSaneSpotPriceUsd(params: {
+  preferredSpotUsd?: number | null;
+  secondarySpotUsd?: number | null;
+  hourlyPrices?: number[];
+  dailyPrices?: number[];
+  demoSpotUsd?: number | null;
+}): number {
+  const preferred = toPositivePrice(params.preferredSpotUsd);
+  const secondary = toPositivePrice(params.secondarySpotUsd);
+  const latestHourly = lastPositivePrice(params.hourlyPrices);
+  const latestDaily = lastPositivePrice(params.dailyPrices);
+  const demoSpot = toPositivePrice(params.demoSpotUsd);
+
+  // If both live spots agree with each other, trust them directly.
+  // Two independent live sources that are within 2× of each other beat any
+  // number of potentially stale chart candles — no threshold required.
+  if (preferred !== null && secondary !== null) {
+    if (Math.abs(Math.log(preferred) - Math.log(secondary)) <= LOG_PRIORITY_MARGIN) {
+      return preferred;
+    }
+  }
+
+  // One or both live spots are absent or strongly disagree with each other.
+  // Use log-space median across all sources: a decimal-scale encoding error
+  // (e.g. 0.000002 among three ~0.08 values) lands nowhere near the median
+  // and loses — no hard ratio threshold needed.
+  const candidates = [
+    { value: preferred, priority: 4 },
+    { value: secondary, priority: 3 },
+    { value: latestHourly, priority: 2 },
+    { value: latestDaily, priority: 1 },
+    { value: demoSpot, priority: 0 },
+  ].filter((c): c is { value: number; priority: number } => c.value !== null);
+
+  if (candidates.length === 0) return 0;
+  if (candidates.length === 1) return candidates[0].value;
+
+  const logValues = candidates.map((c) => Math.log(c.value)).sort((a, b) => a - b);
+  const mid = Math.floor(logValues.length / 2);
+  const logMedian = logValues.length % 2 === 0
+    ? (logValues[mid - 1] + logValues[mid]) / 2
+    : logValues[mid];
+
+  return candidates
+    .map((c) => ({ ...c, logDist: Math.abs(Math.log(c.value) - logMedian) }))
+    .sort((a, b) => {
+      const distDiff = a.logDist - b.logDist;
+      // If one source is clearly closer to consensus (>2× better), use distance.
+      if (Math.abs(distDiff) > LOG_PRIORITY_MARGIN) return distDiff;
+      // Within the same quality band, prefer the higher-priority (fresher) source.
+      return b.priority - a.priority;
+    })[0].value;
+}
+
 export function sanitizeSeries(values: Array<[number, number]> | undefined, take: number): number[] {
   if (!Array.isArray(values)) return [];
   return values
@@ -101,6 +185,8 @@ export async function fetchJsonWithTimeout<T>(
   url: string,
   mapResponse: (response: Response) => Promise<T>,
 ): Promise<T | null> {
+  let host = url;
+  try { host = new URL(url).hostname; } catch { /* keep full url */ }
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -114,9 +200,15 @@ export async function fetchJsonWithTimeout<T>(
       clearTimeout(timeoutId);
     }
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn(`[price-fetch] HTTP ${response.status} from ${host}`);
+      return null;
+    }
     return await mapResponse(response);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.warn(`[price-fetch] timeout fetching ${host}`);
+    }
     return null;
   }
 }

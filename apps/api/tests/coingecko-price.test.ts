@@ -1,11 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   hasIndexedSpotPriceProvider,
   resolveCoinGeckoCoinIdForPair,
+  resolveCoinGeckoSpotUsdForPair,
   resolveCoinPaprikaCoinIdForPair,
+  resolveCoinPaprikaSpotUsdForPair,
   resolveDemoFallbackSpotUsdForPair,
   resolveDemoMarketContextForPair,
+  selectSaneSpotPriceUsd,
 } from '../src/services/coingecko-price.js';
+
+function createEnv(cacheValues: Record<string, unknown> = {}) {
+  const store = new Map<string, unknown>(Object.entries(cacheValues));
+  return {
+    CACHE: {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: unknown) => {
+        store.set(key, value);
+      }),
+    },
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('coingecko pair helpers', () => {
   it('resolves init stable pairs to initia coin id', () => {
@@ -31,5 +51,97 @@ describe('coingecko pair helpers', () => {
     expect(ctx!.dailyPrices).toHaveLength(30);
     expect(ctx!.priceChange.h1).not.toBeUndefined();
     expect(ctx!.priceChange.h24).not.toBeUndefined();
+  });
+
+  it('picks secondary over a decimal-scale outlier via log-median consensus', () => {
+    // preferred is ~34 000× off; secondary + chart form a tight cluster → secondary wins
+    const selected = selectSaneSpotPriceUsd({
+      preferredSpotUsd: 0.0000023929,
+      secondarySpotUsd: 0.081017,
+      hourlyPrices: [0.0798, 0.0804, 0.0812],
+      dailyPrices: [0.077, 0.0795, 0.0807],
+      demoSpotUsd: 0.08,
+    });
+
+    expect(selected).toBeCloseTo(0.081017, 6);
+  });
+
+  it('falls back to the latest chart close when the only live spot is a decimal-scale outlier', () => {
+    // Only one live spot, and it is far from the chart cluster → chart candle wins
+    const selected = selectSaneSpotPriceUsd({
+      preferredSpotUsd: 0.0000023929,
+      hourlyPrices: [0.0798, 0.0804, 0.0812],
+      dailyPrices: [0.077, 0.0795, 0.0807],
+      demoSpotUsd: 0.08,
+    });
+
+    expect(selected).toBeCloseTo(0.0812, 6);
+  });
+
+  it('accepts a legitimate 5× pump when both live spots agree and chart is stale', () => {
+    // No hard ratio threshold: log-median places both live spots in the same quality
+    // band, so preferred wins by priority
+    const selected = selectSaneSpotPriceUsd({
+      preferredSpotUsd: 0.50,
+      secondarySpotUsd: 0.48,
+      hourlyPrices: [0.08, 0.09, 0.10],
+      dailyPrices: [0.07, 0.08, 0.09],
+      demoSpotUsd: 0.08,
+    });
+
+    expect(selected).toBeCloseTo(0.50, 6);
+  });
+
+  it('trusts provider priority order when no chart data is available', () => {
+    const selected = selectSaneSpotPriceUsd({
+      preferredSpotUsd: 0.091,
+      secondarySpotUsd: 0.089,
+    });
+
+    expect(selected).toBeCloseTo(0.091, 6);
+  });
+
+  it('bypasses stale CoinGecko spot cache when requested', async () => {
+    const env = createEnv({
+      'coingecko:spot:initia:usd': '0.01',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ initia: { usd: 0.0905 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    );
+
+    await expect(resolveCoinGeckoSpotUsdForPair(env as any, 'INIT/USD')).resolves.toBeCloseTo(0.01, 6);
+    await expect(resolveCoinGeckoSpotUsdForPair(env as any, 'INIT/USD', { bypassCache: true })).resolves.toBeCloseTo(0.0905, 6);
+  });
+
+  it('bypasses stale CoinPaprika spot cache when requested', async () => {
+    const env = createEnv({
+      'coinpaprika:ticker:init-initia': {
+        quotes: {
+          USD: {
+            price: 0.01,
+          },
+        },
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({
+        quotes: {
+          USD: {
+            price: 0.0907,
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    );
+
+    await expect(resolveCoinPaprikaSpotUsdForPair(env as any, 'INIT/USD')).resolves.toBeCloseTo(0.01, 6);
+    await expect(resolveCoinPaprikaSpotUsdForPair(env as any, 'INIT/USD', { bypassCache: true })).resolves.toBeCloseTo(0.0907, 6);
   });
 });

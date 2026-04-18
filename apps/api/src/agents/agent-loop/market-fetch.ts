@@ -10,6 +10,7 @@ import {
   resolveCoinPaprikaMarketContextForPair,
   resolveDemoFallbackSpotUsdForPair,
   resolveDemoMarketContextForPair,
+  selectSaneSpotPriceUsd,
 } from '../../services/coingecko-price.js';
 import { combineSignals, computeIndicators, evaluateSignals } from '../../services/indicators.js';
 import { classifyApiError, logStructuredError } from '../../lib/agent-errors.js';
@@ -97,6 +98,7 @@ export async function fetchOnePair(params: {
   const { env, pairName, agentId, geckoSvc, dexSvc, log } = params;
   const query = pairToSearchQuery(pairName);
   const skipDexDiscovery = hasIndexedSpotPriceProvider(pairName);
+  const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
   let priceUsd = 0;
   let pairAddress = '';
   let priceChange: Record<string, number | undefined> = {};
@@ -104,6 +106,8 @@ export async function fetchOnePair(params: {
   let liquidity: number | undefined;
   let prices: number[] = [];
   let dailyPrices: number[] = [];
+  let coinGeckoSpot = 0;
+  let coinPaprikaSpot = 0;
 
   function mergeMissingPriceChange(source: Record<string, number | undefined>) {
     for (const key of ['m5', 'h1', 'h6', 'h24'] as const) {
@@ -209,32 +213,32 @@ export async function fetchOnePair(params: {
   }
 
   if (priceUsd === 0) {
-    try {
-      const coingeckoSpot = await resolveCoinGeckoSpotUsdForPair(env, pairName);
-      if (coingeckoSpot > 0) {
-        priceUsd = coingeckoSpot;
-        console.log(`[agent-loop] ${agentId}: CoinGecko spot fallback found @ $${priceUsd}`);
-      }
-    } catch {
-      // non-fatal
-    }
-  }
+    const [coingeckoResult, coinpaprikaResult] = await Promise.allSettled([
+      resolveCoinGeckoSpotUsdForPair(env, pairName, { bypassCache: true }),
+      resolveCoinPaprikaSpotUsdForPair(env, pairName, { bypassCache: true }),
+    ]);
+    if (coingeckoResult.status === 'fulfilled') coinGeckoSpot = coingeckoResult.value;
+    if (coinpaprikaResult.status === 'fulfilled') coinPaprikaSpot = coinpaprikaResult.value;
 
-  if (priceUsd === 0) {
-    try {
-      const coinpaprikaSpot = await resolveCoinPaprikaSpotUsdForPair(env, pairName);
-      if (coinpaprikaSpot > 0) {
-        priceUsd = coinpaprikaSpot;
+    const indexedSpot = selectSaneSpotPriceUsd({
+      preferredSpotUsd: coinGeckoSpot,
+      secondarySpotUsd: coinPaprikaSpot,
+    });
+    if (indexedSpot > 0) {
+      priceUsd = indexedSpot;
+      if (priceUsd === coinGeckoSpot) {
+        console.log(`[agent-loop] ${agentId}: CoinGecko spot fallback found @ $${priceUsd}`);
+      } else if (priceUsd === coinPaprikaSpot) {
         console.log(`[agent-loop] ${agentId}: CoinPaprika spot fallback found @ $${priceUsd}`);
+      } else if (priceUsd === demoSpot) {
+        console.warn(`[agent-loop] ${agentId}: Using demo fallback spot for ${pairName} @ $${priceUsd}`);
       }
-    } catch {
-      // non-fatal
     }
   }
 
   if (prices.length === 0 || dailyPrices.length === 0 || priceChange.h1 === undefined || priceChange.h24 === undefined) {
     try {
-      const coingeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName);
+      const coingeckoCtx = await resolveCoinGeckoMarketContextForPair(env, pairName, { bypassCache: true });
       if (coingeckoCtx) {
         if (priceUsd === 0 && coingeckoCtx.spotUsd > 0) priceUsd = coingeckoCtx.spotUsd;
         if (prices.length === 0 && coingeckoCtx.hourlyPrices.length > 0) prices = coingeckoCtx.hourlyPrices;
@@ -249,7 +253,7 @@ export async function fetchOnePair(params: {
 
   if (prices.length === 0 || dailyPrices.length === 0 || priceChange.h1 === undefined || priceChange.h24 === undefined) {
     try {
-      const coinpaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName);
+      const coinpaprikaCtx = await resolveCoinPaprikaMarketContextForPair(env, pairName, { bypassCache: true });
       if (coinpaprikaCtx) {
         if (priceUsd === 0 && coinpaprikaCtx.spotUsd > 0) priceUsd = coinpaprikaCtx.spotUsd;
         if (prices.length === 0 && coinpaprikaCtx.hourlyPrices.length > 0) prices = coinpaprikaCtx.hourlyPrices;
@@ -263,10 +267,13 @@ export async function fetchOnePair(params: {
   }
 
   if (priceUsd === 0) {
-    const demoSpot = resolveDemoFallbackSpotUsdForPair(pairName);
     if (demoSpot > 0) {
+      console.warn(
+        `[agent-loop] ${agentId}: DEMO FALLBACK for ${pairName} @ $${demoSpot} — all real sources returned zero`
+        + ` (coingecko=${coinGeckoSpot} coinpaprika=${coinPaprikaSpot}`
+        + ` hourly_candles=${prices.length} daily_candles=${dailyPrices.length})`,
+      );
       priceUsd = demoSpot;
-      console.warn(`[agent-loop] ${agentId}: Using demo fallback spot for ${pairName} @ $${priceUsd}`);
     }
   }
 
@@ -283,6 +290,30 @@ export async function fetchOnePair(params: {
   if (priceUsd === 0) {
     log.warn('price_resolution_failed', { pair: pairName });
     return null;
+  }
+
+  if (skipDexDiscovery) {
+    const latestHourly = prices.at(-1);
+    const latestDaily = dailyPrices.at(-1);
+    const reconciledPriceUsd = selectSaneSpotPriceUsd({
+      preferredSpotUsd: coinGeckoSpot > 0 ? coinGeckoSpot : priceUsd,
+      secondarySpotUsd: coinPaprikaSpot,
+      hourlyPrices: prices,
+      dailyPrices,
+    });
+    if (reconciledPriceUsd > 0 && Math.abs(reconciledPriceUsd - priceUsd) > 1e-12) {
+      log.warn('indexed_spot_price_outlier', {
+        pair: pairName,
+        previous_price_usd: priceUsd,
+        reconciled_price_usd: reconciledPriceUsd,
+        coingecko_spot_usd: coinGeckoSpot || undefined,
+        coinpaprika_spot_usd: coinPaprikaSpot || undefined,
+        latest_hourly_close_usd: latestHourly,
+        latest_daily_close_usd: latestDaily,
+        demo_spot_usd: demoSpot || undefined,
+      });
+      priceUsd = reconciledPriceUsd;
+    }
   }
 
   const doneIndicators = log.time('indicator_compute', { pair: pairName, candles: prices.length });
