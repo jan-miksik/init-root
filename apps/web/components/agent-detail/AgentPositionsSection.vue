@@ -2,6 +2,7 @@
 import { computed, ref, type PropType } from 'vue';
 import type { Trade } from '~/composables/useTrades';
 import { formatCompactPrice, formatRelativeTime } from '~/utils/formatting';
+import { computeTradeExitBounds, computeTradeUnrealizedPnl } from '~/utils/trade-math';
 
 type AgentConfig = {
   paperBalance?: number;
@@ -105,49 +106,29 @@ function getPairAddress(pairName: string): string {
   return '';
 }
 
-function getExitBounds(trade: Trade): { target: number; stop: number } {
-  const tp = props.agent.config.takeProfitPct ?? 10;
-  const sl = props.agent.config.stopLossPct ?? 5;
-  if (trade.side === 'buy') {
-    return {
-      target: trade.entryPrice * (1 + tp / 100),
-      stop: trade.entryPrice * (1 - sl / 100),
-    };
-  }
-  return {
-    target: trade.entryPrice * (1 - tp / 100),
-    stop: trade.entryPrice * (1 + sl / 100),
-  };
-}
-
-function getUnrealizedPnl(trade: Trade): { pnlPct: number; currentPrice: number } | null {
+function findTradeMarketPrice(trade: Trade): number | null {
   const live = props.livePrices[trade.pair];
-  if (live && live > 0) {
-    const slippage = props.agent.config.slippageSimulation ?? 0.3;
-    const effectiveEntry = trade.side === 'buy'
-      ? trade.entryPrice * (1 + slippage / 100)
-      : trade.entryPrice * (1 - slippage / 100);
-    const pnlPct = trade.side === 'buy'
-      ? ((live - effectiveEntry) / effectiveEntry) * 100
-      : ((effectiveEntry - live) / effectiveEntry) * 100;
-    return { pnlPct, currentPrice: live };
-  }
-
+  if (typeof live === 'number' && Number.isFinite(live) && live > 0) return live;
   for (const decision of props.decisions) {
     const snapshot = parseSnapshot(decision.marketDataSnapshot);
     const entry = snapshot.find((item) => item.pair === trade.pair);
-    if (entry && entry.priceUsd > 0) {
-      const slippage = props.agent.config.slippageSimulation ?? 0.3;
-      const effectiveEntry = trade.side === 'buy'
-        ? trade.entryPrice * (1 + slippage / 100)
-        : trade.entryPrice * (1 - slippage / 100);
-      const pnlPct = trade.side === 'buy'
-        ? ((entry.priceUsd - effectiveEntry) / effectiveEntry) * 100
-        : ((effectiveEntry - entry.priceUsd) / effectiveEntry) * 100;
-      return { pnlPct, currentPrice: entry.priceUsd };
-    }
+    if (entry && entry.priceUsd > 0) return entry.priceUsd;
   }
   return null;
+}
+
+function getExitBounds(trade: Trade): { target: number; stop: number } | null {
+  const tp = props.agent.config.takeProfitPct ?? 10;
+  const sl = props.agent.config.stopLossPct ?? 5;
+  return computeTradeExitBounds(trade, tp, sl, findTradeMarketPrice(trade));
+}
+
+function getUnrealizedPnl(trade: Trade): { pnlPct: number; currentPrice: number } | null {
+  return computeTradeUnrealizedPnl(
+    trade,
+    findTradeMarketPrice(trade),
+    props.agent.config.slippageSimulation ?? 0.3,
+  );
 }
 
 function toggleTrade(tradeId: string) {
@@ -180,6 +161,10 @@ function formatDate(iso: string) {
 
 function formatPrice(price: number) {
   return formatCompactPrice(price);
+}
+
+function hasDisplayEntryPrice(price: number): boolean {
+  return Number.isFinite(price) && price > 0;
 }
 
 function formatUsdNoNegativeZero(value: number, digits = 0): string {
@@ -262,7 +247,8 @@ function timeAgo(iso: string) {
               <div class="position-metrics">
                 <div>
                   <div class="position-label">Entry</div>
-                  <div class="mono position-value">${{ formatPrice(trade.entryPrice) }}</div>
+                  <div v-if="hasDisplayEntryPrice(trade.entryPrice)" class="mono position-value">${{ formatPrice(trade.entryPrice) }}</div>
+                  <div v-else class="mono position-muted">—</div>
                 </div>
                 <div>
                   <div class="position-label">Size</div>
@@ -276,14 +262,18 @@ function timeAgo(iso: string) {
                   <div class="position-label">Strategy</div>
                   <div class="position-muted">{{ trade.strategyUsed }}</div>
                 </div>
-                <div>
-                  <div class="position-label">Target</div>
-                  <div class="mono position-value positive">${{ formatPrice(getExitBounds(trade).target) }}</div>
-                </div>
-                <div>
-                  <div class="position-label">Stop</div>
-                  <div class="mono position-value negative">${{ formatPrice(getExitBounds(trade).stop) }}</div>
-                </div>
+                <template v-for="bounds in [getExitBounds(trade)]" :key="trade.id + '-bounds'">
+                  <div>
+                    <div class="position-label">Target</div>
+                    <div v-if="bounds" class="mono position-value positive">${{ formatPrice(bounds.target) }}</div>
+                    <div v-else class="mono position-muted">—</div>
+                  </div>
+                  <div>
+                    <div class="position-label">Stop</div>
+                    <div v-if="bounds" class="mono position-value negative">${{ formatPrice(bounds.stop) }}</div>
+                    <div v-else class="mono position-muted">—</div>
+                  </div>
+                </template>
                 <div>
                   <div class="position-label">Confidence</div>
                   <div class="mono position-value">{{ (trade.confidenceBefore * 100).toFixed(0) }}%</div>
@@ -366,7 +356,7 @@ function timeAgo(iso: string) {
                 <td>
                   <span class="badge" :class="`badge-${trade.side}`">{{ trade.side }}</span>
                 </td>
-                <td class="mono">${{ formatPrice(trade.entryPrice) }}</td>
+                <td class="mono">{{ hasDisplayEntryPrice(trade.entryPrice) ? '$' + formatPrice(trade.entryPrice) : '—' }}</td>
                 <td class="mono" :style="trade.status === 'open' ? { color: 'var(--text-muted)' } : undefined">
                   {{ trade.exitPrice ? '$' + formatPrice(trade.exitPrice) : '—' }}
                 </td>

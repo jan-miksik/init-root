@@ -4,7 +4,7 @@ import { AgentConfigSchema } from '@something-in-loop/shared';
 import { agents } from '../../db/schema.js';
 import { nowIso } from '../../lib/utils.js';
 import { resolveCurrentPriceUsd } from '../../services/price-resolver.js';
-import { PaperEngine } from '../../services/paper-engine.js';
+import { PaperEngine, isPositionPricingSaneForMarket } from '../../services/paper-engine.js';
 import type { Env } from '../../types/env.js';
 import type { CachedAgentRow } from '../trading-agent.js';
 import { persistTrade } from './execution.js';
@@ -70,6 +70,24 @@ export async function runRiskControls(params: RunRiskControlsParams): Promise<bo
       continue;
     }
     await ctx.storage.delete(`priceMiss:${position.id}`);
+
+    if (!isPositionPricingSaneForMarket(position, currentPrice)) {
+      try {
+        const closed = engine.closePosition(position.id, {
+          price: currentPrice,
+          reason: 'Closed automatically due to invalid entry pricing data',
+        });
+        await ctx.storage.put('pendingTrade', closed);
+        await persistTrade(db, closed);
+        await ctx.storage.delete('pendingTrade');
+        console.warn(
+          `[agent-loop] ${agentId}: Closed invalid open position ${position.id} (${position.pair}) with flat repair at $${currentPrice}`,
+        );
+      } catch (err) {
+        console.warn(`[agent-loop] ${agentId}: Failed to repair invalid position ${position.id}:`, err);
+      }
+      continue;
+    }
 
     if (engine.checkStopLoss(position, currentPrice, config.stopLossPct)) {
       try {

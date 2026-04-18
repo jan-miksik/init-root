@@ -3,6 +3,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { getAgentProfile, DEFAULT_AGENT_PROFILE_ID } from '@something-in-loop/shared';
 import { pollUntilFutureAlarm } from '~/utils/statusPolling';
 import { remainingAnalyzeBannerDelayMs } from '~/utils/formatting';
+import { computeTradeUnrealizedPnlUsd } from '~/utils/trade-math';
 
 export interface AgentDecision {
   id: string;
@@ -569,11 +570,8 @@ export function useAgentDetailPage(id: string) {
   const unrealizedPnlUsd = computed(() =>
     openTrades.value.reduce((sum, t) => {
       const live = livePrices.value[t.pair];
-      if (!live) return sum;
-      const slippage = agent.value?.config.slippageSimulation ?? 0.3;
-      const effectiveEntry = t.side === 'buy' ? t.entryPrice * (1 + slippage / 100) : t.entryPrice * (1 - slippage / 100);
-      const pnlPct = t.side === 'buy' ? ((live - effectiveEntry) / effectiveEntry) * 100 : ((effectiveEntry - live) / effectiveEntry) * 100;
-      return sum + (pnlPct / 100) * t.amountUsd;
+      const pnlUsd = computeTradeUnrealizedPnlUsd(t, live, agent.value?.config.slippageSimulation ?? 0.3);
+      return sum + (pnlUsd ?? 0);
     }, 0)
   );
 

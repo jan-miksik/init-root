@@ -65,6 +65,12 @@ describe('paper trading engine', () => {
     expect(() => engine.openPosition({ ...defaultParams, amountUsd: 0 })).toThrow();
   });
 
+  it('rejects invalid entry prices', () => {
+    const engine = new PaperEngine({ balance: 10000, slippage: 0.3 });
+    expect(() => engine.openPosition({ ...defaultParams, price: 0 })).toThrow(/price must be a positive finite number/i);
+    expect(() => engine.openPosition({ ...defaultParams, price: Number.NaN })).toThrow(/price must be a positive finite number/i);
+  });
+
   it('tracks multiple open positions', () => {
     const engine = new PaperEngine({ balance: 10000, slippage: 0.3 });
     engine.openPosition({ ...defaultParams, amountUsd: 1000 });
@@ -109,6 +115,41 @@ describe('paper trading engine', () => {
   it('throws when closing non-existent position', () => {
     const engine = new PaperEngine({ balance: 10000, slippage: 0.3 });
     expect(() => engine.closePosition('nonexistent', { price: 2500 })).toThrow(/not found/);
+  });
+
+  it('flat-closes corrupted open positions instead of generating impossible pnl', () => {
+    const restored = PaperEngine.deserialize({
+      balance: 9980,
+      initialBalance: 10000,
+      positions: [{
+        id: 'pos-bad',
+        agentId: 'test-agent',
+        pair: 'INIT/USD',
+        dex: 'mock-perp-v1',
+        side: 'buy',
+        entryPrice: 1e-15,
+        effectiveEntryPrice: 1.003e-15,
+        amountUsd: 20,
+        tokenAmount: 19_940_179_461_615_153,
+        confidenceBefore: 0.88,
+        reasoning: 'corrupt state',
+        strategyUsed: 'combined',
+        slippageSimulated: 0.003,
+        status: 'open',
+        openedAt: '2026-04-18T08:00:00.000Z',
+      }],
+      closedPositions: [],
+      dailyStartBalance: 10000,
+      lastDailyReset: '2026-04-18',
+      slippagePct: 0.3,
+      mode: 'long-short',
+    });
+
+    const closed = restored.closePosition('pos-bad', { price: 0.093, closeReason: 'manual' });
+    expect(closed.status).toBe('closed');
+    expect(closed.pnlPct).toBe(0);
+    expect(closed.pnlUsd).toBe(0);
+    expect(restored.balance).toBe(10000);
   });
 });
 

@@ -1,6 +1,17 @@
 import { generateId, nowIso } from '../lib/utils.js';
 import type { PerpPositionState } from '../agents/perp-state-machine.js';
 
+const MAX_PRICE_SCALE_RATIO = 1_000_000;
+
+function isPositiveFiniteNumber(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function hasComparablePriceScale(referencePrice: number, marketPrice: number): boolean {
+  if (!isPositiveFiniteNumber(referencePrice) || !isPositiveFiniteNumber(marketPrice)) return false;
+  return Math.abs(Math.log(referencePrice) - Math.log(marketPrice)) <= Math.log(MAX_PRICE_SCALE_RATIO);
+}
+
 export interface Position {
   id: string;
   agentId: string;
@@ -55,6 +66,21 @@ export interface PaperEngineState {
   closedPositions: Position[];
   dailyStartBalance: number;
   lastDailyReset: string;
+}
+
+export function hasValidPositionPricing(position: Pick<Position, 'entryPrice' | 'effectiveEntryPrice' | 'tokenAmount'>): boolean {
+  return isPositiveFiniteNumber(position.entryPrice)
+    && isPositiveFiniteNumber(position.effectiveEntryPrice)
+    && isPositiveFiniteNumber(position.tokenAmount);
+}
+
+export function isPositionPricingSaneForMarket(
+  position: Pick<Position, 'entryPrice' | 'effectiveEntryPrice' | 'tokenAmount'>,
+  marketPrice: number,
+): boolean {
+  return hasValidPositionPricing(position)
+    && hasComparablePriceScale(position.entryPrice, marketPrice)
+    && hasComparablePriceScale(position.effectiveEntryPrice, marketPrice);
 }
 
 export class PaperEngine {
@@ -124,6 +150,10 @@ export class PaperEngine {
       throw new Error('Position amount must be positive');
     }
 
+    if (!isPositiveFiniteNumber(params.price)) {
+      throw new Error('Position price must be a positive finite number');
+    }
+
     // Apply slippage (buy at slightly higher price, sell at slightly lower)
     const slippage = params.slippagePct !== undefined
       ? params.slippagePct / 100
@@ -134,7 +164,15 @@ export class PaperEngine {
         ? params.price * (1 + slippage)
         : params.price * (1 - slippage);
 
+    if (!isPositiveFiniteNumber(effectiveEntryPrice)) {
+      throw new Error('Effective entry price must be a positive finite number');
+    }
+
     const tokenAmount = params.amountUsd / effectiveEntryPrice;
+
+    if (!isPositiveFiniteNumber(tokenAmount)) {
+      throw new Error('Position token amount must be a positive finite number');
+    }
 
     const position: Position = {
       id: generateId('pos'),
@@ -169,6 +207,29 @@ export class PaperEngine {
     const position = this.state.openPositions.get(positionId);
     if (!position) {
       throw new Error(`Position ${positionId} not found or already closed`);
+    }
+
+    if (!isPositiveFiniteNumber(params.price)) {
+      throw new Error('Close price must be a positive finite number');
+    }
+
+    if (!isPositionPricingSaneForMarket(position, params.price)) {
+      const closed: Position = {
+        ...position,
+        status: 'closed',
+        closeReason: params.closeReason,
+        exitPrice: params.price,
+        effectiveExitPrice: params.price,
+        pnlPct: 0,
+        pnlUsd: 0,
+        confidenceAfter: params.confidence,
+        closedAt: nowIso(),
+      };
+
+      this.state.balance += position.amountUsd;
+      this.state.openPositions.delete(positionId);
+      this.state.closedPositions.push(closed);
+      return closed;
     }
 
     // Apply slippage on exit (inverse of entry)
@@ -240,6 +301,7 @@ export class PaperEngine {
     currentPrice: number,
     stopLossPct: number
   ): boolean {
+    if (!isPositionPricingSaneForMarket(position, currentPrice)) return false;
     const threshold = stopLossPct / 100;
     const effectiveExit = this.effectiveExitPrice(position, currentPrice);
     if (position.side === 'buy') {
@@ -261,6 +323,7 @@ export class PaperEngine {
     currentPrice: number,
     takeProfitPct: number
   ): boolean {
+    if (!isPositionPricingSaneForMarket(position, currentPrice)) return false;
     const threshold = takeProfitPct / 100;
     const effectiveExit = this.effectiveExitPrice(position, currentPrice);
     if (position.side === 'buy') {
