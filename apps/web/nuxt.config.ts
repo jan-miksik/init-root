@@ -26,6 +26,22 @@ export default defineNuxtConfig({
         allow: [appRoot, workspaceRoot],
       },
     },
+    optimizeDeps: {
+      // Pre-bundle these on dev server start rather than lazily during page load,
+      // which prevents Vite from force-reloading the browser on first cold boot.
+      include: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        '@tanstack/react-query',
+        'wagmi',
+        'viem',
+        'chart.js',
+        'marked',
+        'vue-chartjs',
+        '@initia/interwovenkit-react',
+      ],
+    },
     build: {
       rollupOptions: {
         output: {

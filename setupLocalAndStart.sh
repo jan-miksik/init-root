@@ -4,7 +4,7 @@
 # What it does:
 #   1. Checks prerequisites
 #   2. Installs pnpm dependencies
-#   3. Starts the Initia pillow-rollup EVM chain (via weave)
+#   3. Starts the Initia EVM appchain (via weave)
 #   4. Deploys all contracts (Agent, iUSD demo, MockPerpDEX)
 #   5. Writes apps/web/.env and apps/api/.dev.vars
 #   6. Applies local Cloudflare D1 migrations
@@ -32,6 +32,7 @@ log()  { echo -e "${BLUE}[•]${NC} $*"; }
 ok()   { echo -e "${GREEN}[✓]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+HAS_TTY=false
 
 write_atomic() {
   local target="$1"
@@ -42,8 +43,130 @@ write_atomic() {
   mv "$tmp" "$target"
 }
 
+is_port_bound() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+find_next_free_web_port() {
+  local port
+
+  for port in 3002 3003 3004 3005; do
+    if ! is_port_bound "$port"; then
+      echo "$port"
+      return 0
+    fi
+  done
+
+  err "Could not find a free web port in the 3002-3005 range"
+}
+
+show_port_listeners() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+list_port_listener_pids() {
+  local port="$1"
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u
+}
+
+list_process_groups_for_pids() {
+  local current_pgid pid pgid
+  current_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
+
+  for pid in "$@"; do
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -n "$pgid" && "$pgid" != "$current_pgid" ]]; then
+      echo "$pgid"
+    fi
+  done | sort -u
+}
+
+kill_port_listeners() {
+  local port="$1"
+  local pids=()
+  local pgids=()
+  local pid
+  local pgid
+
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && pids+=("$pid")
+  done < <(list_port_listener_pids "$port")
+
+  if (( ${#pids[@]} == 0 )); then
+    return 0
+  fi
+
+  while IFS= read -r pgid; do
+    [[ -n "$pgid" ]] && pgids+=("$pgid")
+  done < <(list_process_groups_for_pids "${pids[@]}")
+
+  kill "${pids[@]}" 2>/dev/null || true
+  for pgid in "${pgids[@]}"; do
+    kill -TERM -- "-${pgid}" 2>/dev/null || true
+  done
+  sleep 1
+
+  if is_port_bound "$port"; then
+    kill -9 "${pids[@]}" 2>/dev/null || true
+    for pgid in "${pgids[@]}"; do
+      kill -KILL -- "-${pgid}" 2>/dev/null || true
+    done
+    sleep 1
+  fi
+
+  if is_port_bound "$port"; then
+    warn "Port $port is still occupied after trying to stop listener PID(s): ${pids[*]}"
+    show_port_listeners "$port"
+    err "Could not clear port $port automatically"
+  fi
+}
+
+pick_web_port() {
+  local preferred_port=3001
+  local fallback_port choice
+
+  if ! is_port_bound "$preferred_port"; then
+    WEB_PORT="$preferred_port"
+    return 0
+  fi
+
+  fallback_port="$(find_next_free_web_port)"
+
+  warn "Port ${preferred_port} is already in use:"
+  show_port_listeners "$preferred_port"
+
+  if has_tty; then
+    echo ""
+    echo "  [k] Kill the current process on ${preferred_port} and use ${preferred_port}"
+    echo "  [d] Keep it running and use ${fallback_port}"
+    prompt_line choice "Choose web port action [d]: "
+    choice="${choice:-d}"
+    case "${choice,,}" in
+      k|kill)
+        log "Stopping current process(es) on port ${preferred_port}..."
+        kill_port_listeners "$preferred_port"
+        ok "Port ${preferred_port} is now free"
+        WEB_PORT="$preferred_port"
+        return 0
+        ;;
+      d|diff|different)
+        WEB_PORT="$fallback_port"
+        return 0
+        ;;
+      *)
+        err "Invalid choice: $choice (expected k or d)"
+        ;;
+    esac
+  fi
+
+  warn "No TTY detected; keeping the existing process on ${preferred_port} and using ${fallback_port} instead"
+  WEB_PORT="$fallback_port"
+}
+
 has_tty() {
-  [[ -t 0 && -t 1 ]]
+  [[ "$HAS_TTY" == true ]]
 }
 
 prompt_secret() {
@@ -90,6 +213,98 @@ run_and_capture() {
   return "$status"
 }
 
+read_first_json_value() {
+  local jq_filter="$1"
+  shift
+
+  local file value
+  for file in "$@"; do
+    [[ -f "$file" ]] || continue
+    value="$(jq -r "$jq_filter // empty" "$file" 2>/dev/null || true)"
+    if [[ -n "$value" && "$value" != "null" ]]; then
+      echo "$value"
+      return 0
+    fi
+  done
+
+  echo ""
+}
+
+resolve_rollup_chain_id() {
+  local status_chain_id genesis_chain_id configured_chain_id
+
+  if [[ -n "${INITIA_ROLLUP_CHAIN_ID:-}" ]]; then
+    echo "$INITIA_ROLLUP_CHAIN_ID"
+    return 0
+  fi
+
+  configured_chain_id="$(read_first_json_value '.l2_config.chain_id' \
+    "$HOME/.minitia/artifacts/config.json" \
+    "$HOME/.weave/data/minitia.config.json")"
+  if [[ -n "$configured_chain_id" ]]; then
+    echo "$configured_chain_id"
+    return 0
+  fi
+
+  configured_chain_id="$(read_first_json_value '.chain_id' "$HOME/.minitia/config/genesis.json")"
+  if [[ -n "$configured_chain_id" ]]; then
+    echo "$configured_chain_id"
+    return 0
+  fi
+
+  status_chain_id="$(curl -sf "$TENDERMINT_RPC/status" 2>/dev/null | jq -r '.result.node_info.network // empty' 2>/dev/null || true)"
+  if [[ -n "$status_chain_id" ]]; then
+    echo "$status_chain_id"
+    return 0
+  fi
+
+  genesis_chain_id="$(curl -sf "$TENDERMINT_RPC/genesis" 2>/dev/null | jq -r '.result.genesis.chain_id // empty' 2>/dev/null || true)"
+  if [[ -n "$genesis_chain_id" ]]; then
+    echo "$genesis_chain_id"
+    return 0
+  fi
+
+  echo ""
+}
+
+resolve_evm_chain_id() {
+  local raw_chain_id
+
+  if [[ -n "${INITIA_EVM_CHAIN_ID:-}" ]]; then
+    echo "$INITIA_EVM_CHAIN_ID"
+    return 0
+  fi
+
+  raw_chain_id="$(cast chain-id --rpc-url "$EVM_RPC" 2>/dev/null || true)"
+  if [[ -n "$raw_chain_id" ]]; then
+    echo "$raw_chain_id"
+    return 0
+  fi
+
+  raw_chain_id="$(
+    curl -sf -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+      "$EVM_RPC" 2>/dev/null | jq -r '.result // empty' 2>/dev/null || true
+  )"
+  if [[ "$raw_chain_id" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    printf '%d\n' "$((16#${raw_chain_id#0x}))"
+    return 0
+  fi
+
+  echo ""
+}
+
+display_rollup_name() {
+  local chain_id="${1:-${ROLLUP_CHAIN_ID:-}}"
+
+  if [[ -n "$chain_id" ]]; then
+    printf '%s' "$chain_id"
+    return 0
+  fi
+
+  printf '%s' "rollup"
+}
+
 opinit_bot_exists() {
   local bot="$1"
 
@@ -134,6 +349,10 @@ echo "║ initRoot — prepare local setup           ║"
 echo "╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
+if [[ -t 0 && -t 1 ]]; then
+  HAS_TTY=true
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKIP_CHAIN=false
 SKIP_CONTRACTS=false
@@ -153,6 +372,8 @@ done
 # ─── Chain / RPC defaults ─────────────────────────────────────────────────────
 EVM_RPC="${INITIA_EVM_RPC:-http://localhost:8545}"
 TENDERMINT_RPC="${INITIA_RPC_URL:-http://localhost:26657}"
+ROLLUP_CHAIN_ID=""
+CHAIN_ID=""
 
 # ─── 1. Prerequisites ─────────────────────────────────────────────────────────
 log "Checking prerequisites..."
@@ -202,7 +423,7 @@ if [[ "$SKIP_CHAIN" == false ]]; then
       reset_opinit_bot challenger
     fi
 
-    log "Starting Initia pillow-rollup chain (weave rollup start -d)..."
+    log "Starting Initia $(display_rollup_name) chain (weave rollup start -d)..."
     weave rollup start -d || warn "weave start returned non-zero (chain may already be running)"
 
     log "Waiting for chain to be healthy..."
@@ -225,6 +446,12 @@ else
   fi
   ok "Chain reachable at $TENDERMINT_RPC (skipped start)"
 fi
+
+ROLLUP_CHAIN_ID="$(resolve_rollup_chain_id)"
+[[ -z "$ROLLUP_CHAIN_ID" ]] && warn "Could not resolve rollup chain id from local machine config or $TENDERMINT_RPC — preserving existing web config if present"
+
+CHAIN_ID="$(resolve_evm_chain_id)"
+[[ -z "$CHAIN_ID" ]] && warn "Could not resolve INITIA_EVM_CHAIN_ID from $EVM_RPC — preserving existing web config if present and fill apps/api/.dev.vars manually if needed"
 
 if [[ "$RESET_OPINIT" == true ]]; then
   restart_reset_opinit_bots
@@ -308,7 +535,7 @@ if [[ "$SKIP_CONTRACTS" == false ]]; then
   BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$EVM_RPC" 2>/dev/null || echo "0")
   if [[ "$BALANCE" == "0" ]]; then
     warn "Deployer balance is 0. Transactions may fail."
-    warn "Fund it: minitiad tx bank send <funded-key> $DEPLOYER_ADDRESS 100000000000000000000GAS --keyring-backend test --chain-id pillow-rollup --node $TENDERMINT_RPC -y"
+    warn "Fund it: minitiad tx bank send <funded-key> $DEPLOYER_ADDRESS 100000000000000000000GAS --keyring-backend test --chain-id $(display_rollup_name) --node $TENDERMINT_RPC -y"
     prompt_line cont "  Continue anyway? [y/N]: "
     [[ "${cont,,}" != "y" ]] && exit 1
   fi
@@ -369,10 +596,32 @@ if [[ "$SKIP_CONTRACTS" == false ]]; then
   fi
 
   cd "$REPO_ROOT"
+else
+  if [[ ! -s "$REPO_ROOT/apps/web/.env" ]]; then
+    err "--skip-contracts was set, but apps/web/.env is missing or empty."
+  fi
+  ok "Skipped contract deployment (using addresses already in apps/web/.env)"
+fi
 
-  # ─── 5d. Write apps/web/.env ──────────────────────────────────────────────
-  WEB_ENV_CONTENT=$(cat <<EOF
+# ─── 5d. Write apps/web/.env ────────────────────────────────────────────────
+WEB_ENV_FILE="$REPO_ROOT/apps/web/.env"
+read_webenv() {
+  grep -E "^${1}=" "$WEB_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || echo ""
+}
 
+AGENT_ADDRESS="${AGENT_ADDRESS:-$(read_webenv NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS)}"
+IUSD_TOKEN="${IUSD_TOKEN:-$(read_webenv NUXT_PUBLIC_INITIA_SHOWCASE_TOKEN_ADDRESS)}"
+IUSD_FAUCET="${IUSD_FAUCET:-$(read_webenv NUXT_PUBLIC_INITIA_SHOWCASE_TOKEN_FAUCET_ADDRESS)}"
+PERP_DEX="${PERP_DEX:-$(read_webenv NUXT_PUBLIC_INITIA_MOCK_PERP_DEX_ADDRESS)}"
+DEPLOYER_ADDRESS="${DEPLOYER_ADDRESS:-$(read_webenv NUXT_PUBLIC_INITIA_EXECUTOR_ADDRESS)}"
+ROLLUP_CHAIN_ID="${ROLLUP_CHAIN_ID:-$(read_webenv NUXT_PUBLIC_INITIA_ROLLUP_CHAIN_ID)}"
+CHAIN_ID="${CHAIN_ID:-$(read_webenv NUXT_PUBLIC_INITIA_EVM_CHAIN_ID)}"
+
+WEB_ENV_CONTENT=$(cat <<EOF
+NUXT_PUBLIC_INITIA_ROLLUP_CHAIN_ID=${ROLLUP_CHAIN_ID}
+NUXT_PUBLIC_INITIA_EVM_CHAIN_ID=${CHAIN_ID}
+NUXT_PUBLIC_INITIA_EVM_RPC=${EVM_RPC}
+NUXT_PUBLIC_INITIA_RPC_URL=${TENDERMINT_RPC}
 
 NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS=${AGENT_ADDRESS}
 
@@ -391,30 +640,17 @@ NUXT_PUBLIC_INITIA_EXECUTOR_MAX_TRADE_WEI=1000000000000000000
 NUXT_PUBLIC_INITIA_EXECUTOR_DAILY_LIMIT_WEI=5000000000000000000
 EOF
 )
-  WEB_ENV_FILE="$REPO_ROOT/apps/web/.env"
-  if [[ -f "$WEB_ENV_FILE" ]] && [[ "$(cat "$WEB_ENV_FILE")" == "$WEB_ENV_CONTENT" ]]; then
-    ok "apps/web/.env unchanged (skipping write to avoid Vite reload)"
-  else
-    log "Writing apps/web/.env..."
-    printf '%s\n' "$WEB_ENV_CONTENT" | write_atomic "$WEB_ENV_FILE"
-    ok "apps/web/.env written"
-  fi
+if [[ -f "$WEB_ENV_FILE" ]] && [[ "$(cat "$WEB_ENV_FILE")" == "$WEB_ENV_CONTENT" ]]; then
+  ok "apps/web/.env unchanged (skipping write to avoid Vite reload)"
 else
-  if [[ ! -s "$REPO_ROOT/apps/web/.env" ]]; then
-    err "--skip-contracts was set, but apps/web/.env is missing or empty."
-  fi
-  ok "Skipped contract deployment (using addresses already in apps/web/.env)"
+  log "Writing apps/web/.env..."
+  printf '%s\n' "$WEB_ENV_CONTENT" | write_atomic "$WEB_ENV_FILE"
+  ok "apps/web/.env written"
 fi
 
 # ─── 6. Write API dev secrets ─────────────────────────────────────────────────
 # wrangler dev reads .dev.vars for secrets in local mode
 log "Writing apps/api/.dev.vars..."
-
-# If contracts were skipped, read addresses from the already-written apps/web/.env
-if [[ "$SKIP_CONTRACTS" == true ]]; then
-  AGENT_ADDRESS=$(grep -E '^NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS=' "$REPO_ROOT/apps/web/.env" 2>/dev/null | cut -d= -f2- | tr -d ' ' || echo "")
-  PERP_DEX=$(grep -E '^NUXT_PUBLIC_INITIA_MOCK_PERP_DEX_ADDRESS=' "$REPO_ROOT/apps/web/.env" 2>/dev/null | cut -d= -f2- | tr -d ' ' || echo "")
-fi
 
 # Resolve executor key if not already set (contracts were skipped)
 if [[ -z "${PRIVATE_KEY:-}" ]]; then
@@ -424,12 +660,9 @@ if [[ -z "${PRIVATE_KEY:-}" ]]; then
   fi
 fi
 
-# Resolve chain ID from the running node
-CHAIN_ID=$(cast chain-id --rpc-url "$EVM_RPC" 2>/dev/null || echo "")
-[[ -z "$CHAIN_ID" ]] && warn "Could not resolve INITIA_EVM_CHAIN_ID — fill it in manually in apps/api/.dev.vars"
-
 # Helper: read a single value from an existing .dev.vars file
 read_devvar() { grep -E "^${1}=" "$REPO_ROOT/apps/api/.dev.vars" 2>/dev/null | head -1 | cut -d= -f2- || echo ""; }
+CHAIN_ID="${CHAIN_ID:-$(read_devvar INITIA_EVM_CHAIN_ID)}"
 
 # OPENROUTER_API_KEY: shell env → existing .dev.vars → prompt
 OR_KEY="${OPENROUTER_API_KEY:-$(read_devvar OPENROUTER_API_KEY)}"
@@ -485,6 +718,9 @@ cd "$REPO_ROOT"
 # ─── 8. Start services ────────────────────────────────────────────────────────
 API_PID=""
 WEB_PID=""
+WEB_HOST="127.0.0.1"
+WEB_PORT=""
+pick_web_port
 
 cleanup() {
   echo ""
@@ -494,6 +730,17 @@ cleanup() {
   ok "Done."
 }
 trap cleanup EXIT INT TERM
+
+# Warm Nuxt/.vite dep cache on first run to prevent cold-start page reloads.
+# Vite discovers deps lazily and force-reloads the browser for each round;
+# running `nuxt prepare` first pre-generates .nuxt/ so most deps are known upfront.
+if [[ ! -d "$REPO_ROOT/apps/web/.nuxt" ]]; then
+  log "First run detected — warming Nuxt cache (prevents cold-start page reloads)..."
+  cd "$REPO_ROOT/apps/web"
+  pnpm exec nuxt prepare 2>&1 | sed -u 's/^/[web-prepare] /' || true
+  cd "$REPO_ROOT"
+  ok "Nuxt cache warmed"
+fi
 
 log "Starting API on port 8787..."
 pnpm dev:api > >(sed -u 's/^/[api] /') 2>&1 &
@@ -508,16 +755,23 @@ for i in {1..30}; do
   sleep 2
 done
 
-log "Starting Web on port 3001..."
-pnpm dev:web > >(sed -u 's/^/[web] /') 2>&1 &
+log "Starting Web on ${WEB_HOST}:${WEB_PORT}..."
+HOST="$WEB_HOST" PORT="$WEB_PORT" pnpm dev:web > >(sed -u 's/^/[web] /') 2>&1 &
 WEB_PID=$!
 
-sleep 4  # Give Nuxt time to start
+log "Waiting for Web to be ready..."
+for i in {1..30}; do
+  if curl -sf "http://${WEB_HOST}:${WEB_PORT}" >/dev/null 2>&1; then
+    ok "Web ready at http://${WEB_HOST}:${WEB_PORT}"
+    break
+  fi
+  sleep 2
+done
 
 echo ""
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BOLD}  Services running:${NC}"
-echo -e "  Web  → ${BLUE}http://localhost:3001${NC}"
+echo -e "  Web  → ${BLUE}http://${WEB_HOST}:${WEB_PORT}${NC}"
 echo -e "  API  → ${BLUE}http://localhost:8787${NC}"
 echo -e "  Chain EVM RPC → ${BLUE}${EVM_RPC}${NC}"
 echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
