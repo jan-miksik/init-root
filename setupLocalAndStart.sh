@@ -711,7 +711,7 @@ ok "apps/api/.dev.vars written"
 log "Applying local D1 migrations..."
 cd "$REPO_ROOT/apps/api"
 pnpm migration:apply:local || \
-  npx wrangler d1 migrations apply trading-agents --local
+  npx wrangler d1 migrations apply trading-agents --local --yes
 ok "D1 migrations applied"
 cd "$REPO_ROOT"
 

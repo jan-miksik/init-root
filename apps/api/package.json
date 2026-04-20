@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "migration:create": "wrangler d1 migrations create trading-agents",
-    "migration:apply:local": "wrangler d1 migrations apply trading-agents --local",
+    "migration:apply:local": "wrangler d1 migrations apply trading-agents --local --yes",
     "migration:apply": "wrangler d1 migrations apply trading-agents --remote"
   },
   "dependencies": {
