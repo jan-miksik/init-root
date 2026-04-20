@@ -13,12 +13,14 @@
 # Flags:
 #   --skip-chain      Skip starting the chain (if already running)
 #   --skip-contracts  Skip contract deployment (use addresses already in apps/web/.env)
+#   --reset-opinit    Force-reset local OPinit bot state before starting the chain
 #
 # Usage:
 #   chmod +x setupLocalAndStart.sh
 #   ./setupLocalAndStart.sh
 #   ./setupLocalAndStart.sh --skip-chain
 #   ./setupLocalAndStart.sh --skip-chain --skip-contracts
+#   ./setupLocalAndStart.sh --reset-opinit
 
 set -euo pipefail
 
@@ -88,6 +90,44 @@ run_and_capture() {
   return "$status"
 }
 
+opinit_bot_exists() {
+  local bot="$1"
+
+  [[ -f "$HOME/.opinit/${bot}.json" ]] && return 0
+  [[ -f "$HOME/.weave/log/opinitd.${bot}.stdout.log" ]] && return 0
+  [[ -f "$HOME/.weave/log/opinitd.${bot}.stderr.log" ]] && return 0
+  return 1
+}
+
+reset_opinit_bot() {
+  local bot="$1"
+
+  if ! opinit_bot_exists "$bot"; then
+    log "Skipping OPinit $bot reset (no local state found)"
+    return
+  fi
+
+  log "Resetting OPinit $bot state..."
+  weave opinit stop "$bot" >/dev/null 2>&1 || true
+  weave opinit reset "$bot"
+  RESET_OPINIT_BOTS+=("$bot")
+  ok "OPinit $bot state reset"
+}
+
+restart_reset_opinit_bots() {
+  local bot
+
+  if (( ${#RESET_OPINIT_BOTS[@]} == 0 )); then
+    return
+  fi
+
+  for bot in "${RESET_OPINIT_BOTS[@]}"; do
+    log "Starting OPinit $bot..."
+    weave opinit start "$bot" -d
+    ok "OPinit $bot restarted"
+  done
+}
+
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════╗"
 echo "║ initRoot — prepare local setup           ║"
@@ -97,11 +137,16 @@ echo -e "${NC}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKIP_CHAIN=false
 SKIP_CONTRACTS=false
+RESET_OPINIT=false
+RESET_OPINIT_BOTS=()
+CHAIN_WAS_RUNNING=false
 
 for arg in "$@"; do
   case $arg in
     --skip-chain)     SKIP_CHAIN=true ;;
     --skip-contracts) SKIP_CONTRACTS=true ;;
+    --reset-opinit)   RESET_OPINIT=true ;;
+    *) err "Unknown flag: $arg" ;;
   esac
 done
 
@@ -140,8 +185,23 @@ ok "Dependencies installed"
 # ─── 3. Start Initia chain ────────────────────────────────────────────────────
 if [[ "$SKIP_CHAIN" == false ]]; then
   if curl -sf "$TENDERMINT_RPC/status" >/dev/null 2>&1; then
+    CHAIN_WAS_RUNNING=true
+  fi
+
+  if [[ "$RESET_OPINIT" == true ]]; then
+    reset_opinit_bot executor
+    reset_opinit_bot challenger
+  fi
+
+  if [[ "$CHAIN_WAS_RUNNING" == true ]]; then
     ok "Chain already running at $TENDERMINT_RPC"
   else
+    if [[ "$RESET_OPINIT" == false ]]; then
+      log "Chain is down; resetting local OPinit state before boot to avoid stale sequence/signature retries..."
+      reset_opinit_bot executor
+      reset_opinit_bot challenger
+    fi
+
     log "Starting Initia pillow-rollup chain (weave rollup start -d)..."
     weave rollup start -d || warn "weave start returned non-zero (chain may already be running)"
 
@@ -164,6 +224,10 @@ else
     err "Chain not reachable at $TENDERMINT_RPC and --skip-chain was set. Start it first."
   fi
   ok "Chain reachable at $TENDERMINT_RPC (skipped start)"
+fi
+
+if [[ "$RESET_OPINIT" == true ]]; then
+  restart_reset_opinit_bots
 fi
 
 # ─── 4. Resolve deployer private key ─────────────────────────────────────────
@@ -307,8 +371,7 @@ if [[ "$SKIP_CONTRACTS" == false ]]; then
   cd "$REPO_ROOT"
 
   # ─── 5d. Write apps/web/.env ──────────────────────────────────────────────
-  log "Writing apps/web/.env..."
-  write_atomic "$REPO_ROOT/apps/web/.env" <<EOF
+  WEB_ENV_CONTENT=$(cat <<EOF
 
 
 NUXT_PUBLIC_INITIA_CONTRACT_ADDRESS=${AGENT_ADDRESS}
@@ -327,7 +390,15 @@ NUXT_PUBLIC_INITIA_SHOWCASE_TARGET_ADDRESS=${PERP_DEX:-}
 NUXT_PUBLIC_INITIA_EXECUTOR_MAX_TRADE_WEI=1000000000000000000
 NUXT_PUBLIC_INITIA_EXECUTOR_DAILY_LIMIT_WEI=5000000000000000000
 EOF
-  ok "apps/web/.env written"
+)
+  WEB_ENV_FILE="$REPO_ROOT/apps/web/.env"
+  if [[ -f "$WEB_ENV_FILE" ]] && [[ "$(cat "$WEB_ENV_FILE")" == "$WEB_ENV_CONTENT" ]]; then
+    ok "apps/web/.env unchanged (skipping write to avoid Vite reload)"
+  else
+    log "Writing apps/web/.env..."
+    printf '%s\n' "$WEB_ENV_CONTENT" | write_atomic "$WEB_ENV_FILE"
+    ok "apps/web/.env written"
+  fi
 else
   if [[ ! -s "$REPO_ROOT/apps/web/.env" ]]; then
     err "--skip-contracts was set, but apps/web/.env is missing or empty."

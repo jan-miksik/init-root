@@ -56,6 +56,14 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  isAnalysisProcessing: {
+    type: Boolean,
+    default: false,
+  },
+  analyzeStatusText: {
+    type: String,
+    default: '',
+  },
 });
 
 const showMdPreview = ref(false);
@@ -148,8 +156,17 @@ function timeAgo(iso: string) {
         </button>
       </div>
 
-      <div v-if="decisions.length === 0" class="dec-empty">
-        No decisions yet — click <strong>⚡ Run Analysis</strong> to fetch market data and get the LLM&apos;s reasoning
+      <div v-if="decisions.length === 0" class="dec-empty" :class="{ 'dec-empty--loading': isAnalysisProcessing }">
+        <template v-if="isAnalysisProcessing">
+          <span class="spinner dec-empty-spinner" />
+          <div>
+            <div>Analysis is processing. The first result will appear here automatically.</div>
+            <div v-if="analyzeStatusText" class="dec-empty-subtext">{{ analyzeStatusText }}</div>
+          </div>
+        </template>
+        <template v-else>
+          No decisions yet — click <strong>⚡ Run Analysis</strong> to fetch market data and get the LLM&apos;s reasoning
+        </template>
       </div>
 
       <div v-else class="chat-feed">
@@ -517,5 +534,26 @@ function timeAgo(iso: string) {
 .self-mod-actions {
   display: flex;
   gap: 8px;
+}
+
+.dec-empty--loading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: left;
+}
+
+.dec-empty-spinner {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.dec-empty-subtext {
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
 }
 </style>

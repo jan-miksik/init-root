@@ -18,11 +18,14 @@ const {
   trades,
   decisions,
   snapshots,
-  doStatus,
   loading,
   loadError,
-  isAnalyzing,
+  isAnalysisProcessing,
+  isAnalysisBusy,
+  isTradeSettling,
+  tradeSettleStatusText,
   analyzeStatusText,
+  showDecisionLoader,
   analyzeError,
   livePrices,
   livePricesLoading,
@@ -94,7 +97,7 @@ if (justCreated) {
       <AgentHeaderSection
         v-model:menu-open="menuOpen"
         :agent="agent"
-        :is-analyzing="isAnalyzing"
+        :is-analyzing="isAnalysisBusy"
         :analyze-status-text="analyzeStatusText"
         :clearing-history="clearingHistory"
         :live-prices-loading="livePricesLoading"
@@ -134,7 +137,8 @@ if (justCreated) {
         :unrealized-pnl-usd="unrealizedPnlUsd"
         :win-rate="winRate"
         :closed-trades-count="closedTrades.length"
-        :is-analyzing="isAnalyzing"
+        :is-analyzing="isAnalysisBusy"
+        :is-trade-settling="isTradeSettling"
         :is-next-analysis-imminent="isNextAnalysisImminent"
         :seconds-until-next-action="secondsUntilNextAction"
         :open-trades-count="openTrades.length"
@@ -155,6 +159,8 @@ if (justCreated) {
         :pending-modifications="pendingModifications"
         :approve-modification="approve"
         :reject-modification="reject"
+        :is-analysis-processing="showDecisionLoader"
+        :analyze-status-text="analyzeStatusText"
       />
 
       <AgentPositionsSection
@@ -162,12 +168,14 @@ if (justCreated) {
         :closing-trades="new Set()"
         :close-trade-by-user="closeTradeByUser"
         :decisions="decisions"
-        :is-analyzing="isAnalyzing"
+        :is-analyzing="isAnalysisBusy"
+        :is-trade-settling="isTradeSettling"
         :is-next-analysis-imminent="isNextAnalysisImminent"
         :live-prices="livePrices"
         :now="now"
         :pnl-class="pnlClass"
         :seconds-until-next-action="secondsUntilNextAction"
+        :trade-settle-status-text="tradeSettleStatusText"
         :trades="trades"
       />
     </template>

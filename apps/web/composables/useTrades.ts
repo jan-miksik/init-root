@@ -104,8 +104,10 @@ export function useTrades() {
     }
   }
 
-  async function fetchAgentTrades(agentId: string): Promise<Trade[]> {
-    const res = await request<{ trades: Trade[] }>(`/api/agents/${agentId}/trades`);
+  async function fetchAgentTrades(agentId: string, opts?: { fresh?: boolean }): Promise<Trade[]> {
+    const res = await request<{ trades: Trade[] }>(`/api/agents/${agentId}/trades`, {
+      fresh: opts?.fresh,
+    });
     return res.trades;
   }
 

@@ -8,6 +8,7 @@ const props = defineProps<{
   winRate: number;
   closedTradesCount: number;
   isAnalyzing: boolean;
+  isTradeSettling: boolean;
   isNextAnalysisImminent: boolean;
   secondsUntilNextAction: number | null;
   openTradesCount: number;
@@ -81,13 +82,15 @@ function formatCountdown(seconds: number | null): string {
       >
         <template v-if="isAnalyzing">
           <span class="analyze-pulse" style="width: 6px; height: 6px;" />
-          running now
+          {{ isTradeSettling ? 'updating trade…' : 'running now' }}
         </template>
         <template v-else>
           {{ agent.status === 'running' ? formatCountdown(secondsUntilNextAction) : '—' }}
         </template>
       </div>
-      <div class="stat-change">{{ openTradesCount }} of {{ agent.config.maxOpenPositions }} positions open</div>
+      <div class="stat-change">
+        {{ isTradeSettling ? 'Trade update is still landing in the UI.' : `${openTradesCount} of ${agent.config.maxOpenPositions} positions open` }}
+      </div>
     </div>
   </div>
 </template>

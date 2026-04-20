@@ -8,5 +8,5 @@
   "native_feature": "auto-signing",
   "core_logic_path": "contracts/src/Agent.sol",
   "native_feature_frontend_path": "apps/web/utils/initia/react-bridge.ts",
-  "demo_video_url": "TODO"
+  "demo_video_url": "https://youtu.be/BADFZY1s9e8"
 }

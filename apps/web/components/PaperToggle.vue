@@ -102,35 +102,53 @@ const activeIndex = computed(() => {
   isolation: isolate;
 }
 
+@property --paper-glider-c1 {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+@property --paper-glider-c2 {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+@property --paper-glider-edge {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+
 .paper-segmented__glider {
+  --paper-glider-c1: color-mix(in srgb, var(--live) 14%, transparent);
+  --paper-glider-c2: color-mix(in srgb, var(--live) 14%, transparent);
+  --paper-glider-edge: color-mix(in srgb, var(--live) 38%, transparent);
+
   position: absolute;
   top: 2px;
   bottom: 2px;
   left: 2px;
   width: calc((100% - 4px - (var(--cells) - 1) * var(--cell-gap)) / var(--cells));
   border-radius: 1px;
-  background: color-mix(in srgb, var(--live) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--live) 38%, transparent);
+  background: linear-gradient(90deg, var(--paper-glider-c1), var(--paper-glider-c2));
+  box-shadow: inset 0 0 0 1px var(--paper-glider-edge);
   transition:
     transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
-    background 220ms ease,
-    box-shadow 220ms ease;
+    --paper-glider-c1 220ms ease,
+    --paper-glider-c2 220ms ease,
+    --paper-glider-edge 220ms ease;
   z-index: 0;
   pointer-events: none;
 }
 
 .paper-segmented__glider--all {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--live) 14%, transparent) 0%,
-    color-mix(in srgb, var(--paper) 14%, transparent) 100%
-  );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paper) 34%, transparent);
+  --paper-glider-c2: color-mix(in srgb, var(--paper) 14%, transparent);
+  --paper-glider-edge: color-mix(in srgb, var(--paper) 34%, transparent);
 }
 
 .paper-segmented__glider--paper {
-  background: color-mix(in srgb, var(--paper) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--paper) 38%, transparent);
+  --paper-glider-c1: color-mix(in srgb, var(--paper) 14%, transparent);
+  --paper-glider-c2: color-mix(in srgb, var(--paper) 14%, transparent);
+  --paper-glider-edge: color-mix(in srgb, var(--paper) 38%, transparent);
 }
 
 .paper-segmented__option {

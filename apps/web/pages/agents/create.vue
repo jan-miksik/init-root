@@ -78,18 +78,20 @@ function backToPaper() {
           <span class="step-item__num">1</span>
           <span class="step-item__label">Configure agent</span>
         </button>
-        <template v-if="!isPaper">
-          <span class="step-arrow">→</span>
-          <button
-            class="step-item"
-            :class="{ 'step-item--active': step === 2, 'step-item--pending': !createdAgentId }"
-            :disabled="!createdAgentId"
-            @click="goToStep(2)"
-          >
-            <span class="step-item__num">2</span>
-            <span class="step-item__label">Fund agent</span>
-          </button>
-        </template>
+        <Transition name="step-fade">
+          <div v-if="!isPaper" class="step-group">
+            <span class="step-arrow">→</span>
+            <button
+              class="step-item"
+              :class="{ 'step-item--active': step === 2, 'step-item--pending': !createdAgentId }"
+              :disabled="!createdAgentId"
+              @click="goToStep(2)"
+            >
+              <span class="step-item__num">2</span>
+              <span class="step-item__label">Fund agent</span>
+            </button>
+          </div>
+        </Transition>
       </nav>
 
       <div class="edit-bar__actions">
@@ -130,12 +132,15 @@ function backToPaper() {
       </div>
     </div>
 
-    <div v-if="isPaper && step === 1" class="paper-callout">
-      <span>Paper Trading — simulated balance, no wallet or on-chain transaction needed. You can set your starting balance under Trading Config bellow.</span>
-    </div>
-
-    <div v-else-if="step === 1 && shouldShowGasTopUpHelp" class="live-callout">
-      <span>Live create checks your wallet fee balance first. If needed, the app adds a small local test GAS top-up automatically before asking you to sign the create transaction.</span>
+    <div class="callout-area">
+      <Transition name="callout" mode="out-in">
+        <div v-if="isPaper && step === 1" key="paper" class="paper-callout">
+          <span>Paper Trading — simulated balance, no wallet or on-chain transaction needed. You can set your starting balance under Trading Config bellow.</span>
+        </div>
+        <div v-else-if="step === 1 && shouldShowGasTopUpHelp" key="live" class="live-callout">
+          <span>Live create checks your wallet fee balance first. If needed, the app adds a small local test GAS top-up automatically before asking you to sign the create transaction.</span>
+        </div>
+      </Transition>
     </div>
 
     <div v-show="step === 1" class="edit-page__body">
@@ -359,8 +364,10 @@ function backToPaper() {
 .edit-bar__save {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   padding: 7px 18px;
+  min-width: 196px;
   background: #e0e0e0;
   color: #0a0a0a;
   border: none;
@@ -371,7 +378,7 @@ function backToPaper() {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: background 0.12s, opacity 0.12s;
+  transition: background 0.18s, opacity 0.12s, color 0.18s;
 }
 
 .edit-bar__save:hover { background: #fff; }
@@ -441,9 +448,6 @@ function backToPaper() {
   font-family: 'Space Mono', monospace;
   font-size: 11px;
   color: #d97706;
-  max-width: 740px;
-  margin: 0 auto;
-  width: 100%;
 }
 
 .live-callout {
@@ -457,12 +461,43 @@ function backToPaper() {
   font-family: 'Space Mono', monospace;
   font-size: 11px;
   color: #7dd3fc;
+}
+
+.paper-callout__icon { font-style: normal; flex-shrink: 0; }
+
+.callout-area {
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   max-width: 740px;
   margin: 0 auto;
   width: 100%;
 }
 
-.paper-callout__icon { font-style: normal; flex-shrink: 0; }
+.step-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.callout-enter-active,
+.callout-leave-active {
+  transition: opacity 0.18s;
+}
+.callout-enter-from,
+.callout-leave-to {
+  opacity: 0;
+}
+
+.step-fade-enter-active,
+.step-fade-leave-active {
+  transition: opacity 0.18s;
+}
+.step-fade-enter-from,
+.step-fade-leave-to {
+  opacity: 0;
+}
 
 .edit-page__body {
   display: flex;

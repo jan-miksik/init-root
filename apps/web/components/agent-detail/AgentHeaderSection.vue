@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 
 const props = defineProps<{
   agent: any;
@@ -26,6 +26,22 @@ const { updateAgent } = useAgents();
 const editingBalance = ref(false);
 const balanceInput = ref('');
 const savingBalance = ref(false);
+
+function handleDocumentClick(event: MouseEvent) {
+  const target = event.target as Node | null;
+  if (!props.menuOpen || !target) return;
+  if (!menuRef.value?.contains(target)) {
+    emit('update:menuOpen', false);
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleDocumentClick);
+});
 
 function openBalanceEdit() {
   balanceInput.value = String(props.agent.config.paperBalance ?? 0);

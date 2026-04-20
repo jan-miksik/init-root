@@ -68,6 +68,8 @@ export function useAgentDetailPage(id: string) {
   const loading = ref(true);
   const loadError = ref<string | null>(null);
   const isAnalyzing = ref(false);
+  const isTradeSettling = ref(false);
+  const tradeSettleStatusText = ref('');
   const analyzePhase = ref<'request' | 'polling' | 'refreshing'>('request');
   const analyzeElapsed = ref(0);
   let analyzeTimer: any = null;
@@ -91,9 +93,14 @@ export function useAgentDetailPage(id: string) {
   const ANALYZE_ERROR_BANNER_DELAY_MS = 3 * 60_000;
   const ANALYZE_BACKGROUND_WAIT_MS = 3 * 60_000;
   const ANALYZE_BACKGROUND_POLL_MS = 2_000;
+  const ANALYZE_BOOTSTRAP_WAIT_MS = 30_000;
+  const ANALYZE_BOOTSTRAP_POLL_MS = 1_500;
+  const ANALYZE_TRADE_SETTLE_WAIT_MS = 4_000;
+  const ANALYZE_TRADE_SETTLE_POLL_MS = 500;
   const WALLET_STATE_TIMEOUT_MS = 30_000;
   const WALLET_STATE_POLL_MS = 250;
   let analyzeWatchToken = 0;
+  const backgroundAnalyzeWatchMode = ref<'analysis' | 'bootstrap' | null>(null);
 
   // Timers
   let countdownInterval: any = null;
@@ -108,16 +115,66 @@ export function useAgentDetailPage(id: string) {
   }
 
   const analyzeStatusText = computed(() => {
-    if (!isAnalyzing.value) return '';
-    const s = analyzeElapsed.value;
-    const elapsed = s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
-    const phaseText: Record<string, string> = {
-      request: s < 5 ? 'Sending request…' : s < 15 ? 'Fetching market data…' : 'LLM reasoning…',
-      polling: 'Waiting for decision…',
-      refreshing: 'Loading results…',
-    };
-    return `${phaseText[analyzePhase.value]} (${elapsed})`;
+    if (isAnalyzing.value) {
+      const s = analyzeElapsed.value;
+      const elapsed = s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+      const phaseText: Record<string, string> = {
+        request: s < 5 ? 'Sending request…' : s < 15 ? 'Fetching market data…' : 'LLM reasoning…',
+        polling: 'Waiting for decision…',
+        refreshing: 'Loading results…',
+      };
+      return `${phaseText[analyzePhase.value]} (${elapsed})`;
+    }
+
+    if (doStatus.value?.analysisState === 'awaiting_llm') {
+      const ageMs = doStatus.value.pendingLlmJobAt
+        ? Math.max(0, now.value - doStatus.value.pendingLlmJobAt)
+        : (doStatus.value.pendingLlmAgeMs ?? 0);
+      const s = Math.max(0, Math.floor(ageMs / 1000));
+      const elapsed = s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+      return `LLM reasoning… (${elapsed})`;
+    }
+
+    if (doStatus.value?.analysisState === 'running') {
+      const startedAt = doStatus.value.loopRunningAt ?? now.value;
+      const s = Math.max(0, Math.floor((now.value - startedAt) / 1000));
+      const elapsed = s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+      return `Fetching market data… (${elapsed})`;
+    }
+
+    if (isTradeSettling.value) {
+      return tradeSettleStatusText.value || 'Updating positions…';
+    }
+
+    if (
+      backgroundAnalyzeWatchMode.value === 'bootstrap'
+      && agent.value?.status === 'running'
+      && decisions.value.length === 0
+    ) {
+      return 'Checking for first analysis…';
+    }
+
+    return '';
   });
+
+  const isAnalysisProcessing = computed(() =>
+    isAnalyzing.value
+    || doStatus.value?.analysisState === 'running'
+    || doStatus.value?.analysisState === 'awaiting_llm',
+  );
+
+  const isAnalysisBusy = computed(() =>
+    isAnalysisProcessing.value || isTradeSettling.value,
+  );
+
+  const showDecisionLoader = computed(() =>
+    isAnalysisProcessing.value
+    || (
+      backgroundAnalyzeWatchMode.value === 'bootstrap'
+      && agent.value?.status === 'running'
+      && decisions.value.length === 0
+    ),
+  );
 
 
   const isInitiaAgent = computed(() => agent.value?.chain === 'initia');
@@ -187,6 +244,7 @@ export function useAgentDetailPage(id: string) {
 
   function cancelBackgroundAnalyzeWatch() {
     analyzeWatchToken += 1;
+    backgroundAnalyzeWatchMode.value = null;
   }
 
   // Data Loading
@@ -223,7 +281,7 @@ export function useAgentDetailPage(id: string) {
 
   async function refreshAnalysisOutputs() {
     const [t, d, p] = await Promise.all([
-      fetchAgentTrades(id),
+      fetchAgentTrades(id, { fresh: true }),
       request<{ decisions: AgentDecision[] }>(`/api/agents/${id}/decisions`, { fresh: true }),
       request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${id}/performance`, { fresh: true }),
     ]);
@@ -232,15 +290,56 @@ export function useAgentDetailPage(id: string) {
     snapshots.value = p.snapshots;
   }
 
+  function doesDecisionMutateTrades(decision?: Pick<AgentDecision, 'decision'> | null): boolean {
+    if (!decision?.decision) return false;
+    const normalized = decision.decision.toUpperCase();
+    return ['BUY', 'SELL', 'CLOSE', 'OPEN_LONG', 'OPEN_SHORT', 'CLOSE_LONG', 'CLOSE_SHORT'].includes(normalized);
+  }
+
+  function describeTradeSettlement(decision?: Pick<AgentDecision, 'decision'> | null): string {
+    const normalized = decision?.decision?.toUpperCase();
+    if (!normalized) return 'Updating positions…';
+    if (['CLOSE', 'CLOSE_LONG', 'CLOSE_SHORT'].includes(normalized)) return 'Closing position…';
+    if (['BUY', 'SELL', 'OPEN_LONG', 'OPEN_SHORT'].includes(normalized)) return 'Opening position…';
+    return 'Updating positions…';
+  }
+
+  async function waitForTradePersistence(
+    previousTradeIds: Set<string>,
+    latestDecision: Pick<AgentDecision, 'decision'> | null,
+  ): Promise<void> {
+    if (!doesDecisionMutateTrades(latestDecision)) return;
+    isTradeSettling.value = true;
+    tradeSettleStatusText.value = describeTradeSettlement(latestDecision);
+    const deadline = Date.now() + ANALYZE_TRADE_SETTLE_WAIT_MS;
+    try {
+      while (Date.now() < deadline) {
+        try {
+          const latestTrades = await fetchAgentTrades(id, { fresh: true });
+          const hasTradeDelta = latestTrades.length !== previousTradeIds.size
+            || latestTrades.some((trade) => !previousTradeIds.has(trade.id));
+          trades.value = latestTrades;
+          if (hasTradeDelta) return;
+        } catch {
+          // non-fatal; keep polling briefly
+        }
+        await sleep(ANALYZE_TRADE_SETTLE_POLL_MS);
+      }
+    } finally {
+      isTradeSettling.value = false;
+      tradeSettleStatusText.value = '';
+    }
+  }
+
   async function loadAll() {
     loading.value = true;
     loadError.value = null;
     try {
       const [a, t, d, p] = await Promise.all([
         getAgent(id),
-        fetchAgentTrades(id),
-        request<{ decisions: AgentDecision[] }>(`/api/agents/${id}/decisions`),
-        request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${id}/performance`),
+        fetchAgentTrades(id, { fresh: true }),
+        request<{ decisions: AgentDecision[] }>(`/api/agents/${id}/decisions`, { fresh: true }),
+        request<{ snapshots: PerformanceSnapshot[] }>(`/api/agents/${id}/performance`, { fresh: true }),
       ]);
       agent.value = a;
       trades.value = t;
@@ -269,7 +368,7 @@ export function useAgentDetailPage(id: string) {
     timeoutMs: number,
     options?: {
       pollMs?: number;
-      stage?: 'foreground' | 'background';
+      stage?: 'foreground' | 'background' | 'bootstrap';
       shouldStop?: () => boolean;
     },
   ): Promise<boolean> {
@@ -306,22 +405,40 @@ export function useAgentDetailPage(id: string) {
     return false;
   }
 
-  async function startBackgroundDecisionWatch(previousDecisionIds: Set<string>) {
+  async function startBackgroundDecisionWatch(
+    previousDecisionIds: Set<string>,
+    options?: {
+      pollMs?: number;
+      stage?: 'background' | 'bootstrap';
+      timeoutMs?: number;
+    },
+  ) {
     const watchToken = ++analyzeWatchToken;
-    const hasNewDecision = await waitForDecisionChange(previousDecisionIds, ANALYZE_BACKGROUND_WAIT_MS, {
-      stage: 'background',
-      pollMs: ANALYZE_BACKGROUND_POLL_MS,
-      shouldStop: () => watchToken !== analyzeWatchToken,
-    });
-    if (watchToken !== analyzeWatchToken) return;
-    if (!hasNewDecision) return;
+    const stage = options?.stage ?? 'background';
+    const previousTradeIds = new Set(trades.value.map((trade) => trade.id));
+    backgroundAnalyzeWatchMode.value = stage === 'bootstrap' ? 'bootstrap' : 'analysis';
     try {
-      await refreshAnalysisOutputs();
-      await Promise.all([refreshDoStatus(), fetchLivePrices()]);
-      if (analyzeError.value?.includes('No new decision yet') || analyzeError.value?.includes('still running')) {
-        analyzeError.value = null;
+      const hasNewDecision = await waitForDecisionChange(previousDecisionIds, options?.timeoutMs ?? ANALYZE_BACKGROUND_WAIT_MS, {
+        stage,
+        pollMs: options?.pollMs ?? ANALYZE_BACKGROUND_POLL_MS,
+        shouldStop: () => watchToken !== analyzeWatchToken,
+      });
+      if (watchToken !== analyzeWatchToken) return;
+      if (!hasNewDecision) return;
+      try {
+        await refreshAnalysisOutputs();
+        const latestDecision = decisions.value.find((decision) => !previousDecisionIds.has(decision.id)) ?? null;
+        await waitForTradePersistence(previousTradeIds, latestDecision);
+        await Promise.all([refreshDoStatus(), fetchLivePrices()]);
+        if (analyzeError.value?.includes('No new decision yet') || analyzeError.value?.includes('still running')) {
+          analyzeError.value = null;
+        }
+      } catch { /* ignore */ }
+    } finally {
+      if (watchToken === analyzeWatchToken) {
+        backgroundAnalyzeWatchMode.value = null;
       }
-    } catch { /* ignore */ }
+    }
   }
 
   // Lifecycle
@@ -352,16 +469,41 @@ export function useAgentDetailPage(id: string) {
         refreshDoStatus,
         5_000,
         async () => {
+          const previousDecisionIds = new Set(decisions.value.map((decision) => decision.id));
+          const previousTradeIds = new Set(trades.value.map((trade) => trade.id));
           const [t, d] = await Promise.all([
-            fetchAgentTrades(id),
+            fetchAgentTrades(id, { fresh: true }),
             request<{ decisions: AgentDecision[] }>(`/api/agents/${id}/decisions`, { fresh: true }),
           ]);
           trades.value = t;
           decisions.value = d.decisions;
+          const latestDecision = decisions.value.find((decision) => !previousDecisionIds.has(decision.id)) ?? null;
+          await waitForTradePersistence(previousTradeIds, latestDecision);
         },
       );
     }
   });
+
+  const autoAnalyzeWatchMode = computed<'analysis' | 'bootstrap' | null>(() => {
+    if (loading.value || isAnalyzing.value || agent.value?.status !== 'running') return null;
+    if (doStatus.value?.analysisState === 'running' || doStatus.value?.analysisState === 'awaiting_llm') {
+      return 'analysis';
+    }
+    if (decisions.value.length === 0) return 'bootstrap';
+    return null;
+  });
+
+  watch(autoAnalyzeWatchMode, (mode) => {
+    if (!mode) {
+      cancelBackgroundAnalyzeWatch();
+      return;
+    }
+    void startBackgroundDecisionWatch(new Set(decisions.value.map((d) => d.id)), {
+      stage: mode === 'bootstrap' ? 'bootstrap' : 'background',
+      timeoutMs: mode === 'bootstrap' ? ANALYZE_BOOTSTRAP_WAIT_MS : ANALYZE_BACKGROUND_WAIT_MS,
+      pollMs: mode === 'bootstrap' ? ANALYZE_BOOTSTRAP_POLL_MS : ANALYZE_BACKGROUND_POLL_MS,
+    });
+  }, { immediate: true });
 
   // Actions
   async function handleStart() {
@@ -403,13 +545,14 @@ export function useAgentDetailPage(id: string) {
   }
 
   async function handleAnalyze() {
-    if (isAnalyzing.value) return;
+    if (isAnalysisBusy.value) return;
     cancelBackgroundAnalyzeWatch();
     isAnalyzing.value = true;
     analyzePhase.value = 'request';
     analyzeError.value = null;
     startAnalyzeTimer();
     const previousDecisionIds = new Set(decisions.value.map((d) => d.id));
+    const previousTradeIds = new Set(trades.value.map((t) => t.id));
     const analyzeStartedAt = Date.now();
     let pendingRun = false;
 
@@ -436,6 +579,8 @@ export function useAgentDetailPage(id: string) {
 
       analyzePhase.value = 'refreshing';
       await refreshAnalysisOutputs();
+      const latestDecision = decisions.value.find((decision) => !previousDecisionIds.has(decision.id)) ?? null;
+      await waitForTradePersistence(previousTradeIds, latestDecision);
       await Promise.all([refreshDoStatus(), fetchLivePrices()]);
 
       if (!hasNewDecision) {
@@ -454,6 +599,8 @@ export function useAgentDetailPage(id: string) {
 
           analyzePhase.value = 'refreshing';
           await refreshAnalysisOutputs();
+          const latestResolvedDecision = decisions.value.find((decision) => !previousDecisionIds.has(decision.id)) ?? null;
+          await waitForTradePersistence(previousTradeIds, latestResolvedDecision);
           await Promise.all([refreshDoStatus(), fetchLivePrices()]);
 
           if (resolvedDuringGrace) return;
@@ -550,7 +697,7 @@ export function useAgentDetailPage(id: string) {
 
   async function closeTradeByUser(tradeId: string) {
     await closeTrade(tradeId);
-    trades.value = await fetchAgentTrades(id);
+    trades.value = await fetchAgentTrades(id, { fresh: true });
   }
 
   // Display Computeds
@@ -603,7 +750,12 @@ export function useAgentDetailPage(id: string) {
     loading,
     loadError,
     isAnalyzing,
+    isAnalysisProcessing,
+    isAnalysisBusy,
+    isTradeSettling,
+    tradeSettleStatusText,
     analyzeStatusText,
+    showDecisionLoader,
     analyzeError,
     livePrices,
     livePricesLoading,

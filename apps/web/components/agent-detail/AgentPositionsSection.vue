@@ -48,6 +48,10 @@ const props = defineProps({
     type: Boolean,
     required: true,
   },
+  isTradeSettling: {
+    type: Boolean,
+    required: true,
+  },
   isNextAnalysisImminent: {
     type: Boolean,
     required: true,
@@ -67,6 +71,10 @@ const props = defineProps({
   secondsUntilNextAction: {
     type: Number as PropType<number | null>,
     default: null,
+  },
+  tradeSettleStatusText: {
+    type: String,
+    default: '',
   },
   trades: {
     type: Array as PropType<Trade[]>,
@@ -194,6 +202,11 @@ function timeAgo(iso: string) {
 
 <template>
   <div>
+    <div v-if="isTradeSettling" class="positions-settling">
+      <span class="positions-settling-pulse" />
+      <span>{{ tradeSettleStatusText || 'Updating positions…' }}</span>
+    </div>
+
     <div v-if="openTrades.length > 0" class="positions-section">
       <div class="dec-section-header section-header-spaced">
         <span class="dec-section-title">Open Positions</span>
@@ -347,7 +360,9 @@ function timeAgo(iso: string) {
           </thead>
           <tbody>
             <tr v-if="trades.length === 0">
-              <td colspan="11" class="trades-empty">No trades yet</td>
+              <td colspan="11" class="trades-empty">
+                {{ isTradeSettling ? (tradeSettleStatusText || 'Updating positions…') : 'No trades yet' }}
+              </td>
             </tr>
             <template v-for="trade in trades" :key="trade.id">
               <tr class="trade-row" @click="toggleTrade(trade.id)">
@@ -400,6 +415,19 @@ function timeAgo(iso: string) {
 
 <style scoped>
 .positions-section { margin-bottom: 24px; }
+.positions-settling {
+  margin-bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
 .section-header-spaced { margin-bottom: 12px; }
 .positions-grid { display: flex; flex-direction: column; gap: 16px; }
 .pair-card { padding: 0; overflow: hidden; width: 100%; }
@@ -436,4 +464,17 @@ function timeAgo(iso: string) {
 .pnl-dimmed { opacity: 0.65; }
 .dex-link { font-size: 11px; font-family: var(--font-mono, monospace); color: var(--text-muted); text-decoration: none; letter-spacing: 0.02em; transition: color var(--t-snap); }
 .dex-link:hover { color: var(--text); }
+.positions-settling-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: positions-settling-blink 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes positions-settling-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
 </style>

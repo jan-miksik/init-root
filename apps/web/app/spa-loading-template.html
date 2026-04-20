@@ -1,11 +1,10 @@
-<div style="position:fixed;inset:0;background:#0f1115;display:flex;align-items:center;justify-content:center;z-index:9999;">
+<div class="page-loader-shell">
   <div class="page-loader">
-    <div class="page-loader-logo">
-      <svg width="120" height="28" viewBox="0 0 120 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="initRoot">
-        <text x="0" y="22" font-family="ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace" font-size="22" font-weight="700" letter-spacing="-0.03em" fill="#e2e8f0">init</text>
-        <text x="52" y="22" font-family="ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace" font-size="22" font-weight="700" letter-spacing="-0.03em" fill="#74d38a">Root</text>
-      </svg>
-    </div>
+    <svg width="120" height="28" viewBox="0 0 120 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="initRoot">
+      <text x="60" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace" font-size="22" font-weight="700" letter-spacing="-0.03em">
+        <tspan fill="#e2e8f0">init</tspan><tspan fill="#74d38a">Root</tspan>
+      </text>
+    </svg>
     <div class="page-loader-track">
       <span class="page-loader-block"></span><span class="page-loader-block"></span><span class="page-loader-block"></span><span class="page-loader-block"></span>
       <span class="page-loader-block"></span><span class="page-loader-block"></span><span class="page-loader-block"></span><span class="page-loader-block"></span>
@@ -13,11 +12,24 @@
     <!-- <span class="page-loader-label">Loading</span> -->
   </div>
   <style>
+    .page-loader-shell {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: #0f1115;
+      z-index: 9999;
+    }
+
     .page-loader {
       display: flex;
       flex-direction: column;
+      justify-content: center;
       align-items: center;
       gap: 16px;
+      width: max-content;
+      margin: 0 auto;
+      text-align: center;
     }
 
     .page-loader-logo {
@@ -31,7 +43,13 @@
 
     .page-loader-track {
       display: flex;
+      justify-content: center;
+      align-items: center;
       gap: 2px;
+    }
+
+    .page-loader svg {
+      display: block;
     }
 
     .page-loader-block {
