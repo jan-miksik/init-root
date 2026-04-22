@@ -242,6 +242,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
 
   let rawResponse = '';
   let usage: { inputTokens?: number; outputTokens?: number } = {};
+  let actionLlmApiKey: string | undefined;
   if (!env.OPENROUTER_API_KEY) {
     console.warn(`[manager-loop] ${managerId}: OPENROUTER_API_KEY not set — holding`);
     rawResponse = JSON.stringify([{ action: 'hold', reasoning: 'No API key configured' }]);
@@ -265,6 +266,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
           orApiKey = resolved.apiKey;
         }
       }
+      actionLlmApiKey = orApiKey;
       const openrouter = createOpenRouter({ apiKey: orApiKey });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Manager LLM timed out after ${MANAGER_LLM_TIMEOUT_MS / 1000}s`)), MANAGER_LLM_TIMEOUT_MS),
@@ -307,6 +309,7 @@ export async function runManagerLoop(managerId: string, env: Env, ctx: DurableOb
       managerId,
       managerRow.ownerAddress,
       hasUserOpenRouterKey,
+      actionLlmApiKey,
     );
     const result = {
       ...actionResult,

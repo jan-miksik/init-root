@@ -27,6 +27,8 @@ import type {
 export type { LLMRouterConfig, PerpTradeDecisionRequest, TradeDecisionRequest } from './types.js';
 export { buildPerpJsonSchemaInstruction } from './request-builders.js';
 
+const MODEL_HEALTH_ECHO = 'model-health-check';
+
 /**
  * Get a structured trade decision from the LLM.
  *
@@ -117,6 +119,70 @@ export async function listFreeModels(
   }
 
   return freeModels;
+}
+
+export async function verifyModelHealth(
+  config: LLMRouterConfig,
+): Promise<{ ok: true; rawResponse: string } | { ok: false; error: string; rawResponse?: string }> {
+  const timeoutMs = Math.min(config.timeoutMs ?? DEFAULT_LLM_TIMEOUT_MS, 8000);
+  const { resolveModel } = createModelResolver(config);
+  const prompt =
+    'Reply with exactly one JSON object and nothing else: ' +
+    `{"status":"ok","echo":"${MODEL_HEALTH_ECHO}"}`;
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Model health check timed out after ${timeoutMs / 1000}s`)),
+        timeoutMs,
+      ),
+    );
+
+    const result = await Promise.race([
+      generateText({
+        model: resolveModel(config.model) as any,
+        prompt,
+        temperature: 0,
+        maxRetries: 0,
+        maxOutputTokens: 80,
+      }),
+      timeoutPromise,
+    ]);
+
+    const rawResponse = result.text ?? '';
+    const parsed = tryParseHealthResponse(rawResponse);
+    if (parsed?.status === 'ok' && parsed.echo === MODEL_HEALTH_ECHO) {
+      return { ok: true, rawResponse };
+    }
+
+    return {
+      ok: false,
+      error: 'Unexpected model health-check response',
+      rawResponse,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function tryParseHealthResponse(rawResponse: string): { status?: unknown; echo?: unknown } | null {
+  const trimmed = rawResponse.trim();
+  if (!trimmed) return null;
+
+  const withoutCodeFence = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const firstBrace = withoutCodeFence.indexOf('{');
+  const lastBrace = withoutCodeFence.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace < firstBrace) return null;
+
+  const candidate = withoutCodeFence.slice(firstBrace, lastBrace + 1);
+  try {
+    return JSON.parse(candidate) as { status?: unknown; echo?: unknown };
+  } catch {
+    return null;
+  }
 }
 
 async function runStructuredDecision<TParsed>(params: {

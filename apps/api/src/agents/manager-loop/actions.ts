@@ -23,6 +23,7 @@ import {
   normalizeTradingInterval,
 } from '@something-in-loop/shared';
 import type { ManagerDecision } from './types.js';
+import { verifyModelHealth } from '../../services/llm-router/index.js';
 
 const MANAGER_DISALLOWED_AGENT_PARAMS = new Set([
   'chain',
@@ -84,6 +85,7 @@ export async function executeManagerAction(
   managerId: string,
   ownerAddress: string,
   hasUserOpenRouterKey = false,
+  llmApiKey?: string,
 ): Promise<{ success: boolean; detail?: string; error?: string }> {
   const { action, agentId, params } = decision;
   const allowedModels = buildAllowedAgentModels(hasUserOpenRouterKey);
@@ -171,7 +173,10 @@ export async function executeManagerAction(
       const { personaMd: paramsPersona, ...restParams } = sanitizedParams as Record<string, unknown> & { personaMd?: string };
       const patch: Record<string, unknown> = { ...restParams };
       if (typeof patch.llmModel === 'string') {
-        patch.llmModel = normaliseAgentModel(patch.llmModel, allowedModels);
+        const nextModel = normaliseAgentModel(patch.llmModel, allowedModels);
+        const validationError = await validateManagerSelectedAgentModel(nextModel, llmApiKey);
+        if (validationError) return { success: false, error: validationError };
+        patch.llmModel = nextModel;
       }
       if (patch.analysisInterval !== undefined) {
         patch.analysisInterval = normalizeManagerAnalysisInterval(patch.analysisInterval, previousAnalysisInterval);
@@ -273,6 +278,8 @@ export async function executeManagerAction(
       const slippageSimulation = 0.3;
       const analysisInterval = normalizeManagerAnalysisInterval(sanitizedParams.analysisInterval, '1h');
       const llmModel = normaliseAgentModel(sanitizedParams.llmModel, allowedModels);
+      const validationError = await validateManagerSelectedAgentModel(llmModel, llmApiKey);
+      if (validationError) return { success: false, error: validationError };
       const validAgentProfileIds = new Set(AGENT_PROFILES.map((p) => p.id));
       const llmProfileId = typeof sanitizedParams.profileId === 'string' ? sanitizedParams.profileId : null;
       const profileId = llmProfileId && validAgentProfileIds.has(llmProfileId) ? llmProfileId : null;
@@ -338,4 +345,18 @@ export async function executeManagerAction(
     default:
       return { success: false, error: `Unknown action: ${String(action)}` };
   }
+}
+
+async function validateManagerSelectedAgentModel(modelId: string, llmApiKey?: string): Promise<string | null> {
+  if (!llmApiKey) return null;
+
+  const probe = await verifyModelHealth({
+    apiKey: llmApiKey,
+    model: modelId,
+    temperature: 0,
+    timeoutMs: 8000,
+  });
+
+  if (probe.ok) return null;
+  return `Selected agent model "${modelId}" failed health check: ${probe.error}`;
 }

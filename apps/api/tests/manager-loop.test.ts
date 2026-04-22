@@ -17,7 +17,20 @@ const doClientMocks = vi.hoisted(() => ({
   syncTradingAgentConfigDo: vi.fn(),
 }));
 
+const llmRouterMocks = vi.hoisted(() => ({
+  verifyModelHealth: vi.fn(async () => ({ ok: true as const, rawResponse: '{"status":"ok","echo":"model-health-check"}' })),
+}));
+
 vi.mock('../src/lib/do-clients.js', () => doClientMocks);
+vi.mock('../src/services/llm-router/index.ts', async () => {
+  const actual = await vi.importActual<typeof import('../src/services/llm-router/index.ts')>(
+    '../src/services/llm-router/index.ts',
+  );
+  return {
+    ...actual,
+    verifyModelHealth: llmRouterMocks.verifyModelHealth,
+  };
+});
 
 const mockAgent: ManagedAgentSnapshot = {
   id: 'agent_001',
@@ -117,6 +130,11 @@ function createMockDb(
 
 beforeEach(() => {
   Object.values(doClientMocks).forEach((mock) => mock.mockReset());
+  llmRouterMocks.verifyModelHealth.mockReset();
+  llmRouterMocks.verifyModelHealth.mockResolvedValue({
+    ok: true,
+    rawResponse: '{"status":"ok","echo":"model-health-check"}',
+  });
 });
 
 describe('parseManagerDecisions', () => {
@@ -387,6 +405,36 @@ describe('executeManagerAction', () => {
     expect(rows[0].llmModel).toBe(paidModel);
   });
 
+  it('blocks manager-created agents when the selected model fails health validation', async () => {
+    const { db, insertSpy } = createMockDb([]);
+    llmRouterMocks.verifyModelHealth.mockResolvedValueOnce({
+      ok: false,
+      error: 'provider returned 503',
+    });
+
+    const result = await executeManagerAction(
+      {
+        action: 'create_agent',
+        reasoning: 'launch a new paper agent',
+        params: {
+          name: 'Unhealthy Model Agent',
+          llmModel: DEFAULT_FREE_AGENT_MODEL,
+        },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr',
+      false,
+      'sk-or-v1-test',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('failed health check');
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(doClientMocks.startTradingAgentDo).not.toHaveBeenCalled();
+  });
+
   it('prevents manager-created agents beyond the configured manager maxAgents', async () => {
     const { db, insertSpy } = createMockDb(
       [
@@ -514,6 +562,54 @@ describe('executeManagerAction', () => {
     expect(result.error).toContain('paper agents');
     expect(updateCalls).toHaveLength(0);
     expect(doClientMocks.syncTradingAgentConfigDo).not.toHaveBeenCalled();
+  });
+
+  it('blocks llmModel changes when the manager-selected model fails health validation', async () => {
+    const { db, updateCalls } = createMockDb([
+      {
+        id: 'agent_001',
+        name: 'Managed Paper Agent',
+        status: 'stopped',
+        llmModel: DEFAULT_FREE_AGENT_MODEL,
+        isPaper: true,
+        config: JSON.stringify({
+          name: 'Managed Paper Agent',
+          chain: 'base',
+          isPaper: true,
+          llmModel: DEFAULT_FREE_AGENT_MODEL,
+          pairs: ['INIT/USD'],
+          strategies: ['combined'],
+          analysisInterval: '1h',
+          paperBalance: 10000,
+          temperature: 0.7,
+        }),
+      },
+    ]);
+    llmRouterMocks.verifyModelHealth.mockResolvedValueOnce({
+      ok: false,
+      error: 'provider returned 503',
+    });
+
+    const result = await executeManagerAction(
+      {
+        action: 'modify_agent',
+        agentId: 'agent_001',
+        reasoning: 'upgrade the model',
+        params: {
+          llmModel: DEFAULT_FREE_AGENT_MODEL,
+        },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr',
+      false,
+      'sk-or-v1-test',
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('failed health check');
+    expect(updateCalls).toHaveLength(0);
   });
 
   it('rejects manager actions against agents owned by another user', async () => {
