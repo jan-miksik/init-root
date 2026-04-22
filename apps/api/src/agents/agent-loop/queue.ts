@@ -97,7 +97,17 @@ export async function enqueueLlmJob(params: EnqueueLlmJobParams): Promise<boolea
     },
     tradeRequest,
   };
-  await env.LLM_QUEUE.send(message);
+
+  try {
+    await env.LLM_QUEUE.send(message);
+  } catch (sendErr) {
+    log.warn('llm_queue_send_failed_fallback_sync', { jobId, error: String(sendErr) });
+    await ctx.storage.delete('pendingLlmJobId');
+    await ctx.storage.delete('pendingLlmJobAt');
+    await ctx.storage.delete('pendingLlmContext');
+    return false;
+  }
+
   log.info('llm_job_enqueued', { jobId, model: effectiveLlmModel });
   return true;
 }

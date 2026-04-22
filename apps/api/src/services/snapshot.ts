@@ -4,7 +4,7 @@
  * for all running agents.
  */
 import { drizzle } from 'drizzle-orm/d1';
-import { eq, desc } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { agents, trades, performanceSnapshots } from '../db/schema.js';
 import { generateId, nowIso } from '../lib/utils.js';
 import type { Env } from '../types/env.js';
@@ -56,6 +56,23 @@ export function computeMetrics(
   return { balance: currentBalance, totalPnlPct, winRate, totalTrades, sharpeRatio, maxDrawdown };
 }
 
+export function isSnapshotEligibleAgent(agent: {
+  status: string;
+  isPaper?: boolean | null;
+  config: string;
+}): boolean {
+  if (agent.status !== 'running' || agent.isPaper !== true) {
+    return false;
+  }
+
+  try {
+    const config = JSON.parse(agent.config) as { paperBalance?: unknown };
+    return typeof config.paperBalance === 'number' && Number.isFinite(config.paperBalance);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Save performance snapshots for all agents.
  * Called from the hourly Cron Trigger.
@@ -68,11 +85,20 @@ export async function snapshotAllAgents(env: Env): Promise<void> {
   let totalProcessed = 0;
 
   for (;;) {
-    const batch = await db.select().from(agents).limit(PAGE_SIZE).offset(offset);
+    const batch = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.status, 'running'), eq(agents.isPaper, true)))
+      .limit(PAGE_SIZE)
+      .offset(offset);
     if (batch.length === 0) break;
 
     for (const agent of batch) {
       try {
+        if (!isSnapshotEligibleAgent(agent)) {
+          continue;
+        }
+
         const config = JSON.parse(agent.config) as { paperBalance: number };
         const agentTrades = await db
           .select({
@@ -107,12 +133,12 @@ export async function snapshotAllAgents(env: Env): Promise<void> {
           maxDrawdown: metrics.maxDrawdown,
           snapshotAt: nowIso(),
         });
+        totalProcessed += 1;
       } catch (err) {
         console.error(`[snapshot] Failed for agent ${agent.id}:`, err);
       }
     }
 
-    totalProcessed += batch.length;
     offset += PAGE_SIZE;
   }
 

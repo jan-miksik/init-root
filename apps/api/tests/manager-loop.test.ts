@@ -62,20 +62,29 @@ function createMockDb(
   managerRows: Array<Record<string, unknown>> = [
     {
       id: 'manager_001',
+      ownerAddress: 'owner_addr',
       config: JSON.stringify({
         riskParams: { maxTotalDrawdown: 0.2, maxAgents: 10, maxCorrelatedPositions: 3 },
       }),
     },
   ],
 ) {
-  const rows = agentRows.map((row) => ({ ...row }));
-  const managers = managerRows.map((row) => ({ ...row }));
+  const rows = agentRows.map((row) => ({
+    ownerAddress: 'owner_addr',
+    managerId: 'manager_001',
+    ...row,
+  }));
+  const managers = managerRows.map((row) => ({
+    ownerAddress: 'owner_addr',
+    ...row,
+  }));
   const insertSpy = vi.fn(async (values: Record<string, unknown>) => {
     rows.push({ ...values });
   });
   const updateCalls: Array<Record<string, unknown>> = [];
   const updateSpy = vi.fn((values: Record<string, unknown>) => {
     updateCalls.push({ ...values });
+    rows.forEach((row) => Object.assign(row, values));
     return {
       where: async () => undefined,
     };
@@ -316,7 +325,7 @@ describe('executeManagerAction', () => {
   });
 
   it('creates paper agents even if the decision requests live/onchain fields', async () => {
-    const { db, rows, insertSpy } = createMockDb([]);
+    const { db, rows, insertSpy, updateCalls } = createMockDb([]);
     const result = await executeManagerAction(
       {
         action: 'create_agent',
@@ -347,6 +356,7 @@ describe('executeManagerAction', () => {
     expect(config.initiaWalletAddress).toBeUndefined();
     expect(config.initiaMetadataHash).toBeUndefined();
     expect(config.llmModel).toBe(DEFAULT_FREE_AGENT_MODEL);
+    expect(updateCalls).toContainEqual(expect.objectContaining({ status: 'running' }));
     expect(doClientMocks.startTradingAgentDo).toHaveBeenCalledTimes(1);
   });
 
@@ -504,5 +514,102 @@ describe('executeManagerAction', () => {
     expect(result.error).toContain('paper agents');
     expect(updateCalls).toHaveLength(0);
     expect(doClientMocks.syncTradingAgentConfigDo).not.toHaveBeenCalled();
+  });
+
+  it('rejects manager actions against agents owned by another user', async () => {
+    const { db, updateCalls } = createMockDb([
+      {
+        id: 'agent_other_owner',
+        name: 'Other Owner Agent',
+        status: 'running',
+        llmModel: DEFAULT_FREE_AGENT_MODEL,
+        ownerAddress: 'other_owner',
+        config: JSON.stringify({
+          chain: 'base',
+          isPaper: true,
+          pairs: ['INIT/USD'],
+          strategies: ['combined'],
+          analysisInterval: '1h',
+          paperBalance: 10000,
+          temperature: 0.7,
+        }),
+      },
+    ]);
+
+    const result = await executeManagerAction(
+      {
+        action: 'pause_agent',
+        agentId: 'agent_other_owner',
+        reasoning: 'pause it',
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not managed by manager');
+    expect(updateCalls).toHaveLength(0);
+    expect(doClientMocks.pauseTradingAgentDo).not.toHaveBeenCalled();
+  });
+
+  it('rejects manager actions against agents managed by a different manager', async () => {
+    const { db, updateCalls } = createMockDb([
+      {
+        id: 'agent_other_manager',
+        name: 'Other Manager Agent',
+        status: 'running',
+        llmModel: DEFAULT_FREE_AGENT_MODEL,
+        managerId: 'manager_999',
+        config: JSON.stringify({
+          chain: 'base',
+          isPaper: true,
+          pairs: ['INIT/USD'],
+          strategies: ['combined'],
+          analysisInterval: '1h',
+          paperBalance: 10000,
+          temperature: 0.7,
+        }),
+      },
+    ]);
+
+    const result = await executeManagerAction(
+      {
+        action: 'terminate_agent',
+        agentId: 'agent_other_manager',
+        reasoning: 'terminate it',
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not managed by manager');
+    expect(updateCalls).toHaveLength(0);
+    expect(doClientMocks.stopTradingAgentDo).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newly created agent stopped when DO startup fails', async () => {
+    const { db, rows, updateCalls } = createMockDb([]);
+    doClientMocks.startTradingAgentDo.mockRejectedValueOnce(new Error('DO unavailable'));
+
+    await expect(executeManagerAction(
+      {
+        action: 'create_agent',
+        reasoning: 'launch a new paper agent',
+        params: { name: 'Manager Beta' },
+      },
+      db,
+      {} as any,
+      'manager_001',
+      'owner_addr'
+    )).rejects.toThrow('DO unavailable');
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('stopped');
+    expect(updateCalls).toHaveLength(0);
   });
 });

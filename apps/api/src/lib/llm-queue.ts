@@ -15,9 +15,12 @@ import { getTradeDecision } from '../services/llm-router.js';
 import type { LlmJobMessage } from '../types/queue-types.js';
 import type { LLMRouterConfig } from '../services/llm-router.js';
 import type { Env } from '../types/env.js';
-import { users } from '../db/schema.js';
+import { users, agentDecisions } from '../db/schema.js';
 import { resolveStoredOpenRouterKey } from './openrouter-key.js';
-import { nowIso } from './utils.js';
+import { nowIso, generateId } from './utils.js';
+
+// Matches max_retries in wrangler.toml — Cloudflare delivers max_retries+1 times total.
+const MAX_LLM_QUEUE_RETRIES = 3;
 
 export type { LlmJobMessage } from '../types/queue-types.js';
 
@@ -81,16 +84,48 @@ async function resolveApiKey(
   return resolvedKey;
 }
 
+async function insertHoldDecision(
+  env: Env,
+  agentId: string,
+  llmModel: string,
+  marketData: unknown,
+  reasoning: string,
+): Promise<void> {
+  try {
+    const db = drizzle(env.DB);
+    await db.insert(agentDecisions).values({
+      id: generateId('dec'),
+      agentId,
+      decision: 'hold',
+      confidence: 0,
+      reasoning,
+      llmModel,
+      llmLatencyMs: 0,
+      marketDataSnapshot: JSON.stringify(marketData),
+      createdAt: nowIso(),
+    });
+  } catch (dbErr) {
+    console.error(`[llm-queue] Failed to insert hold decision for agent=${agentId}:`, dbErr);
+  }
+}
+
 async function processLlmJob(
   message: Message<LlmJobMessage>,
   env: Env
 ): Promise<void> {
   const { agentId, jobId, llmConfig: jobConfig, tradeRequest } = message.body;
 
+  const isLastAttempt = message.attempts > MAX_LLM_QUEUE_RETRIES;
+
   const apiKey = await resolveApiKey(jobConfig.ownerAddress, jobConfig.provider, env);
   if (!apiKey) {
-    console.error(`[llm-queue] Could not resolve API key for agent=${agentId} job=${jobId}`);
-    message.retry();
+    console.error(`[llm-queue] Could not resolve API key for agent=${agentId} job=${jobId} attempt=${message.attempts}`);
+    if (isLastAttempt) {
+      await insertHoldDecision(env, agentId, jobConfig.model, tradeRequest.marketData, 'No API key available after all retries');
+      message.ack();
+    } else {
+      message.retry();
+    }
     return;
   }
 
@@ -108,9 +143,13 @@ async function processLlmJob(
       `[llm-queue] LLM call failed for agent=${agentId} job=${jobId} attempt=${message.attempts}:`,
       err
     );
-    // Cloudflare Queues retries with exponential backoff up to the max_retries
-    // configured in wrangler.toml. After max_retries the message goes to the DLQ.
-    message.retry();
+    if (isLastAttempt) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await insertHoldDecision(env, agentId, jobConfig.model, tradeRequest.marketData, `LLM error after all retries: ${reason}`);
+      message.ack();
+    } else {
+      message.retry();
+    }
     return;
   }
 

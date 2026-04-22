@@ -68,6 +68,14 @@ function sanitizeManagerAgentParams(params: Record<string, unknown>): Record<str
   return sanitized;
 }
 
+function isManagerControlledAgent(
+  agent: { ownerAddress?: string | null; managerId?: string | null },
+  ownerAddress: string,
+  managerId: string,
+): boolean {
+  return agent.ownerAddress === ownerAddress && agent.managerId === managerId;
+}
+
 /** Execute a single manager decision against D1 + DO stubs */
 export async function executeManagerAction(
   decision: ManagerDecision,
@@ -88,6 +96,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'start_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isManagerControlledAgent(agent, ownerAddress, managerId)) {
+        return { success: false, error: `Agent ${agentId} is not managed by manager ${managerId}` };
+      }
       if (!isPaperAgentRow(agent)) {
         return { success: false, error: `Manager ${managerId} can only control paper agents` };
       }
@@ -111,6 +122,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'pause_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isManagerControlledAgent(agent, ownerAddress, managerId)) {
+        return { success: false, error: `Agent ${agentId} is not managed by manager ${managerId}` };
+      }
       if (!isPaperAgentRow(agent)) {
         return { success: false, error: `Manager ${managerId} can only control paper agents` };
       }
@@ -125,6 +139,9 @@ export async function executeManagerAction(
       if (!agentId) return { success: false, error: 'terminate_agent requires agentId' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isManagerControlledAgent(agent, ownerAddress, managerId)) {
+        return { success: false, error: `Agent ${agentId} is not managed by manager ${managerId}` };
+      }
       if (!isPaperAgentRow(agent)) {
         return { success: false, error: `Manager ${managerId} can only control paper agents` };
       }
@@ -142,6 +159,9 @@ export async function executeManagerAction(
       if (!agentId || !params) return { success: false, error: 'modify_agent requires agentId and params' };
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
       if (!agent) return { success: false, error: `Agent ${agentId} not found` };
+      if (!isManagerControlledAgent(agent, ownerAddress, managerId)) {
+        return { success: false, error: `Agent ${agentId} is not managed by manager ${managerId}` };
+      }
       if (!isPaperAgentRow(agent)) {
         return { success: false, error: `Manager ${managerId} can only control paper agents` };
       }
@@ -220,6 +240,9 @@ export async function executeManagerAction(
       if (!params) return { success: false, error: 'create_agent requires params' };
       const [manager] = await db.select().from(agentManagers).where(eq(agentManagers.id, managerId));
       if (!manager) return { success: false, error: `Manager ${managerId} not found` };
+      if (manager.ownerAddress !== ownerAddress) {
+        return { success: false, error: `Manager ${managerId} does not belong to owner ${ownerAddress}` };
+      }
 
       const totalOwnedAgents = await db
         .select({ id: agents.id })
@@ -285,10 +308,10 @@ export async function executeManagerAction(
       };
       const id = generateId('agent');
       const now = nowIso();
-      await db.insert(agents).values({
+      const agentRow = {
         id,
         name: agentName,
-        status: 'running',
+        status: 'stopped',
         autonomyLevel: 2,
         chain: 'base',
         isPaper: true,
@@ -300,13 +323,15 @@ export async function executeManagerAction(
         profileId,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      await db.insert(agents).values(agentRow);
       await startTradingAgentDo(env, {
         agentId: id,
         paperBalance,
         slippageSimulation,
         analysisInterval,
       });
+      await db.update(agents).set({ status: 'running', updatedAt: nowIso() }).where(eq(agents.id, id));
       return { success: true, detail: `Agent ${id} created and started` };
     }
 

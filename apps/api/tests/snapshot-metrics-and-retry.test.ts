@@ -2,7 +2,7 @@
  * Snapshot metrics, retry helper, and rate-limit math tests.
  */
 import { describe, it, expect } from 'vitest';
-import { computeMetrics } from '../src/services/snapshot.js';
+import { computeMetrics, isSnapshotEligibleAgent } from '../src/services/snapshot.js';
 import { retry } from '../src/lib/utils.js';
 
 describe('snapshot metrics', () => {
@@ -76,6 +76,32 @@ describe('snapshot metrics', () => {
     ], 10000, 9200);
     expect(metrics.totalPnlPct).toBeCloseTo(-8, 1);
     expect(metrics.winRate).toBe(0);
+  });
+
+  it('only marks running paper agents with a valid paper balance as snapshot eligible', () => {
+    expect(isSnapshotEligibleAgent({
+      status: 'running',
+      isPaper: true,
+      config: JSON.stringify({ paperBalance: 10000 }),
+    })).toBe(true);
+
+    expect(isSnapshotEligibleAgent({
+      status: 'paused',
+      isPaper: true,
+      config: JSON.stringify({ paperBalance: 10000 }),
+    })).toBe(false);
+
+    expect(isSnapshotEligibleAgent({
+      status: 'running',
+      isPaper: false,
+      config: JSON.stringify({ paperBalance: 10000 }),
+    })).toBe(false);
+
+    expect(isSnapshotEligibleAgent({
+      status: 'running',
+      isPaper: true,
+      config: JSON.stringify({}),
+    })).toBe(false);
   });
 });
 

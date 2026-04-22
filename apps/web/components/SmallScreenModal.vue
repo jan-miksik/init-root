@@ -2,11 +2,13 @@
 const STORAGE_KEY = 'initroot:small-screen-dismissed';
 
 const visible = ref(false);
+const viewportWidth = ref<number | null>(null);
 
 onMounted(() => {
   if (typeof window === 'undefined') return;
+  viewportWidth.value = window.innerWidth;
   if (localStorage.getItem(STORAGE_KEY)) return;
-  if (window.innerWidth < 1000) {
+  if (viewportWidth.value < 1000) {
     visible.value = true;
   }
 });
@@ -29,7 +31,7 @@ function dismiss() {
             Some panels, charts, and data tables may not render correctly at this viewport width.
           </p>
           <div class="ssm-meta">
-            ⟨ viewport · {{ typeof window !== 'undefined' ? window.innerWidth : '—' }}px · recommended ≥1000px ⟩
+            ⟨ viewport · {{ viewportWidth ?? '—' }}px · recommended ≥1000px ⟩
           </div>
           <button class="ssm-btn" @click="dismiss">
             Use anyway →
