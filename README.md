@@ -1,4 +1,4 @@
-## Initia Hackathon Submission
+# initRoot
 
 - **Project Name**: initRoot
 
@@ -19,7 +19,7 @@ initRoot is an AI trading agents platform that runs autonomously on an Initia EV
 - nodejs 20+ (https://nodejs.org/en/download/)
 - pnpm (https://pnpm.io/)
 - Foundry (`forge` + `cast`) — install via https://getfoundry.sh
-- initia EVM appchain - Follow the Initia hackathon setup guide: https://docs.initia.xyz/hackathon/get-started
+- Initia EVM appchain — follow the [Initia setup guide](https://docs.initia.xyz/hackathon/get-started).
 
 #### First run (nothing set up yet)
 

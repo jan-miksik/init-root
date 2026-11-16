@@ -3,9 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue';
 import initRootLogoWithText from '~/assets/initRootLogoWithTextWhite.png';
 import { doesSessionMatchWallet } from '~/utils/auth-session';
 
-// Feature flag — set to false to remove the beta badge sitewide
-const IS_BETA = true;
-
 const { user, isAuthenticated, signOut } = useAuth();
 const {
   state: initiaState,
@@ -115,7 +112,6 @@ async function handleWalletClick() {
     <header v-if="isConnectRoute" class="shellbar shellbar--connect">
       <NuxtLink to="/connect" class="shellbar-brand">
         <img :src="initRootLogoWithText" alt="initRoot" class="brand-logo brand-logo--shell" />
-        <span v-if="IS_BETA" class="beta-badge">Hackathon</span>
       </NuxtLink>
       <div class="shellbar-auth">
         <button
@@ -135,7 +131,6 @@ async function handleWalletClick() {
     <nav v-else class="navbar">
       <NuxtLink to="/agents" class="navbar-brand">
         <img :src="initRootLogoWithText" alt="initRoot" class="brand-logo" />
-        <span v-if="IS_BETA" class="beta-badge">Hackathon</span>
       </NuxtLink>
       <div class="navbar-nav">
         <template v-if="authenticatedWalletReady">
