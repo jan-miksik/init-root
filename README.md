@@ -6,7 +6,9 @@ initRoot is an AI trading agents platform that runs autonomously on an Initia EV
 
 ### Walkthrough
 
-[Watch the app walkthrough (MP4)](docs/media/initroot-walkthrough.mp4) — no wallet needed to watch.
+https://github.com/user-attachments/assets/aed0419f-f2b4-413a-ac59-45b4ee47dd4f
+
+No wallet needed to watch. [Download the MP4](docs/media/initroot-walkthrough.mp4).
 
 The wait for the agent response is shown at 10× speed; the rest plays at normal speed.
 
