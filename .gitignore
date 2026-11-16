@@ -21,3 +21,6 @@ e2e/.auth/user.json
 playwright-report/
 test-results/
 .playwright-mcp/
+
+# Local uncompressed walkthrough source; the optimized MP4 is tracked in docs/media.
+/Screen Recording 2026-11-16 at 16.12.24.mov

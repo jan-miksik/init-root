@@ -4,6 +4,12 @@
 
 initRoot is an AI trading agents platform that runs autonomously on an Initia EVM appchain. You deposit funds into an onchain vault, configure agent or select from pre-defined agents, and then let it trade on your behalf — the agent analyses market data, makes decisions, and executes them within the limits you set.
 
+### Walkthrough
+
+[Watch the app walkthrough (MP4)](docs/media/initroot-walkthrough.mp4) — no wallet needed to watch.
+
+The wait for the agent response is shown at 10× speed; the rest plays at normal speed.
+
 ### Implementation Detail
 
 - **Custom onchain Agent contract** (`contracts/src/Agent.sol`) — handles multi-agent vaults, per-agent executor approvals, target contract whitelisting, native and ERC-20 accounting, and pause controls.
