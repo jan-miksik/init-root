@@ -9,63 +9,36 @@ export type ModelCatalogItem = {
   desc?: string;
 };
 
-export const DEFAULT_FREE_AGENT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free' as const;
+export const DEFAULT_FREE_AGENT_MODEL = 'nvidia/nemotron-3.5-super-vl:free' as const;
 
+// OpenRouter catalog snapshot: 2026-11-16. Prices are USD per 1M input/output tokens.
+// Provider, caching, time-of-day and long-context rates can differ from these base rates.
 export const FREE_MODEL_ITEMS: readonly ModelCatalogItem[] = [
-  {
-    id: 'nvidia/nemotron-3-super-120b-a12b:free',
-    label: 'Nemotron 120B Super',
-    ctx: '262K',
-    price: '$0/$0',
-    tier: 'free',
-    desc: 'default free',
-  },
-  {
-    id: 'qwen/qwen3-coder:free',
-    label: 'Qwen3 Coder 480B',
-    ctx: '262K',
-    price: '$0/$0',
-    tier: 'free',
-    desc: 'strong reasoning',
-  },
-  {
-    id: 'nvidia/nemotron-nano-9b-v2:free',
-    label: 'Nemotron 9B',
-    ctx: '128K',
-    price: '$0/$0',
-    tier: 'free',
-  },
-  {
-    id: 'arcee-ai/trinity-large-preview:free',
-    label: 'Trinity-Large',
-    ctx: '131K',
-    price: '$0/$0',
-    tier: 'free',
-  },
+  { id: 'nvidia/nemotron-3.5-super-vl:free', label: 'Nemotron 3.5 Super VL', ctx: '1M', price: '$0/$0', tier: 'free', desc: 'default free' },
+  { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning', ctx: '1M', price: '$0/$0', tier: 'free' },
+  { id: 'inclusionai/ling-3.2-flash:free', label: 'Ling 3.2 Flash', ctx: '1M', price: '$0/$0', tier: 'free' },
+  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', ctx: '262K', price: '$0/$0', tier: 'free' },
 ] as const;
 
 export const AGENT_PAID_MODEL_ITEMS: readonly ModelCatalogItem[] = [
-  { id: 'minimax/minimax-m2.5', label: 'MiniMax M2.5', ctx: '196K', price: '$0.20/$1.20', tier: 'paid' },
-  { id: 'mistralai/mistral-small-2603', label: 'Mistral Small 2603', ctx: '262K', price: '$0.15/$0.60', tier: 'paid' },
-  {
-    id: 'google/gemini-3.1-flash-lite-preview',
-    label: 'Gemini 3.1 Flash Lite',
-    ctx: '1M',
-    price: '$0.25/$1.50',
-    tier: 'paid',
-  },
-  { id: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2', ctx: '164K', price: '$0.26/$0.38', tier: 'paid' },
-  { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', ctx: '1M', price: '$3/$15', tier: 'paid' },
-  { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', ctx: '2M', price: '$2/$12', tier: 'paid' },
-  { id: 'openai/gpt-5.4', label: 'GPT-5.4', ctx: '1M', price: '$2.50/$15', tier: 'paid' },
-  { id: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6', ctx: '200K', price: '$5/$25', tier: 'paid' },
+  { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', ctx: '1M', price: '$0.0507/$0.2028', tier: 'paid' },
+  { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna', ctx: '1.05M', price: '$0.1/$0.5', tier: 'paid' },
+  { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', ctx: '1M', price: '$0.1/$0.5', tier: 'paid', desc: 'Higher rates above 100K input tokens' },
+  { id: 'minimax/minimax-m3.1-flash', label: 'MiniMax M3.1 Flash', ctx: '1M', price: '$0.15/$0.6', tier: 'paid', desc: 'Rates vary by time of day' },
+  { id: 'mistralai/mistral-large-4-0', label: 'Mistral Large 4', ctx: '1M', price: '$0.7/$2.1', tier: 'paid' },
+  { id: 'openai/gpt-6.1-terra', label: 'GPT-6.1 Terra', ctx: '1.05M', price: '$1/$5', tier: 'paid', desc: 'Higher rates above 272K input tokens' },
+  { id: 'qwen/qwen4-max', label: 'Qwen4 Max', ctx: '1M', price: '$1.5/$4.5', tier: 'paid' },
+  { id: 'google/gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', ctx: '1M', price: '$1.5/$7.5', tier: 'paid' },
+  { id: 'google/gemini-4-carbon', label: 'Gemini 4 Carbon', ctx: '1M', price: '$2/$10', tier: 'paid' },
+  { id: 'anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5', ctx: '1M', price: '$2/$10', tier: 'paid' },
+  { id: 'anthropic/claude-opus-5.5', label: 'Claude Opus 5.5', ctx: '1M', price: '$4/$20', tier: 'paid' },
 ] as const;
 
 export const MANAGER_CHEAP_PAID_MODEL_IDS = [
-  'google/gemini-3.1-flash-lite-preview',
-  'deepseek/deepseek-v3.2',
-  'minimax/minimax-m2.5',
-  'mistralai/mistral-small-2603',
+  'deepseek/deepseek-v4.1-flash',
+  'openai/gpt-6-luna',
+  'anthropic/claude-haiku-5.5',
+  'minimax/minimax-m3.1-flash',
 ] as const;
 
 export const TESTER_DIRECT_MODEL_ITEMS: readonly ModelCatalogItem[] = [

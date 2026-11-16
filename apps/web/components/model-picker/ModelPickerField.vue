@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
         <div class="model-picker__thead">
           <div>Model</div>
           <div>Context</div>
-          <div>Price (in/out)</div>
+          <div>USD / 1M (in/out)</div>
           <div>Tier</div>
         </div>
         <button
@@ -170,6 +170,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </div>
+
+  <p class="model-nudge">Base prices per 1M tokens, checked Nov 16, 2026. Provider and long-context rates may vary.</p>
 
   <template v-if="hasOwnKey">
     <input

@@ -1,3 +1,4 @@
+import { FREE_MODEL_IDS } from '@something-in-loop/shared';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { classifyLlmError } from '../../lib/agent-errors.js';
@@ -5,13 +6,7 @@ import type { LLMRouterConfig } from './types.js';
 
 export const DEFAULT_LLM_TIMEOUT_MS = 90_000;
 export const EMERGENCY_MODEL_TIMEOUT_MS = 30_000;
-export const EMERGENCY_FREE_MODELS = [
-  'qwen/qwen3-coder:free',
-  'arcee-ai/trinity-large-preview:free',
-  'google/gemma-3-27b-it:free',
-  'google/gemma-3-12b-it:free',
-  'google/gemma-3-4b-it:free',
-];
+export const EMERGENCY_FREE_MODELS = [...FREE_MODEL_IDS];
 
 export function createModelResolver(config: LLMRouterConfig): {
   isAnthropic: boolean;

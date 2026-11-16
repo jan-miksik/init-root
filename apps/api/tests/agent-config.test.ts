@@ -106,7 +106,7 @@ describe('AgentConfigSchema — defaults', () => {
   const parsed = AgentConfigSchema.parse({ name: 'Default Agent' });
 
   it('defaults llmModel', () => {
-    expect(parsed.llmModel).toBe('nvidia/nemotron-3-super-120b-a12b:free');
+    expect(parsed.llmModel).toBe('nvidia/nemotron-3.5-super-vl:free');
   });
 
   it('defaults paperBalance to 10_000', () => {

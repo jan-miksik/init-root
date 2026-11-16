@@ -1,6 +1,5 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue';
 import {
-  AGENT_PAID_MODEL_ITEMS,
   AGENT_PROFILES,
   DEFAULT_FREE_AGENT_MODEL,
   ENTITY_NAME_MAX_CHARS,
@@ -145,17 +144,10 @@ export function useManagerConfigForm(props: {
   }
 
   function shortModelName(modelId: string): string {
-    const PAID_MODEL_NAMES = Object.fromEntries(AGENT_PAID_MODEL_ITEMS.map((p) => [p.id, p.label]));
-    const names: Record<string, string> = {
-      [DEFAULT_FREE_AGENT_MODEL]: 'Nemotron-120B',
-      'qwen/qwen3-coder:free': 'Qwen3-Coder',
-      'nvidia/nemotron-nano-9b-v2:free': 'Nemotron-9B',
-      'arcee-ai/trinity-large-preview:free': 'Trinity-Large',
-      'minimax/minimax-m2.5': 'MiniMax M2.5',
-      'mistralai/mistral-small-2603': 'Mistral Small',
-      ...PAID_MODEL_NAMES,
-    };
-    return names[modelId] ?? modelId.split('/').pop()?.split(':')[0] ?? 'Manager';
+    const catalog = buildAgentModelCatalog({ hasOwnOpenRouterKey: true, isTester: true });
+    return catalog.find((item) => item.id === modelId)?.label
+      ?? modelId.split('/').pop()?.split(':')[0]
+      ?? 'Manager';
   }
 
   function generateName(): string {
